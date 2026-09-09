@@ -19,10 +19,13 @@ from perceive.main import (
     FRAME_STREAM,
     PerceiveConfig,
     build_tracker,
+    build_vision_client,
     maybe_emit_health,
     maybe_emit_person_heartbeat,
     run_once,
 )
+from perceive.scene_notes import SCENE_NOTE_MAX_AGE_SECONDS, SceneNoteCache, synchronous_submit
+from perceive.vision import FakeVisionClient
 from perceive.zones import ZoneMap
 
 BED_ZONE = ZoneMap(polygons={"bed": [(0.0, 0.2), (0.4, 0.2), (0.4, 0.8), (0.0, 0.8)]})
@@ -278,3 +281,153 @@ def test_maybe_emit_person_heartbeat_waits_for_the_interval():
 
     assert last == 100.0
     assert bus._streams.get("person", []) == []  # noqa: SLF001
+
+
+# --- issue #9: scene notes wired into run_once/maybe_emit_person_heartbeat ---
+
+
+def test_state_change_fires_one_vision_request_and_the_note_lands_on_the_next_person_state():
+    """Acceptance evidence 1: a state change fires exactly one vision
+    request, and the returned note lands on the next published `PersonState`."""
+    bus = FakeBus()
+    bus.ensure_group(FRAME_STREAM, FRAME_GROUP)
+    backend = ScriptedBackend([in_bed_pose(), sitting_up_pose()])
+    tracker = StateTracker(thresholds=ClassifyThresholds(), confirm_frames=1)
+    vision_client = FakeVisionClient(["Lying still in bed.", "The person is sitting up in bed."])
+    scene_cache = SceneNoteCache(vision_client=vision_client, submit=synchronous_submit)
+
+    _publish_frame(bus)
+    event_1 = run_once(
+        bus, backend, BED_ZONE, tracker, now_fn=lambda: 0.0, scene_cache=scene_cache, engaged=False
+    )
+    assert event_1.state == "in_bed"
+    assert len(vision_client.calls) == 1  # first-ever state counts as a change
+    assert event_1.scene_note == "Lying still in bed."
+
+    _publish_frame(bus)
+    event_2 = run_once(
+        bus, backend, BED_ZONE, tracker, now_fn=lambda: 1.0, scene_cache=scene_cache, engaged=False
+    )
+    assert event_2.state == "sitting_up"
+    assert len(vision_client.calls) == 2  # the state change fired a second request
+    assert event_2.scene_note == "The person is sitting up in bed."
+
+
+def test_second_frame_while_a_vision_request_is_in_flight_does_not_fire_a_second_request():
+    """Acceptance evidence 2."""
+    bus = FakeBus()
+    bus.ensure_group(FRAME_STREAM, FRAME_GROUP)
+    backend = ScriptedBackend([in_bed_pose(), in_bed_pose(), sitting_up_pose()])
+    tracker = StateTracker(thresholds=ClassifyThresholds(), confirm_frames=1)
+    vision_client = FakeVisionClient(["note."])
+    held_jobs = []
+    scene_cache = SceneNoteCache(vision_client=vision_client, submit=held_jobs.append)
+
+    for i in range(3):
+        _publish_frame(bus)
+        run_once(
+            bus, backend, BED_ZONE, tracker, now_fn=lambda i=i: float(i), scene_cache=scene_cache
+        )
+
+    # Only the very first frame (first-ever state) fired a request; it never
+    # completed (the held job was never run), so nothing after it -- not
+    # even the confirmed `sitting_up` state change -- fires a second one.
+    assert len(held_jobs) == 1
+    assert len(vision_client.calls) == 0
+
+
+def test_engaged_session_fires_on_interval_with_no_state_change():
+    """Acceptance evidence 3."""
+    bus = FakeBus()
+    bus.ensure_group(FRAME_STREAM, FRAME_GROUP)
+    backend = ScriptedBackend([in_bed_pose(), in_bed_pose(), in_bed_pose()])
+    tracker = StateTracker(thresholds=ClassifyThresholds(), confirm_frames=1)
+    vision_client = FakeVisionClient(["first.", "second."])
+    scene_cache = SceneNoteCache(
+        vision_client=vision_client, interval_seconds=60.0, submit=synchronous_submit
+    )
+
+    _publish_frame(bus)
+    run_once(
+        bus, backend, BED_ZONE, tracker, now_fn=lambda: 0.0, scene_cache=scene_cache, engaged=True
+    )
+    assert len(vision_client.calls) == 1  # first-ever state
+
+    _publish_frame(bus)
+    run_once(
+        bus, backend, BED_ZONE, tracker, now_fn=lambda: 30.0, scene_cache=scene_cache, engaged=True
+    )
+    assert len(vision_client.calls) == 1  # interval not elapsed yet, no state change
+
+    _publish_frame(bus)
+    run_once(
+        bus, backend, BED_ZONE, tracker, now_fn=lambda: 60.0, scene_cache=scene_cache, engaged=True
+    )
+    assert len(vision_client.calls) == 2  # interval elapsed
+
+
+def test_a_failing_vision_client_leaves_scene_note_none_and_person_state_still_publishes():
+    """Acceptance evidence 4."""
+    bus = FakeBus()
+    bus.ensure_group(FRAME_STREAM, FRAME_GROUP)
+    backend = ScriptedBackend([in_bed_pose()])
+    tracker = StateTracker(thresholds=ClassifyThresholds(), confirm_frames=1)
+
+    class RaisingClient:
+        def describe(self, jpeg):
+            raise RuntimeError("Ollama is unreachable")
+
+    scene_cache = SceneNoteCache(vision_client=RaisingClient(), submit=synchronous_submit)
+
+    _publish_frame(bus)
+    event = run_once(bus, backend, BED_ZONE, tracker, now_fn=lambda: 0.0, scene_cache=scene_cache)
+
+    assert event is not None
+    assert event.state == "in_bed"
+    assert event.scene_note is None
+
+
+def test_stale_scene_note_is_not_attached_to_person_state():
+    """Acceptance evidence 5. A note attaches to the heartbeat too, so this
+    checks it on the heartbeat path once the note is old enough to be stale
+    -- without triggering a fresh vision request that would mask it."""
+    bus = FakeBus()
+    bus.ensure_group(FRAME_STREAM, FRAME_GROUP)
+    backend = ScriptedBackend([in_bed_pose()])
+    tracker = StateTracker(thresholds=ClassifyThresholds(), confirm_frames=1)
+    vision_client = FakeVisionClient(["a note."])
+    scene_cache = SceneNoteCache(vision_client=vision_client, submit=synchronous_submit)
+
+    _publish_frame(bus)
+    first = run_once(bus, backend, BED_ZONE, tracker, now_fn=lambda: 0.0, scene_cache=scene_cache)
+    assert first.scene_note == "a note."
+
+    far_future = SCENE_NOTE_MAX_AGE_SECONDS + 1000.0
+    last = maybe_emit_person_heartbeat(
+        bus, tracker, None, now=far_future, interval=1.0, scene_cache=scene_cache
+    )
+
+    assert last == far_future
+    entries = bus._streams["person"]  # noqa: SLF001
+    heartbeat_event = PersonState.model_validate_json(entries[-1].data)
+    assert heartbeat_event.state == "in_bed"
+    assert heartbeat_event.scene_note is None
+
+
+def test_vision_disabled_by_config_produces_no_vision_calls_at_all():
+    """Acceptance evidence 6."""
+    config = PerceiveConfig.from_env(env={"PERCEIVE_VISION_ENABLED": "false"})
+    assert build_vision_client(config) is None
+
+    bus = FakeBus()
+    bus.ensure_group(FRAME_STREAM, FRAME_GROUP)
+    backend = ScriptedBackend([in_bed_pose()])
+    tracker = StateTracker(thresholds=ClassifyThresholds(), confirm_frames=1)
+
+    _publish_frame(bus)
+    # No scene_cache at all -- the same shape `run()` builds when vision is
+    # disabled -- so there is nothing here that could call Ollama.
+    event = run_once(bus, backend, BED_ZONE, tracker, now_fn=lambda: 0.0)
+
+    assert event is not None
+    assert event.scene_note is None
