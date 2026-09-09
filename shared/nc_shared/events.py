@@ -72,7 +72,25 @@ class BaseEvent(BaseModel):
 
 
 class Frame(BaseEvent):
-    """A single camera frame. Produced by `capture`. Never stored on disk."""
+    """A single camera frame, gated by `capture`'s motion gate. Produced by
+    `capture`. Never stored on disk."""
+
+    jpeg: BytesAsBase64
+    width: int
+    height: int
+    source_kind: Literal["browser", "usb", "rtsp"]
+
+
+class RawFrame(BaseEvent):
+    """A single camera frame straight from a source, before `capture`'s motion
+    gate has had a chance to look at it. Produced by the `embodiment` browser
+    bridge (issue #28), which is the only source that has to cross a process
+    boundary to reach `capture`; the `usb`/`rtsp` sources are read inside
+    `capture` itself and never take this detour. `capture` reads this stream,
+    applies the motion gate, and republishes the frames it admits as `Frame`
+    on `frames`. Never reaches disk and is never gated on rate or motion.
+    Same shape as `Frame` on purpose: gating is the only thing that
+    distinguishes the two streams."""
 
     jpeg: BytesAsBase64
     width: int
@@ -163,6 +181,7 @@ class Health(BaseEvent):
 
 EVENT_STREAMS: dict[type[BaseEvent], str] = {
     Frame: "frames",
+    RawFrame: "frames_raw",
     PersonState: "person",
     Utterance: "speech_in",
     SessionState: "session",

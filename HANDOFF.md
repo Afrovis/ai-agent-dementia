@@ -2,7 +2,7 @@
 
 Read this before touching any issue. It contains everything not in the code yet: the fixed decisions, the conventions, the contracts between services, and the rules that must never be broken. `PLAN.md` is the design rationale. This file is the execution brief.
 
-Last updated: 2026-09-08. If you change a decision below, update this file in the same PR.
+Last updated: 2026-09-09. If you change a decision below, update this file in the same PR.
 
 ## 1. What this project is, in three sentences
 
@@ -81,7 +81,8 @@ All events are pydantic models in `shared/nc_shared/events.py`, serialised as JS
 
 | Stream | Event | Producer | Key fields |
 |---|---|---|---|
-| `frames` | `Frame` | `capture` | `jpeg: bytes`, `width`, `height`, `source_kind: browser or usb or rtsp`. Short retention (`MAXLEN ~ 50`). |
+| `frames_raw` | `RawFrame` | `embodiment` (browser bridge) | `jpeg: bytes`, `width`, `height`, `source_kind: browser or usb or rtsp`. Ungated, pre-motion-gate frames. Only the browser source goes over the bus; `capture`'s own USB/RTSP cameras are read in-process and never reach this stream. Never persisted. Short retention (`MAXLEN ~ 50`). |
+| `frames` | `Frame` | `capture` | `jpeg: bytes`, `width`, `height`, `source_kind: browser or usb or rtsp`. `capture` is the sole producer: it reads `frames_raw` (browser) or its camera directly (USB/RTSP), applies the motion gate, and republishes what it admits here. Short retention (`MAXLEN ~ 50`). |
 | `person` | `PersonState` | `perceive` | `state: in_bed, sitting_up, standing, walking, on_floor, absent`, `confidence`, `zone: bed, door, bathroom_path, other`, `scene_note: str or None` |
 | `speech_in` | `Utterance` | `listen` | `text`, `confidence`, `duration_s` |
 | `session` | `SessionState` | `agent` | `phase: IDLE, OBSERVING, ENGAGED, COOLDOWN, ESCALATED`, `goal`, `strategy_index` |
@@ -95,8 +96,8 @@ All events are pydantic models in `shared/nc_shared/events.py`, serialised as JS
 
 Rules:
 
-- Never add a field that carries image or audio data to any stream other than `frames` and `audio_in`.
-- `frames` and `audio_in` are capped streams. Everything else is persisted to SQLite by `store`.
+- Never add a field that carries image or audio data to any stream other than `frames`, `frames_raw`, and `audio_in`.
+- `frames`, `frames_raw`, and `audio_in` are capped streams. Everything else is persisted to SQLite by `store`.
 - Add new events by editing `events.py` and this table in the same PR.
 
 ## 6. The agent core, summarised for implementers

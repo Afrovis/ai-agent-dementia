@@ -32,6 +32,12 @@ services:
     env_file: .env
     environment:
       REDIS_URL: ${REDIS_URL}
+      CAPTURE_SOURCE: ${CAPTURE_SOURCE}
+      CAPTURE_DEVICE: ${CAPTURE_DEVICE}
+      CAPTURE_FPS: ${CAPTURE_FPS}
+      CAPTURE_IDLE_FPS: ${CAPTURE_IDLE_FPS}
+      CAPTURE_STATIC_SECONDS: ${CAPTURE_STATIC_SECONDS}
+      CAPTURE_MOTION_THRESHOLD: ${CAPTURE_MOTION_THRESHOLD}
     volumes:
       - ./data:/app/data
       - ./config:/app/config:ro

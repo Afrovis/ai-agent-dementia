@@ -53,9 +53,9 @@ it exists so a captured session can be replayed frame-for-frame)."""
 
 ALL_STREAMS: list[str] = sorted(set(EVENT_STREAMS.values()))
 
-CAPPED_MAXLEN: dict[str, int] = {"frames": 50, "audio_in": 50}
+CAPPED_MAXLEN: dict[str, int] = {"frames": 50, "audio_in": 50, "frames_raw": 50}
 """Approximate MAXLEN to apply when replaying onto capped streams, matching
-HANDOFF.md's `MAXLEN ~ 50` for `frames` and `audio_in`."""
+HANDOFF.md's `MAXLEN ~ 50` for `frames`, `audio_in`, and `frames_raw`."""
 
 
 def record_once(

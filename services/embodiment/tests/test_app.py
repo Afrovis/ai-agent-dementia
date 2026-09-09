@@ -5,7 +5,7 @@ import base64
 
 from fastapi.testclient import TestClient
 from nc_shared.bus import FakeBus
-from nc_shared.events import AudioChunk, Frame, Say, Show
+from nc_shared.events import AudioChunk, RawFrame, Say, Show
 from nc_shared.replay import CAPPED_MAXLEN
 
 from embodiment.app import (
@@ -198,7 +198,7 @@ def test_publish_frame_publishes_one_frame_event_with_decoded_jpeg():
         session_id="sess-1",
     )
 
-    assert isinstance(event, Frame)
+    assert isinstance(event, RawFrame)
     assert event.jpeg == jpeg_bytes
     assert event.width == 320
     assert event.height == 240
@@ -206,14 +206,14 @@ def test_publish_frame_publishes_one_frame_event_with_decoded_jpeg():
     assert event.source == "embodiment"
     assert event.session_id == "sess-1"
 
-    entries = bus._streams["frames"]  # noqa: SLF001 - inspecting FakeBus internals for the test
+    entries = bus._streams["frames_raw"]  # noqa: SLF001 - inspecting FakeBus internals for the test
     assert len(entries) == 1
-    assert Frame.model_validate_json(entries[0].data).jpeg == jpeg_bytes
+    assert RawFrame.model_validate_json(entries[0].data).jpeg == jpeg_bytes
 
 
 def test_publish_frame_uses_capped_stream_maxlen():
     bus = FakeBus()
-    for i in range(CAPPED_MAXLEN["frames"] + 5):
+    for i in range(CAPPED_MAXLEN["frames_raw"] + 5):
         publish_frame(
             bus,
             {
@@ -224,7 +224,7 @@ def test_publish_frame_uses_capped_stream_maxlen():
             },
         )
 
-    assert len(bus._streams["frames"]) == CAPPED_MAXLEN["frames"]  # noqa: SLF001
+    assert len(bus._streams["frames_raw"]) == CAPPED_MAXLEN["frames_raw"]  # noqa: SLF001
 
 
 def test_publish_audio_chunk_publishes_one_audio_chunk_event_with_decoded_pcm16():
@@ -279,7 +279,7 @@ def test_handle_media_message_ignores_malformed_frame_without_raising():
 
     asyncio.run(handle_media_message(bus, {"type": "frame", "jpeg_b64": "not base64!!"}))
 
-    assert "frames" not in bus._streams
+    assert "frames_raw" not in bus._streams
 
 
 def test_media_websocket_publishes_frame_event():
@@ -298,9 +298,9 @@ def test_media_websocket_publishes_frame_event():
         )
         websocket.close()
 
-    entries = bus._streams.get("frames", [])  # noqa: SLF001
+    entries = bus._streams.get("frames_raw", [])  # noqa: SLF001
     assert len(entries) == 1
-    event = Frame.model_validate_json(entries[0].data)
+    event = RawFrame.model_validate_json(entries[0].data)
     assert event.jpeg == jpeg_bytes
     assert event.width == 160
     assert event.height == 120
@@ -348,5 +348,5 @@ def test_media_websocket_survives_malformed_message():
         )
         websocket.close()
 
-    assert "frames" not in bus._streams
+    assert "frames_raw" not in bus._streams
     assert len(bus._streams.get("audio_in", [])) == 1

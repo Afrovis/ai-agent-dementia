@@ -1,13 +1,14 @@
 """Entry point for the `store` service: persists bus events to SQLite.
 
-`store` reads every stream except the capped `frames` and `audio_in`
-streams (per HANDOFF.md section 5: "Everything else is persisted to
-SQLite by `store`") via a Redis consumer group, and writes each event as
-one row in the generic `events` table (see `store.models.EventRow`).
+`store` reads every stream except the capped `frames`, `audio_in`, and
+`frames_raw` streams (per HANDOFF.md section 5: "Everything else is
+persisted to SQLite by `store`") via a Redis consumer group, and writes
+each event as one row in the generic `events` table (see
+`store.models.EventRow`).
 
 `PERSISTED_STREAMS` is derived from `nc_shared.events.EVENT_STREAMS`
 rather than hard-coded, so a new event added to `events.py` is picked up
-automatically unless it targets `frames` or `audio_in`.
+automatically unless it targets `frames`, `audio_in`, or `frames_raw`.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ GROUP = "store"
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(SERVICE_NAME)
 
-CAPPED_STREAMS = {"frames", "audio_in"}
+CAPPED_STREAMS = {"frames", "audio_in", "frames_raw"}
 PERSISTED_STREAMS = sorted(set(EVENT_STREAMS.values()) - CAPPED_STREAMS)
 
 
