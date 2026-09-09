@@ -5,15 +5,21 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "dashboard"
 version = "0.1.0"
-description = "Night Companion dashboard service (placeholder, not yet implemented)"
+description = "Night Companion dashboard service: caregiver web UI, Zones editor (issue #10)"
 requires-python = ">=3.12"
 dependencies = [
     "redis>=5.0",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "pyyaml>=6.0",
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest",
+    "httpx",
+    "pillow>=10.0",
     "ruff",
 ]
 
@@ -28,5 +34,9 @@ line-length = 100
 select = ["E", "F", "I", "UP"]
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
+# `../perceive` lets `tests/test_zones_store.py` import the real
+# `perceive.zones.load_zones` to check a file this service writes is read
+# back unchanged -- see `dashboard/zones_store.py`'s module docstring for
+# why that is a test-only import, not a runtime dependency.
+pythonpath = [".", "../perceive"]
 testpaths = ["tests"]
