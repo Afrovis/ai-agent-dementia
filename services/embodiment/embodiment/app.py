@@ -22,6 +22,12 @@ and mic audio) and publishes them onto the bus as `Frame`/`AudioChunk`
 events. `publish_frame`/`publish_audio_chunk` do the actual decode-and-
 publish work and are plain functions so tests can call them directly with a
 `FakeBus`, without going through a websocket at all.
+
+`GET /photos/{photo_id}` serves the optional photo a `Show` event points at.
+`resolve_photo` maps an id to a file, preferring caregiver uploads under
+`PHOTO_DIR` over the demo images bundled in `demo_photos/`. A missing photo
+answers 404 and the page hides its photo layer, which is the normal case on
+a fresh install where nothing has been uploaded yet.
 """
 
 from __future__ import annotations
@@ -31,11 +37,12 @@ import base64
 import binascii
 import json
 import logging
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from nc_shared.events import AudioChunk, Frame, Say, Show
@@ -46,6 +53,21 @@ GROUP = "embodiment"
 CONSUMER = "embodiment-1"
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+# Caregiver-uploaded photos live under the gitignored `data/` tree
+# (HANDOFF.md section 6), so a fresh install legitimately has none.
+DEFAULT_PHOTO_DIR = Path("data/photos")
+PHOTO_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp")
+
+# Placeholder images shipped with the service, so the fake agent's `demo_*`
+# photo ids resolve on a fresh checkout. Searched only after `photo_dir`, so
+# a real uploaded photo always wins over a demo one of the same name.
+DEMO_PHOTO_DIR = Path(__file__).parent / "demo_photos"
+
+# A `photo_id` is an opaque id the dashboard assigns on upload. Restricting
+# it to this character set is what keeps a crafted id such as
+# `../../etc/passwd` from escaping the photo directory.
+PHOTO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(SERVICE_NAME)
@@ -89,6 +111,31 @@ class ConnectionManager:
         """Push the last-known `Show` state to a newly connected `websocket`."""
         if self.last_show is not None:
             await websocket.send_text(json.dumps(self.last_show))
+
+
+def resolve_photo(
+    photo_dir: Path,
+    photo_id: str,
+    demo_dir: Path | None = DEMO_PHOTO_DIR,
+) -> Path | None:
+    """Return the file backing `photo_id`, or `None` if there is not one.
+
+    `photo_dir` (caregiver uploads) is searched first, then `demo_dir` (the
+    images shipped with the service), so an uploaded photo always shadows a
+    demo one. The id carries no extension, since the dashboard stores
+    whatever the caregiver uploaded, so each of `PHOTO_EXTENSIONS` is tried
+    in turn. Ids that do not match `PHOTO_ID_RE` are rejected before being
+    joined onto any directory, so no id can point outside them.
+    """
+    if not PHOTO_ID_RE.match(photo_id):
+        return None
+    directories = [photo_dir] if demo_dir is None else [photo_dir, demo_dir]
+    for directory in directories:
+        for extension in PHOTO_EXTENSIONS:
+            candidate = directory / f"{photo_id}{extension}"
+            if candidate.is_file():
+                return candidate
+    return None
 
 
 def _show_to_message(event: Show) -> dict:
@@ -221,9 +268,14 @@ async def handle_media_message(bus, message: dict, session_id: str | None = None
         logger.warning("ignoring malformed /media message of type %r", message_type)
 
 
-def create_app(bus) -> FastAPI:
-    """Build the FastAPI app, wiring `bus` into the websocket broadcast loop."""
+def create_app(bus, photo_dir: Path | str = DEFAULT_PHOTO_DIR) -> FastAPI:
+    """Build the FastAPI app, wiring `bus` into the websocket broadcast loop.
+
+    `photo_dir` is where caregiver-uploaded photos referenced by a `Show`
+    event's `photo_id` are read from.
+    """
     manager = ConnectionManager()
+    photo_dir = Path(photo_dir)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -242,6 +294,20 @@ def create_app(bus) -> FastAPI:
     @app.get("/")
     async def index() -> FileResponse:
         return FileResponse(STATIC_DIR / "index.html")
+
+    @app.get("/photos/{photo_id}")
+    async def photo(photo_id: str) -> FileResponse:
+        """Serve the caregiver photo a `Show` event referenced by `photo_id`.
+
+        A missing photo is an ordinary state, not a failure: the caregiver
+        may not have uploaded one yet, or may have deleted it. This answers
+        404 and the page drops its photo layer, so the night display never
+        shows a broken image.
+        """
+        path = resolve_photo(photo_dir, photo_id)
+        if path is None:
+            raise HTTPException(status_code=404, detail="photo not found")
+        return FileResponse(path)
 
     @app.websocket("/ws")
     async def ws_endpoint(websocket: WebSocket) -> None:

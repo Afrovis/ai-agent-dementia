@@ -58,6 +58,11 @@ class Step:
 # tree's illustrative strategies (HANDOFF.md sections 6 to 7). The real
 # strategy engine does not exist yet; text here is a dev-only stand-in so
 # the face and dashboard have something to render.
+#
+# The `photo_id`s below use the `demo_` prefix on purpose. Real photos are
+# caregiver-uploaded into the gitignored `data/` tree, so a fresh checkout
+# has none; `embodiment` ships matching demo images so the photo layer is
+# exercised out of the box instead of 404ing on every cycle.
 STEPS: list[Step] = [
     Step(
         face="asleep",
@@ -88,7 +93,7 @@ STEPS: list[Step] = [
         body="Goal: return_to_bed. Strategy: orient_time_place, in your bedroom.",
         brightness=0.6,
         dwell_s=3,
-        photo_id="room_familiar",
+        photo_id="demo_room",
     ),
     Step(
         face="listening",
@@ -128,7 +133,7 @@ STEPS: list[Step] = [
         body="Goal: comfort. Strategy: familiar_voice.",
         brightness=0.5,
         dwell_s=3,
-        photo_id="family_photo",
+        photo_id="demo_family",
     ),
     Step(
         face="awake",

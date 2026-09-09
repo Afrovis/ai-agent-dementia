@@ -16,6 +16,14 @@
 
   const FACE_STATES = ["asleep", "awake", "speaking", "listening"];
 
+  // A photo the caregiver never uploaded (or has since deleted) answers 404.
+  // Fade the layer back out and hide it rather than leaving the browser's
+  // broken-image glyph on a bedroom wall at 3am.
+  photoImgEl.addEventListener("error", () => {
+    photoEl.classList.remove("visible");
+    photoEl.classList.add("hidden");
+  });
+
   function applyShow(msg) {
     if (msg.face && FACE_STATES.includes(msg.face)) {
       FACE_STATES.forEach((state) => faceEl.classList.remove(state));
