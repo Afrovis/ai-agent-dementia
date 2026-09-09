@@ -1,21 +1,31 @@
-"""Tests for the `embodiment` placeholder's Health emission, using FakeBus (no Redis)."""
+"""Tests for `embodiment.main`'s HTTPS-vs-HTTP fallback logic (no real certs, no server)."""
 
-from nc_shared.bus import FakeBus
-from nc_shared.events import Health
+from pathlib import Path
 
-from embodiment.main import emit_placeholder_health
+from embodiment.main import ssl_kwargs_for
 
 
-def test_emit_placeholder_health_publishes_one_event():
-    bus = FakeBus()
-    bus.ensure_group("health", "test-group")
+def test_ssl_kwargs_for_returns_empty_dict_when_certs_missing(tmp_path: Path):
+    missing_cert = tmp_path / "lan.pem"
+    missing_key = tmp_path / "lan-key.pem"
 
-    emit_placeholder_health(bus)
+    assert ssl_kwargs_for(str(missing_cert), str(missing_key)) == {}
 
-    read = bus.read("health", "test-group", "consumer-1")
-    assert len(read) == 1
-    _, event = read[0]
-    assert isinstance(event, Health)
-    assert event.service == "embodiment"
-    assert event.ok is False
-    assert event.detail == "placeholder"
+
+def test_ssl_kwargs_for_returns_paths_when_both_certs_exist(tmp_path: Path):
+    cert_file = tmp_path / "lan.pem"
+    cert_key = tmp_path / "lan-key.pem"
+    cert_file.write_text("cert")
+    cert_key.write_text("key")
+
+    result = ssl_kwargs_for(str(cert_file), str(cert_key))
+
+    assert result == {"ssl_certfile": str(cert_file), "ssl_keyfile": str(cert_key)}
+
+
+def test_ssl_kwargs_for_returns_empty_dict_when_only_cert_exists(tmp_path: Path):
+    cert_file = tmp_path / "lan.pem"
+    cert_key = tmp_path / "lan-key.pem"
+    cert_file.write_text("cert")
+
+    assert ssl_kwargs_for(str(cert_file), str(cert_key)) == {}
