@@ -11,3 +11,11 @@ photo always shadows a demo one of the same id.
 These are not photographs of anyone. They are flat, generated washes, kept
 dark and low contrast because they render behind the face at 0.6 opacity
 under the night brightness overlay. Replace them freely.
+
+Regenerate them with the stdlib-only writer in `../../tools`, which is
+deterministic and rewrites these exact bytes:
+
+```
+python services/embodiment/tools/generate_demo_photos.py \
+    services/embodiment/embodiment/demo_photos
+```
