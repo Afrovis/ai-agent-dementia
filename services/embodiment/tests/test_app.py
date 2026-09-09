@@ -1,12 +1,21 @@
 """Tests for the `embodiment` FastAPI app, using `FakeBus` (no Redis, no real TLS)."""
 
 import asyncio
+import base64
 
 from fastapi.testclient import TestClient
 from nc_shared.bus import FakeBus
-from nc_shared.events import Say, Show
+from nc_shared.events import AudioChunk, Frame, Say, Show
+from nc_shared.replay import CAPPED_MAXLEN
 
-from embodiment.app import ConnectionManager, broadcast_loop, create_app
+from embodiment.app import (
+    ConnectionManager,
+    broadcast_loop,
+    create_app,
+    handle_media_message,
+    publish_audio_chunk,
+    publish_frame,
+)
 
 
 def test_index_serves_face_page():
@@ -89,3 +98,172 @@ def test_websocket_delivers_say_event_published_after_connect():
 
     assert message["type"] == "say"
     assert message["text"] == "It is night."
+
+
+def test_publish_frame_publishes_one_frame_event_with_decoded_jpeg():
+    bus = FakeBus()
+    jpeg_bytes = b"\xff\xd8\xff\xd9fake-jpeg-bytes"
+
+    event = publish_frame(
+        bus,
+        {
+            "type": "frame",
+            "jpeg_b64": base64.b64encode(jpeg_bytes).decode("ascii"),
+            "width": 320,
+            "height": 240,
+        },
+        session_id="sess-1",
+    )
+
+    assert isinstance(event, Frame)
+    assert event.jpeg == jpeg_bytes
+    assert event.width == 320
+    assert event.height == 240
+    assert event.source_kind == "browser"
+    assert event.source == "embodiment"
+    assert event.session_id == "sess-1"
+
+    entries = bus._streams["frames"]  # noqa: SLF001 - inspecting FakeBus internals for the test
+    assert len(entries) == 1
+    assert Frame.model_validate_json(entries[0].data).jpeg == jpeg_bytes
+
+
+def test_publish_frame_uses_capped_stream_maxlen():
+    bus = FakeBus()
+    for i in range(CAPPED_MAXLEN["frames"] + 5):
+        publish_frame(
+            bus,
+            {
+                "type": "frame",
+                "jpeg_b64": base64.b64encode(f"frame-{i}".encode()).decode("ascii"),
+                "width": 1,
+                "height": 1,
+            },
+        )
+
+    assert len(bus._streams["frames"]) == CAPPED_MAXLEN["frames"]  # noqa: SLF001
+
+
+def test_publish_audio_chunk_publishes_one_audio_chunk_event_with_decoded_pcm16():
+    bus = FakeBus()
+    pcm16_bytes = b"\x00\x01\x02\x03"
+
+    event = publish_audio_chunk(
+        bus,
+        {
+            "type": "audio",
+            "pcm16_b64": base64.b64encode(pcm16_bytes).decode("ascii"),
+            "sample_rate": 16000,
+        },
+        session_id="sess-2",
+    )
+
+    assert isinstance(event, AudioChunk)
+    assert event.pcm16 == pcm16_bytes
+    assert event.sample_rate == 16000
+    assert event.source == "embodiment"
+    assert event.session_id == "sess-2"
+
+    entries = bus._streams["audio_in"]  # noqa: SLF001
+    assert len(entries) == 1
+
+
+def test_publish_audio_chunk_uses_capped_stream_maxlen():
+    bus = FakeBus()
+    for i in range(CAPPED_MAXLEN["audio_in"] + 5):
+        publish_audio_chunk(
+            bus,
+            {
+                "type": "audio",
+                "pcm16_b64": base64.b64encode(f"chunk-{i}".encode()).decode("ascii"),
+                "sample_rate": 16000,
+            },
+        )
+
+    assert len(bus._streams["audio_in"]) == CAPPED_MAXLEN["audio_in"]  # noqa: SLF001
+
+
+def test_handle_media_message_ignores_unknown_type_without_raising():
+    bus = FakeBus()
+
+    asyncio.run(handle_media_message(bus, {"type": "bogus"}))
+
+    assert bus._streams == {}  # noqa: SLF001 - nothing should have been published
+
+
+def test_handle_media_message_ignores_malformed_frame_without_raising():
+    bus = FakeBus()
+
+    asyncio.run(handle_media_message(bus, {"type": "frame", "jpeg_b64": "not base64!!"}))
+
+    assert "frames" not in bus._streams
+
+
+def test_media_websocket_publishes_frame_event():
+    bus = FakeBus()
+    app = create_app(bus)
+    jpeg_bytes = b"jpeg-bytes-over-the-wire"
+
+    with TestClient(app) as client, client.websocket_connect("/media") as websocket:
+        websocket.send_json(
+            {
+                "type": "frame",
+                "jpeg_b64": base64.b64encode(jpeg_bytes).decode("ascii"),
+                "width": 160,
+                "height": 120,
+            }
+        )
+        websocket.close()
+
+    entries = bus._streams.get("frames", [])  # noqa: SLF001
+    assert len(entries) == 1
+    event = Frame.model_validate_json(entries[0].data)
+    assert event.jpeg == jpeg_bytes
+    assert event.width == 160
+    assert event.height == 120
+    assert event.source_kind == "browser"
+
+
+def test_media_websocket_publishes_audio_chunk_event():
+    bus = FakeBus()
+    app = create_app(bus)
+    pcm16_bytes = b"\x10\x20\x30\x40"
+
+    with TestClient(app) as client, client.websocket_connect("/media") as websocket:
+        websocket.send_json(
+            {
+                "type": "audio",
+                "pcm16_b64": base64.b64encode(pcm16_bytes).decode("ascii"),
+                "sample_rate": 16000,
+            }
+        )
+        websocket.close()
+
+    entries = bus._streams.get("audio_in", [])  # noqa: SLF001
+    assert len(entries) == 1
+    event = AudioChunk.model_validate_json(entries[0].data)
+    assert event.pcm16 == pcm16_bytes
+    assert event.sample_rate == 16000
+
+
+def test_media_websocket_survives_malformed_message():
+    bus = FakeBus()
+    app = create_app(bus)
+
+    with TestClient(app) as client, client.websocket_connect("/media") as websocket:
+        websocket.send_text("not even json")
+        websocket.send_json({"type": "unknown_thing"})
+        websocket.send_json({"type": "frame", "jpeg_b64": "!!not base64!!"})
+        # The connection should still be alive after three bad messages: a
+        # well-formed one right after should still get published normally.
+        websocket.send_json(
+            {
+                "type": "audio",
+                "pcm16_b64": base64.b64encode(b"ok").decode("ascii"),
+                "sample_rate": 16000,
+            }
+        )
+        websocket.close()
+
+    assert "frames" not in bus._streams
+    assert len(bus._streams.get("audio_in", [])) == 1

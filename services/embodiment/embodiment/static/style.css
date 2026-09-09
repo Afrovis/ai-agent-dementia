@@ -214,3 +214,16 @@ html, body {
 .hidden {
   display: none;
 }
+
+/* Browser media bridge status (issue #28): a small, unobtrusive line for
+   debugging getUserMedia/websocket state on this trusted bedside device.
+   Not meant to be noticed by the person; low contrast, bottom corner. */
+#media-status {
+  position: fixed;
+  bottom: 0.5rem;
+  right: 0.75rem;
+  z-index: 20;
+  font-size: 12px;
+  color: var(--amber-dim);
+  opacity: 0.6;
+}

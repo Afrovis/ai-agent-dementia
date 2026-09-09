@@ -15,11 +15,20 @@ it can be tested with `nc_shared.bus.FakeBus` and no real Redis or network:
   instead of looping forever.
 - `create_app(bus)` wires a `ConnectionManager` into the routes and starts
   `broadcast_loop` as a background task on startup.
+
+The browser media bridge (issue #28) is the reverse direction: the `/media`
+websocket receives JSON messages from the browser (captured webcam frames
+and mic audio) and publishes them onto the bus as `Frame`/`AudioChunk`
+events. `publish_frame`/`publish_audio_chunk` do the actual decode-and-
+publish work and are plain functions so tests can call them directly with a
+`FakeBus`, without going through a websocket at all.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -29,7 +38,8 @@ from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from nc_shared.events import Say, Show
+from nc_shared.events import AudioChunk, Frame, Say, Show
+from nc_shared.replay import CAPPED_MAXLEN
 
 SERVICE_NAME = "embodiment"
 GROUP = "embodiment"
@@ -138,6 +148,79 @@ async def broadcast_loop(
                 bus.ack(stream, GROUP, msg_id)
 
 
+def publish_frame(bus, message: dict, session_id: str | None = None) -> Frame:
+    """Decode a `{"type": "frame", ...}` browser message and publish it as `Frame`.
+
+    Raises `ValueError` (with a message safe to log) if `message` is missing
+    a required field or `jpeg_b64` is not valid base64; the caller decides
+    whether to disconnect or just skip the message.
+    """
+    try:
+        jpeg = base64.b64decode(message["jpeg_b64"], validate=True)
+    except (KeyError, binascii.Error) as exc:
+        raise ValueError(f"malformed frame message: {exc}") from exc
+    try:
+        width = int(message["width"])
+        height = int(message["height"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"malformed frame message: {exc}") from exc
+
+    event = Frame(
+        source=SERVICE_NAME,
+        session_id=session_id,
+        jpeg=jpeg,
+        width=width,
+        height=height,
+        source_kind="browser",
+    )
+    bus.publish(event, maxlen=CAPPED_MAXLEN["frames"])
+    return event
+
+
+def publish_audio_chunk(bus, message: dict, session_id: str | None = None) -> AudioChunk:
+    """Decode a `{"type": "audio", ...}` browser message and publish it as `AudioChunk`.
+
+    Raises `ValueError` (with a message safe to log) if `message` is missing
+    a required field, `pcm16_b64` is not valid base64, or `sample_rate` is
+    not the fixed `16000` the event schema requires.
+    """
+    try:
+        pcm16 = base64.b64decode(message["pcm16_b64"], validate=True)
+    except (KeyError, binascii.Error) as exc:
+        raise ValueError(f"malformed audio message: {exc}") from exc
+    try:
+        sample_rate = int(message["sample_rate"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"malformed audio message: {exc}") from exc
+
+    event = AudioChunk(
+        source=SERVICE_NAME,
+        session_id=session_id,
+        pcm16=pcm16,
+        sample_rate=sample_rate,
+    )
+    bus.publish(event, maxlen=CAPPED_MAXLEN["audio_in"])
+    return event
+
+
+async def handle_media_message(bus, message: dict, session_id: str | None = None) -> None:
+    """Dispatch one decoded `/media` websocket message to the right publisher.
+
+    Unknown or malformed messages are logged and dropped rather than raised,
+    so one bad message from the browser never tears down the connection.
+    """
+    message_type = message.get("type")
+    try:
+        if message_type == "frame":
+            await asyncio.to_thread(publish_frame, bus, message, session_id)
+        elif message_type == "audio":
+            await asyncio.to_thread(publish_audio_chunk, bus, message, session_id)
+        else:
+            logger.warning("ignoring /media message with unknown type: %r", message_type)
+    except ValueError:
+        logger.warning("ignoring malformed /media message of type %r", message_type)
+
+
 def create_app(bus) -> FastAPI:
     """Build the FastAPI app, wiring `bus` into the websocket broadcast loop."""
     manager = ConnectionManager()
@@ -171,5 +254,29 @@ def create_app(bus) -> FastAPI:
                 await websocket.receive_text()
         except WebSocketDisconnect:
             manager.disconnect(websocket)
+
+    @app.websocket("/media")
+    async def media_endpoint(websocket: WebSocket) -> None:
+        """Receive captured webcam frames and mic audio from the browser.
+
+        The browser sends JSON text messages shaped as
+        `{"type": "frame", "jpeg_b64": ..., "width": ..., "height": ...}` or
+        `{"type": "audio", "pcm16_b64": ..., "sample_rate": 16000}`. Each is
+        published onto the bus as a `Frame`/`AudioChunk` event; a malformed
+        or unrecognised message is logged and skipped, not fatal to the
+        connection (issue #28).
+        """
+        await websocket.accept()
+        try:
+            while True:
+                raw = await websocket.receive_text()
+                try:
+                    message = json.loads(raw)
+                except json.JSONDecodeError:
+                    logger.warning("ignoring non-JSON /media message")
+                    continue
+                await handle_media_message(bus, message)
+        except WebSocketDisconnect:
+            pass
 
     return app
