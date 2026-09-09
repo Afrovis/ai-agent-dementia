@@ -199,7 +199,7 @@ Run tests for one service: `cd services/agent && pytest`.
 
 | Question | Default until decided | Decider |
 |---|---|---|
-| Pose model: MediaPipe Pose vs YOLOv8-pose | MediaPipe, evaluate both in issue 8 | whoever does issue 8, with bench numbers |
+| Pose model: MediaPipe Pose vs YOLOv8-pose | MediaPipe, both backends built behind `PERCEIVE_POSE_BACKEND` in issue 8; no IR captures of consenting volunteers exist yet, so the empirical bench comparison is deferred to issue 11 | whoever does issue 11, with bench numbers |
 | Local text model | `llama3.1:8b`, compare 3 on the dialogue bench in issue 17 | issue 17 |
 | Smart plug for path light in v1 | manual night light, plug behind a feature flag | project owner |
 | Morning summary contents | count, durations, what helped, faults | project owner after a caregiver interview |

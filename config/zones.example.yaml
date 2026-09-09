@@ -1,0 +1,26 @@
+# Caregiver-drawn zones for `perceive` (issue #8), in normalised frame
+# coordinates (0.0-1.0, origin top-left, x right, y down), so they survive a
+# camera resolution change. Copy this file to `config/zones.yaml` (or point
+# ZONES_PATH at your own file) and replace the example polygons below with
+# ones drawn against an actual daylight frame from the room -- PLAN.md
+# section 6.2: "the bed zone, door zone, and bathroom-direction zone are
+# drawn once in the dashboard on a daylight frame." Until the dashboard's
+# Zones page exists (issue #22+), edit this file by hand.
+#
+# Each zone is a polygon: a list of [x, y] points, in drawing order, closed
+# automatically (no need to repeat the first point at the end). A missing
+# key, an empty list, or a missing/unreadable file all degrade to that zone
+# (or every zone) classifying as "other" rather than crashing `perceive` --
+# a zone-less system still has to report person states, it just cannot
+# reason about bed/door/bathroom-path at all. `perceive` logs a warning
+# when it falls back like this.
+#
+# Precedence when polygons overlap is fixed, not configurable: bed, then
+# door, then bathroom_path, then "other" (see perceive/zones.py for why).
+# Draw the zones not to overlap where it matters -- the fixed order is a
+# safety fallback for a caregiver's imperfect drawing, not a design tool to
+# lean on.
+
+bed: [[0.0, 0.2], [0.4, 0.2], [0.4, 0.8], [0.0, 0.8]]
+door: [[0.85, 0.0], [1.0, 0.0], [1.0, 1.0], [0.85, 1.0]]
+bathroom_path: [[0.4, 0.85], [1.0, 0.85], [1.0, 1.0], [0.4, 1.0]]
