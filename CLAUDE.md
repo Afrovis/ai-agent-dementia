@@ -15,7 +15,7 @@ another service directly.
 | Service | Role |
 | --- | --- |
 | `bus` | Redis streams broker. The only shared dependency. |
-| `capture` | Publishes `Frame` events from the browser webcam or a camera. |
+| `capture` | Motion-gates raw frames and publishes `Frame`. The only producer of `frames`. |
 | `perceive` | Person detection and pose classification on frames. |
 | `listen` | Voice activity detection and speech to text, publishes `Utterance`. |
 | `agent` | Session state machine. Emits `Say`, `Show`, `Notify`, `GoalChanged`. |
@@ -103,9 +103,27 @@ permission, then watch these climb above zero. They sit at zero when no
 browser is attached, which is correct rather than broken:
 
 ```sh
-docker compose exec bus redis-cli XLEN frames
+docker compose exec bus redis-cli XLEN frames_raw
 docker compose exec bus redis-cli XLEN audio_in
 ```
+
+`frames_raw` is what the browser bridge writes. `capture` reads it, applies
+the motion gate, and republishes onto `frames`, so watch that one to see
+what `perceive` will actually receive:
+
+```sh
+docker compose exec bus redis-cli XLEN frames
+```
+
+Both streams are capped at 50 entries, so `XLEN` stops climbing there even
+while frames keep flowing. A length that sits below the cap and never moves
+is the real sign something is wrong.
+
+`frames` fills more slowly than `frames_raw` by design. The browser sends
+2 fps; the gate publishes all of it while the room moves, and drops to
+0.5 fps once the room has been still for 30 seconds. Tune that with
+`CAPTURE_FPS`, `CAPTURE_IDLE_FPS`, `CAPTURE_STATIC_SECONDS` and
+`CAPTURE_MOTION_THRESHOLD` in `.env`.
 
 To exercise notify, publish an event by hand. `Notify` requires a `source`
 field, which is easy to miss:
@@ -125,6 +143,11 @@ Bus(redis.Redis.from_url('redis://bus:6379')).publish(
 
 `dashboard` on port 8444 is a placeholder. It logs that it is not implemented
 and serves nothing. Not a regression, and not part of M0.
+
+`capture` needs OpenCV only for `CAPTURE_SOURCE=usb` or `rtsp`. The browser
+MVP source is the default and needs none of it, so the container does not
+install it. Set the source and install the `camera` extra together, or the
+service fails at startup with a message telling you exactly that.
 
 `notify` falls back to a logging backend when `NTFY_URL` is empty, so alerts
 appear in `docker compose logs notify` instead of on a phone. Set the variable
