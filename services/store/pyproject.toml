@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "store"
+version = "0.1.0"
+description = "Night Companion store service: persists bus events to SQLite"
+requires-python = ">=3.12"
+dependencies = [
+    "redis>=5.0",
+    "sqlmodel>=0.0.21",
+]
+# `nc_shared` is a sibling package, not a PyPI package: install it with
+# `pip install -e ../../shared` (the Dockerfile does this).
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[tool.setuptools.packages.find]
+include = ["store*"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
