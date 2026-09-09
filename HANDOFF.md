@@ -171,7 +171,7 @@ open https://$(hostname).local:8443/         # embodiment
 open https://$(hostname).local:8444/         # dashboard
 ```
 
-Without hardware: `python -m nc_tools.replay tests/fixtures/events/night-01.jsonl --speed 10` publishes recorded events to the bus.
+Without hardware: `python -m nc_shared.replay play redis://localhost:6379 tests/fixtures/events/night-01.jsonl --speed 10` publishes recorded events to the bus. `python -m nc_shared.replay record redis://localhost:6379 out.jsonl` records live bus traffic to a JSONL file in the same shape.
 
 Run tests for one service: `cd services/agent && pytest`.
 
