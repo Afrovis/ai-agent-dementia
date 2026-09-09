@@ -18,7 +18,8 @@ A person living with dementia at home often wakes at night, is disoriented in ti
 |---|---|
 | Person and operator | Person with dementia at home. A family caregiver configures the system and receives alerts. |
 | Scope v1 | Single bedroom. One person. Night hours only (configurable window, e.g. 22:00 to 07:00). |
-| Hardware v1 | The M4 Mac (16 GB) is the box. Everything runs in Docker except Ollama, which runs on the host for Metal GPU access. USB IR camera, USB mic or conference speakerphone, a monitor or tablet as the screen. |
+| Hardware v1 | The M4 Mac (16 GB) is the box. Everything runs in Docker except Ollama, which runs on the host for Metal GPU access. |
+| Patient-facing device (MVP) | A MacBook screen. The embodiment is a web page served over the LAN, so any laptop or tablet can be the bedside device by opening one URL. For the MVP the browser also provides the mic, speaker, and webcam. USB IR camera and speakerphone are added in M1 and M3 as alternative sources. |
 | Sensing | Camera with a local vision model, plus two-way voice. Bed sensor and door sensors are deferred to v2 but the event model already accounts for them. |
 | LLM locality | Local by default (Ollama). Cloud fallback for hard reasoning only, text only, never images, behind an explicit switch. |
 | Embodiment | Simple animated face with very large text (time of night, one sentence, optional family photo). |
@@ -73,21 +74,25 @@ Services communicate over a small event bus. Each service is a separate containe
 
 | Service | Responsibility | Tech |
 |---|---|---|
-| `capture` | Reads the camera at low frame rate (2 to 5 fps at night), detects motion, publishes frames only when something changes. | OpenCV |
+| `capture` | Receives frames from a source and publishes them at low frame rate (2 to 5 fps at night), motion-gated. Sources: browser webcam streamed from the embodiment page (MVP), USB or RTSP camera (M1). | OpenCV, WebRTC or WebSocket receiver |
 | `perceive` | Person detection and pose classification: `in_bed`, `sitting_up`, `standing`, `walking`, `on_floor`, `absent`. Fast model on every frame, vision LLM only on scene changes to describe what the person is doing ("holding a coat", "at the door"). Publishes `PersonState` events. | YOLO or MediaPipe for pose, Ollama vision model (e.g. `moondream` or `qwen2.5-vl` small) for descriptions |
-| `listen` | Voice activity detection, speech to text, publishes `Utterance` events. Only active while a session is open plus a short grace window. | faster-whisper (small.en) |
+| `listen` | Voice activity detection, speech to text, publishes `Utterance` events. Only active while a session is open plus a short grace window. Audio arrives from the browser mic on the embodiment page (MVP) or a local speakerphone (M3). | faster-whisper (small.en) |
 | `agent` | The core. Owns sessions, goals, strategies, and the LLM conversation. Consumes state and utterances, emits `Say`, `Show`, `Notify`, and `GoalChanged` events. | Python, Ollama text model, optional Claude fallback |
-| `embodiment` | Fullscreen kiosk page: animated face, big text, photo. Plays TTS audio. Consumes `Say` and `Show`. | Browser kiosk (Chromium) served by a small FastAPI app, WebSocket updates, Piper TTS |
+| `embodiment` | Fullscreen web page reachable over the LAN: animated face, big text, photo. Plays TTS audio. In the MVP it also captures mic and webcam with getUserMedia and streams them to `listen` and `capture`. Consumes `Say` and `Show`. Served over HTTPS with a mkcert certificate because getUserMedia requires it off localhost. | FastAPI app, WebSocket updates, Piper TTS, any modern browser in fullscreen |
 | `notify` | Sends caregiver alerts. Pluggable backends: ntfy (default, self-hostable), Pushover, Telegram. Repeats until acknowledged for critical alerts. | HTTP |
 | `store` | SQLite database of events, sessions, and configuration. Nightly summary generation. | SQLite via SQLModel |
 | `dashboard` | Caregiver web UI: configure person profile and phrases, upload photos, review night timelines, acknowledge alerts, watch a live status (not a live video by default). | FastAPI + HTMX |
 | `bus` | Redis with streams, gives at-least-once delivery and replay for debugging. | Redis |
 
-### 4.2 Hardware bill for v1
+### 4.2 Hardware bill
+
+MVP: the box plus a MacBook running one browser tab in fullscreen. The tab is the screen, mic, speaker, and camera. Testing happens with a dim lamp on because a laptop webcam has no night vision.
+
+v1 additions:
 
 - USB camera with IR night vision (e.g. a 1080p USB camera with IR LEDs, or a Wyze v3 in RTSP mode).
 - USB conference speakerphone (mic array plus speaker, echo cancellation in hardware). This matters: the agent must hear the person while it is speaking.
-- Screen: 10 to 15 inch monitor, or an old iPad in kiosk mode pointing at the embodiment page.
+- Screen: the MacBook, a 10 to 15 inch monitor on a mini PC, or an old iPad in kiosk mode. All of them just open the embodiment URL.
 - Soft warm light controllable via a smart plug (optional but strongly helps: light up the path to the bathroom).
 
 ## 5. The session model
@@ -243,7 +248,8 @@ Before any real use:
 
 ### Milestone 0: Skeleton (week 1 to 2)
 - Repo, docker compose, Redis bus, event schemas (pydantic), SQLite store.
-- `embodiment` page with the face and text, driven by a fake agent that cycles states.
+- `embodiment` page with the face and text, served over HTTPS on the LAN, driven by a fake agent that cycles states. Tested on the MacBook.
+- Browser media bridge: getUserMedia in the page streams webcam and mic to the box.
 - `notify` with ntfy.
 - Dev tooling: event replay from a JSONL file so every service can be tested without a camera.
 
@@ -304,6 +310,5 @@ ai-agent-dementia/
 
 - Which pose model handles IR and blankets best? Evaluate MediaPipe Pose vs YOLOv8-pose on real captures.
 - Which local text model gives the warmest, most rule-following one-sentence outputs? Compare 3 candidates on the dialogue bench.
-- Screen hardware: monitor next to the bed vs. iPad. An iPad can also be the speaker and mic, which simplifies the setup.
 - Is a smart plug for path lighting in scope for v1, or manual night light?
 - What does the caregiver want to see in the morning summary? Interview before building the dashboard.
