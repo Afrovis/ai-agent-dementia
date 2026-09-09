@@ -49,9 +49,13 @@ def run() -> None:
     port = int(os.environ.get("EMBODIMENT_PORT", "8443"))
     cert_file = os.environ.get("CERT_FILE", "data/certs/lan.pem")
     cert_key = os.environ.get("CERT_KEY", "data/certs/lan-key.pem")
+    # `or` rather than a `get` default: compose passes a variable that is
+    # missing from `.env` through as an empty string, and an empty path
+    # would silently resolve no photos at all.
+    photo_dir = os.environ.get("PHOTO_DIR") or "data/photos"
 
     bus = Bus(redis.Redis.from_url(redis_url))
-    app = create_app(bus)
+    app = create_app(bus, photo_dir=photo_dir)
 
     ssl_kwargs = ssl_kwargs_for(cert_file, cert_key)
     if ssl_kwargs:

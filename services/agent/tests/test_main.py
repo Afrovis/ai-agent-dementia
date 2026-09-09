@@ -77,3 +77,10 @@ def test_steps_vary_brightness():
 
 def test_at_least_one_step_has_a_photo_id():
     assert any(step.photo_id is not None for step in STEPS)
+
+
+def test_photo_ids_are_demo_ids():
+    # A fresh checkout has no caregiver-uploaded photos, so the fake agent
+    # may only reference the `demo_` images that `embodiment` ships. Any
+    # other id would 404 on every cycle of `docker compose up`.
+    assert all(step.photo_id.startswith("demo_") for step in STEPS if step.photo_id is not None)
