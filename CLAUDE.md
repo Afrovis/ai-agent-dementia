@@ -1,0 +1,149 @@
+# CLAUDE.md
+
+Guidance for agents and contributors working in this repository.
+
+Read [PLAN.md](PLAN.md) for the design and [HANDOFF.md](HANDOFF.md) for the
+execution brief before picking up an issue. This file covers the operational
+knowledge that is easy to lose: how to run the stack, how to test it without
+hardware, and the TLS setup that the browser media bridge depends on.
+
+## Architecture
+
+Every service is a container that talks over Redis streams. Nothing calls
+another service directly.
+
+| Service | Role |
+| --- | --- |
+| `bus` | Redis streams broker. The only shared dependency. |
+| `capture` | Publishes `Frame` events from the browser webcam or a camera. |
+| `perceive` | Person detection and pose classification on frames. |
+| `listen` | Voice activity detection and speech to text, publishes `Utterance`. |
+| `agent` | Session state machine. Emits `Say`, `Show`, `Notify`, `GoalChanged`. |
+| `embodiment` | Fullscreen HTTPS page: face, big text, photos, media bridge. |
+| `notify` | Caregiver alerts. ntfy by default. |
+| `store` | SQLite persistence and nightly summaries. |
+| `dashboard` | Caregiver web UI. Still a stub, see gotchas. |
+
+Event schemas and the bus wrapper live in `shared/nc_shared`. `events.py`
+holds the pydantic models and the two-way registry mapping each event class
+to its stream name. Add new events there, not in a service.
+
+## Running locally
+
+```sh
+cp .env.example .env
+docker compose up --build
+```
+
+Ports come from `.env`: embodiment on `EMBODIMENT_PORT` (8443), dashboard on
+`DASHBOARD_PORT` (8444), Redis published on 6379.
+
+`embodiment` serves HTTPS when `CERT_FILE` and `CERT_KEY` both exist, and
+falls back to plain HTTP otherwise. Plain HTTP is fine on `localhost`, which
+browsers treat as a trustworthy origin, but the media bridge will not work
+from any other device without a valid certificate.
+
+## TLS for the media bridge
+
+The page uses `getUserMedia`, which browsers only grant on a trustworthy
+origin. A self-signed certificate is not enough: browsers restrict camera and
+microphone access on pages with certificate errors, so the face renders but
+the bridge stays dead.
+
+Over Tailscale you can get a real Let's Encrypt certificate. Enable HTTPS
+Certificates on the DNS page of the Tailscale admin console first, then:
+
+```sh
+tailscale status --json | python3 -c "import json,sys; print(json.load(sys.stdin)['Self']['DNSName'].rstrip('.'))"
+tailscale cert --cert-file ts.crt --key-file ts.key <that-name>
+```
+
+On macOS the CLI is not on `PATH`. It lives at
+`/Applications/Tailscale.app/Contents/MacOS/Tailscale`.
+
+Two traps here.
+
+The macOS Tailscale client is sandboxed. It ignores the paths you give it and
+writes to `~/Library/Containers/io.tailscale.ipn.macos/Data`. Copy the files
+out of there into `data/certs/lan.pem` and `data/certs/lan-key.pem`, then
+`docker compose restart embodiment`.
+
+The certificate covers the tailnet name only. Once installed, `localhost`,
+the LAN address and the `.local` name all fail validation. Use the tailnet
+name everywhere, including on the host itself, where MagicDNS resolves it
+locally and validates cleanly.
+
+Certificates last 90 days. Re-run `tailscale cert` to renew, and remember the
+sandbox path again.
+
+Verify a certificate is genuinely trusted with strict checks, never with
+`curl -k` or a browser flag that ignores certificate errors:
+
+```sh
+curl -s -o /dev/null -w "%{http_code}\n" https://<name>:8443/
+openssl s_client -connect <name>:8443 -servername <name> </dev/null 2>/dev/null | grep 'Verify return code'
+```
+
+## Testing without a camera, mic or Ollama
+
+Every service must be testable with no hardware. Record live bus traffic to
+JSONL and replay it. Run the tooling inside a container, where `nc_shared` is
+already installed, rather than building a host virtualenv:
+
+```sh
+docker compose exec store python -m nc_shared.replay record redis://bus:6379 /app/data/rec.jsonl
+docker compose exec store python -m nc_shared.replay play redis://bus:6379 /app/data/rec.jsonl --speed 10
+```
+
+`./data` is mounted into every container, so a file written to `/app/data`
+appears in `data/` on the host.
+
+To check the media bridge, open the page, grant camera and microphone
+permission, then watch these climb above zero. They sit at zero when no
+browser is attached, which is correct rather than broken:
+
+```sh
+docker compose exec bus redis-cli XLEN frames
+docker compose exec bus redis-cli XLEN audio_in
+```
+
+To exercise notify, publish an event by hand. `Notify` requires a `source`
+field, which is easy to miss:
+
+```sh
+docker compose exec store python -c "
+import redis
+from nc_shared.bus import Bus
+from nc_shared.events import Notify
+Bus(redis.Redis.from_url('redis://bus:6379')).publish(
+    Notify(source='manual-test', level='attention', title='test',
+           body='hello', repeat_until_ack=False))
+"
+```
+
+## Gotchas
+
+`dashboard` on port 8444 is a placeholder. It logs that it is not implemented
+and serves nothing. Not a regression, and not part of M0.
+
+`notify` falls back to a logging backend when `NTFY_URL` is empty, so alerts
+appear in `docker compose logs notify` instead of on a phone. Set the variable
+to a hard-to-guess ntfy topic to test real delivery.
+
+Demo photos ship in `services/embodiment/embodiment/demo_photos` and resolve
+at `/photos/demo_family` and `/photos/demo_room`. Caregiver uploads under
+`PHOTO_DIR` shadow a demo photo of the same id.
+
+`data/` is gitignored. Certificates, the SQLite database and recordings all
+live there and none of them belong in a commit.
+
+## Conventions
+
+Log one structured JSON line per event to stdout, with a `service` field.
+
+Keep services independently testable. No service may require a camera, a
+microphone, Ollama or a live Redis to run its tests.
+
+This is not a medical device and not a substitute for supervision. Changes
+that affect what the person sees or hears at night deserve more care than the
+code alone suggests.
