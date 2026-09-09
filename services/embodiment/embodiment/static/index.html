@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Night Companion</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div id="brightness-overlay"></div>
+
+  <main id="stage">
+    <div id="photo" class="hidden">
+      <img id="photo-img" alt="" />
+    </div>
+
+    <section id="face-area">
+      <div id="face" class="face asleep" role="img" aria-label="companion face">
+        <div class="eye eye-left"></div>
+        <div class="eye eye-right"></div>
+        <div class="mouth"></div>
+      </div>
+    </section>
+
+    <section id="text-area">
+      <h1 id="headline">Good night</h1>
+      <p id="body-text"></p>
+    </section>
+  </main>
+
+  <script src="/static/script.js"></script>
+</body>
+</html>

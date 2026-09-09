@@ -91,6 +91,8 @@ services:
     environment:
       REDIS_URL: ${REDIS_URL}
       EMBODIMENT_PORT: ${EMBODIMENT_PORT}
+      CERT_FILE: ${CERT_FILE}
+      CERT_KEY: ${CERT_KEY}
     ports:
       - "${EMBODIMENT_PORT}:${EMBODIMENT_PORT}"
     volumes:
