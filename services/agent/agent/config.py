@@ -64,6 +64,29 @@ class AgentConfig:
     lying on the floor never is; that asymmetry is why `absent` gets a
     grace period and `on_floor` does not. `AGENT_ABSENT_LIMIT_SECONDS`."""
 
+    restroom_timeout_seconds: float = 900.0
+    """How long the `restroom` goal (issue #13) is allowed to sit unresolved
+    before `agent.session.Session` gives up waiting for the person to be
+    seen back at the bed and returns the goal to `return_to_bed` on its
+    own. This is a safety valve against the goal sticking forever, not a
+    claim that 15 minutes has any significance for actual bathroom use --
+    see `agent.goals`'s module docstring. `AGENT_RESTROOM_TIMEOUT_SECONDS`.
+    """
+
+    zone_confirm_readings: int = 3
+    """How many consecutive `PersonState` readings must agree on a zone
+    before that zone may drive a goal change (issue #13). `perceive`
+    computes `PersonState.zone` from a bare centroid-to-polygon lookup with
+    no hysteresis of its own -- only `state` gets that treatment, via
+    `perceive.classify.StateTracker.confirm_frames` -- and `bathroom_path`
+    and `bed` sit right next to each other, exactly where someone stands
+    at the start of a bathroom trip, so a single noisy reading must not be
+    enough to flip the goal and spam the caregiver's timeline with
+    `GoalChanged` events. `3`, the same default `PERCEIVE_CONFIRM_FRAMES`
+    uses for the analogous reason on `state`. Deliberately not applied to
+    HANDOFF.md rule 5, which must keep firing on the very first reading.
+    `AGENT_ZONE_CONFIRM_READINGS`."""
+
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> AgentConfig:
         """Build an `AgentConfig` from environment variables, defaults otherwise."""
@@ -76,6 +99,8 @@ class AgentConfig:
             in_bed_stable_seconds=float(env.get("AGENT_IN_BED_STABLE_SECONDS", "120")),
             floor_limit_seconds=float(env.get("AGENT_FLOOR_LIMIT_SECONDS", "0")),
             absent_limit_seconds=float(env.get("AGENT_ABSENT_LIMIT_SECONDS", "600")),
+            restroom_timeout_seconds=float(env.get("AGENT_RESTROOM_TIMEOUT_SECONDS", "900")),
+            zone_confirm_readings=int(env.get("AGENT_ZONE_CONFIRM_READINGS", "3")),
         )
 
     def in_night_window(self, when: datetime) -> bool:

@@ -8,7 +8,7 @@ nothing here sleeps for a real duration.
 from datetime import datetime, timedelta
 
 from nc_shared.bus import FakeBus
-from nc_shared.events import Notify, PersonState, SessionState, Show, Utterance
+from nc_shared.events import GoalChanged, Notify, PersonState, SessionState, Show, Utterance
 
 from agent.config import AgentConfig
 from agent.main import (
@@ -174,6 +174,55 @@ def test_maybe_emit_session_heartbeat_respects_interval():
 
     events = bus.read("session", "test", "c1", count=10)
     assert len(events) == 2
+
+
+def test_goal_changed_reaches_the_bus_with_correct_fields():
+    # `zone_confirm_readings=1` here: this test is about the `GoalChanged`
+    # wiring through `agent.main`, not the zone hysteresis itself, which
+    # `tests/test_session.py` covers directly.
+    bus = make_bus()
+    session = Session(config=AgentConfig(observe_seconds=1.0, zone_confirm_readings=1))
+    now_fn, advance = make_clock(NIGHT)
+
+    bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    advance(2)
+    run_once(bus, session, now_fn=now_fn)
+    assert session.phase.value == "ENGAGED"
+
+    bus.publish(
+        PersonState(source="perceive", state="walking", confidence=0.9, zone="bathroom_path")
+    )
+    advance(1)
+    run_once(bus, session, now_fn=now_fn)
+    assert session.goal == "restroom"
+
+    goal_events = bus.read("session", "test", "c1", count=10)
+    goal_changed = [e for _id, e in goal_events if isinstance(e, GoalChanged)]
+    assert len(goal_changed) == 1
+    assert goal_changed[0].from_goal == "return_to_bed"
+    assert goal_changed[0].to_goal == "restroom"
+    assert goal_changed[0].session_id == session.session_id
+
+
+def test_session_state_goal_reflects_the_live_goal():
+    bus = make_bus()
+    session = Session(config=AgentConfig(observe_seconds=1.0, zone_confirm_readings=1))
+    now_fn, advance = make_clock(NIGHT)
+
+    bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    advance(2)
+    run_once(bus, session, now_fn=now_fn)
+
+    bus.publish(
+        PersonState(source="perceive", state="walking", confidence=0.9, zone="bathroom_path")
+    )
+    advance(1)
+    published = run_once(bus, session, now_fn=now_fn)
+
+    assert any(event.goal == "restroom" for event in published)
+    assert session.goal == "restroom"
 
 
 def test_maybe_emit_health_respects_interval():

@@ -53,7 +53,7 @@ from datetime import datetime
 
 import redis
 from nc_shared.bus import Bus
-from nc_shared.events import Health, Notify, PersonState, SessionState, Show, Utterance
+from nc_shared.events import GoalChanged, Health, Notify, PersonState, SessionState, Show, Utterance
 
 from agent.config import AgentConfig
 from agent.rules import Phase
@@ -120,8 +120,13 @@ def _show_for_phase(phase: Phase, session_id: str | None) -> Show:
 
 def _publish_transition(bus, transition: Transition) -> SessionState:
     """Publish everything one `Transition` implies: `SessionState`, an
-    optional `Notify`, and the phase's `Show`. Returns the `SessionState`
-    published, for callers that just want to know what happened."""
+    optional `GoalChanged` (issue #13), an optional `Notify`, and the
+    phase's `Show`. Returns the `SessionState` published, for callers that
+    just want to know what happened.
+
+    `SessionState` is always republished here, even for a goal-only
+    update with no phase change, so `SessionState.goal` -- shown on the
+    dashboard timeline alongside `GoalChanged` -- never lags behind."""
     event = SessionState(
         source=SERVICE_NAME,
         session_id=transition.session_id,
@@ -136,6 +141,23 @@ def _publish_transition(bus, transition: Transition) -> SessionState:
         phase=event.phase,
         reason=transition.reason,
     )
+
+    if transition.goal_change is not None:
+        goal_change = transition.goal_change
+        goal_changed_event = GoalChanged(
+            source=SERVICE_NAME,
+            session_id=goal_change.session_id,
+            from_goal=goal_change.from_goal,
+            to_goal=goal_change.to_goal,
+            reason=goal_change.reason,
+        )
+        bus.publish(goal_changed_event)
+        _log(
+            "published GoalChanged",
+            event_type="GoalChanged",
+            from_goal=goal_changed_event.from_goal,
+            to_goal=goal_changed_event.to_goal,
+        )
 
     if transition.notify is not None:
         notify_event = Notify(
@@ -183,7 +205,7 @@ def run_once(
     for msg_id, event in person_messages:
         bus.ack(PERSON_STREAM, PERSON_GROUP, msg_id)
         assert isinstance(event, PersonState)
-        transition = session.on_person_state(event.state, now_fn())
+        transition = session.on_person_state(event.state, event.zone, now_fn())
         if transition is not None:
             published.append(_publish_transition(bus, transition))
 

@@ -40,12 +40,23 @@ Beyond that, nothing else. In particular:
 - `COOLDOWN` only exits to `IDLE` or, via rule 5, to `ESCALATED`. No new
   *nudging* session may start during cooldown, so
   `COOLDOWN -> OBSERVING`/`ENGAGED` are absent from the table on purpose.
+
+`validate_goal()` is the goal-change equivalent of `validate()`, added for
+issue #13: it checks a proposed goal change against `agent.goals.
+ALLOWED_GOAL_CHANGES` the same way `validate()` checks a proposed phase
+change against `ALLOWED_TRANSITIONS`, and for the same reason -- issue
+#15's `plan` will propose goal changes, and HANDOFF.md rule 1 requires
+every one of those proposals to pass through this layer before it has any
+effect. `agent.session.Session` already routes its own deterministic goal
+switches through it too, exactly as it does for phase changes.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+
+from agent.goals import ALLOWED_GOAL_CHANGES
 
 
 class Phase(StrEnum):
@@ -117,4 +128,24 @@ def validate(
             reason=f"strategy {strategy!r} is disabled or on cooldown",
         )
 
+    return RuleResult(accepted=True, reason=None)
+
+
+def validate_goal(current: str, proposed: str) -> RuleResult:
+    """Decide whether `current -> proposed` may happen at all, for goals.
+
+    Same shape and the same never-raise-for-an-ordinary-rejection
+    behaviour as `validate()`: rejects any goal change not present in
+    `agent.goals.ALLOWED_GOAL_CHANGES`, regardless of who is proposing it
+    -- `agent.session.Session`'s own deterministic switches today, an
+    LLM's `plan` output from issue #15 tomorrow. An unknown goal on either
+    side (not in `agent.goals.GOALS`) is rejected the same way, since it
+    simply cannot appear as a key or member of `ALLOWED_GOAL_CHANGES`.
+    """
+    allowed = ALLOWED_GOAL_CHANGES.get(current, frozenset())
+    if proposed not in allowed:
+        return RuleResult(
+            accepted=False,
+            reason=f"{current} -> {proposed} is not an allowed goal change",
+        )
     return RuleResult(accepted=True, reason=None)
