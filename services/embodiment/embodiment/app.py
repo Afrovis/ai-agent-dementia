@@ -18,10 +18,13 @@ it can be tested with `nc_shared.bus.FakeBus` and no real Redis or network:
 
 The browser media bridge (issue #28) is the reverse direction: the `/media`
 websocket receives JSON messages from the browser (captured webcam frames
-and mic audio) and publishes them onto the bus as `Frame`/`AudioChunk`
+and mic audio) and publishes them onto the bus as `RawFrame`/`AudioChunk`
 events. `publish_frame`/`publish_audio_chunk` do the actual decode-and-
 publish work and are plain functions so tests can call them directly with a
-`FakeBus`, without going through a websocket at all.
+`FakeBus`, without going through a websocket at all. Frames go on
+`frames_raw`, ungated, as `RawFrame`: `capture` (issue #7) is the one
+service that reads `frames_raw`, applies the motion gate, and republishes
+what it admits as `Frame` on `frames` (HANDOFF.md section 5).
 
 `GET /photos/{photo_id}` serves the optional photo a `Show` event points at.
 `resolve_photo` maps an id to a file, preferring caregiver uploads under
@@ -45,7 +48,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from nc_shared.events import AudioChunk, Frame, Say, Show
+from nc_shared.events import AudioChunk, RawFrame, Say, Show
 from nc_shared.replay import CAPPED_MAXLEN
 
 SERVICE_NAME = "embodiment"
@@ -195,8 +198,13 @@ async def broadcast_loop(
                 bus.ack(stream, GROUP, msg_id)
 
 
-def publish_frame(bus, message: dict, session_id: str | None = None) -> Frame:
-    """Decode a `{"type": "frame", ...}` browser message and publish it as `Frame`.
+def publish_frame(bus, message: dict, session_id: str | None = None) -> RawFrame:
+    """Decode a `{"type": "frame", ...}` browser message and publish it as `RawFrame`.
+
+    Published ungated onto `frames_raw`, not `frames`: this is a raw source
+    frame, and `capture` (issue #7) is the service that owns the motion gate
+    and rate limit that turn it into the `Frame` events `perceive` consumes
+    (HANDOFF.md section 5).
 
     Raises `ValueError` (with a message safe to log) if `message` is missing
     a required field or `jpeg_b64` is not valid base64; the caller decides
@@ -212,7 +220,7 @@ def publish_frame(bus, message: dict, session_id: str | None = None) -> Frame:
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"malformed frame message: {exc}") from exc
 
-    event = Frame(
+    event = RawFrame(
         source=SERVICE_NAME,
         session_id=session_id,
         jpeg=jpeg,
@@ -220,7 +228,7 @@ def publish_frame(bus, message: dict, session_id: str | None = None) -> Frame:
         height=height,
         source_kind="browser",
     )
-    bus.publish(event, maxlen=CAPPED_MAXLEN["frames"])
+    bus.publish(event, maxlen=CAPPED_MAXLEN["frames_raw"])
     return event
 
 
@@ -328,7 +336,7 @@ def create_app(bus, photo_dir: Path | str = DEFAULT_PHOTO_DIR) -> FastAPI:
         The browser sends JSON text messages shaped as
         `{"type": "frame", "jpeg_b64": ..., "width": ..., "height": ...}` or
         `{"type": "audio", "pcm16_b64": ..., "sample_rate": 16000}`. Each is
-        published onto the bus as a `Frame`/`AudioChunk` event; a malformed
+        published onto the bus as a `RawFrame`/`AudioChunk` event; a malformed
         or unrecognised message is logged and skipped, not fatal to the
         connection (issue #28).
         """

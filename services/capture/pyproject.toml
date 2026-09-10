@@ -5,13 +5,19 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "capture"
 version = "0.1.0"
-description = "Night Companion capture service (placeholder, not yet implemented)"
+description = "Night Companion capture service: motion-gated frame receiver (issue #7)"
 requires-python = ">=3.12"
 dependencies = [
     "redis>=5.0",
+    "pillow>=10.0",
 ]
 
 [project.optional-dependencies]
+# The browser MVP source needs none of this. Only install it if
+# CAPTURE_SOURCE is "usb" or "rtsp".
+camera = [
+    "opencv-python-headless>=4.9",
+]
 dev = [
     "pytest",
     "ruff",

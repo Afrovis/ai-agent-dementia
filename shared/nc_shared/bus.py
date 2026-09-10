@@ -141,7 +141,16 @@ class FakeBus:
         self._id_counter = itertools.count(1)
 
     def publish(self, event: BaseEvent, maxlen: int | None = None) -> str:
-        """Append `event` to its configured stream, returning the message id."""
+        """Append `event` to its configured stream, returning the message id.
+
+        Trimming a capped stream shifts every surviving entry down the list,
+        so each group's `next_index` -- a positional cursor, unlike Redis's
+        opaque message ids -- is rebased by the number of entries dropped.
+        Without that, a consumer of a capped stream (`frames`, `frames_raw`,
+        `audio_in`) goes permanently deaf the moment the stream first
+        reaches `maxlen`: its cursor sits past the end of a list that never
+        grows again.
+        """
         stream = EVENT_STREAMS[type(event)]
         entries = self._streams.setdefault(stream, [])
         msg_id = f"{next(self._id_counter)}-0"
@@ -153,7 +162,11 @@ class FakeBus:
             )
         )
         if maxlen is not None and len(entries) > maxlen:
-            del entries[: len(entries) - maxlen]
+            dropped = len(entries) - maxlen
+            del entries[:dropped]
+            for (entry_stream, _group), state in self._groups.items():
+                if entry_stream == stream:
+                    state.next_index = max(0, state.next_index - dropped)
         return msg_id
 
     def ensure_group(self, stream: str, group: str) -> None:

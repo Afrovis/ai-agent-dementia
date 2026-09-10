@@ -80,3 +80,43 @@ def test_maxlen_caps_stream_length():
         )
 
     assert len(bus._streams["frames"]) == 2
+
+
+def test_consumer_keeps_reading_after_a_capped_stream_is_trimmed():
+    """A consumer of a capped stream must not go deaf once trimming starts.
+
+    `frames`, `frames_raw`, and `audio_in` are capped at `MAXLEN ~ 50`, and
+    `capture` consumes `frames_raw` for the whole night. Trimming shifts
+    every entry down the list, so a positional read cursor has to be rebased
+    or the consumer stops seeing anything the moment the stream first fills.
+    """
+    bus = FakeBus()
+    bus.ensure_group("frames", "capture-group")
+
+    read_total = 0
+    for _ in range(120):
+        bus.publish(
+            Frame(source="capture", jpeg=b"abc", width=1, height=1, source_kind="usb"),
+            maxlen=10,
+        )
+        for msg_id, _ in bus.read("frames", "capture-group", "consumer-1"):
+            bus.ack("frames", "capture-group", msg_id)
+            read_total += 1
+
+    assert read_total == 120
+
+
+def test_trimming_drops_the_oldest_unread_entries_only():
+    """A consumer slower than `maxlen` loses the oldest entries, not all of them."""
+    bus = FakeBus()
+    bus.ensure_group("frames", "capture-group")
+
+    for _ in range(30):
+        bus.publish(
+            Frame(source="capture", jpeg=b"abc", width=1, height=1, source_kind="usb"),
+            maxlen=10,
+        )
+
+    read = bus.read("frames", "capture-group", "consumer-1", count=100)
+    assert len(read) == 10
+    assert [msg_id for msg_id, _ in read] == [entry.msg_id for entry in bus._streams["frames"]]
