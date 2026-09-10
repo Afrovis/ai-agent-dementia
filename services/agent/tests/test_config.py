@@ -15,6 +15,8 @@ def test_from_env_defaults():
     assert config.in_bed_stable_seconds == 120.0
     assert config.floor_limit_seconds == 0.0
     assert config.absent_limit_seconds == 600.0
+    assert config.restroom_timeout_seconds == 900.0
+    assert config.zone_confirm_readings == 3
 
 
 def test_from_env_reads_every_key():
@@ -26,6 +28,8 @@ def test_from_env_reads_every_key():
         "AGENT_IN_BED_STABLE_SECONDS": "90",
         "AGENT_FLOOR_LIMIT_SECONDS": "5",
         "AGENT_ABSENT_LIMIT_SECONDS": "300",
+        "AGENT_RESTROOM_TIMEOUT_SECONDS": "600",
+        "AGENT_ZONE_CONFIRM_READINGS": "5",
     }
     config = AgentConfig.from_env(env)
     assert config.night_start == time(22, 30)
@@ -35,6 +39,8 @@ def test_from_env_reads_every_key():
     assert config.in_bed_stable_seconds == 90.0
     assert config.floor_limit_seconds == 5.0
     assert config.absent_limit_seconds == 300.0
+    assert config.restroom_timeout_seconds == 600.0
+    assert config.zone_confirm_readings == 5
 
 
 def test_night_window_wraps_midnight_default():
