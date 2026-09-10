@@ -657,8 +657,18 @@ class Session:
             return None
 
         if state is not None and self._is_progress(state, zone or ""):
+            # Extends the dwell window, but only up to
+            # `strategies.MAX_PROGRESS_DWELL_MULTIPLIER` times this
+            # strategy's own dwell (see `StrategyEngine.note_progress`).
+            # Deliberately falls through to `maybe_advance` rather than
+            # returning here: while the extension is still being granted
+            # the advance below is a no-op anyway (the dwell was just
+            # re-armed), but once the cap is reached the extension stops
+            # and this is what actually moves the ladder on. Returning
+            # early instead meant a person standing at the bedside without
+            # getting in, reporting progress on every single reading, held
+            # the ladder on one strategy indefinitely.
             self._engine.note_progress(now)
-            return None
 
         new_strategy, changed, exhausted = self._engine.maybe_advance(now)
         if exhausted:

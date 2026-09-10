@@ -371,3 +371,43 @@ def test_escalation_show_reflects_escalate_phone_strategy():
     assert show_events[-1].headline == "Someone is coming to help"
     say_events = [e for _id, e in bus.read("say", "test", "c1", count=10)]
     assert any(s.text == "Someone is coming to help." for s in say_events)
+
+
+def test_the_escalation_say_survives_a_recent_ordinary_say():
+    """Review finding: the minimum-gap rule applied to `escalate_phone`
+    too, so a fall seconds after a strategy spoke published the critical
+    `Notify` but silenced the one sentence telling the person on the floor
+    that help was coming."""
+    bus = make_bus()
+    session = Session(
+        config=AgentConfig(observe_seconds=1.0, say_min_gap_seconds=8.0, floor_limit_seconds=0.0),
+        strategies=list(DEFAULT_STRATEGIES),
+    )
+    now_fn, advance = make_clock(NIGHT)
+
+    bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    advance(2)
+    run_once(bus, session, now_fn=now_fn)  # -> ENGAGED, ambient_orient (silent)
+
+    # Walk to the first rung that actually speaks.
+    for _ in range(40):
+        advance(31)
+        bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
+        run_once(bus, session, now_fn=now_fn)
+        if [e for _id, e in bus.read("say", "test", "c1", count=10)]:
+            break
+    else:
+        raise AssertionError("no strategy ever spoke")
+
+    # One second later the person is on the floor: rule 5 escalates.
+    advance(1)
+    bus.publish(PersonState(source="perceive", state="on_floor", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    assert session.phase.value == "ESCALATED"
+
+    says = [e for _id, e in bus.read("say", "test", "c2", count=50)]
+    assert says, "the escalation Say was dropped by the minimum-gap rule"
+    assert says[-1].strategy == "escalate_phone"
+    assert says[-1].text == "Someone is coming to help."
+    assert says[-1].interruptible is False

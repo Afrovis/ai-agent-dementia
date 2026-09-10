@@ -38,7 +38,10 @@
 #                     re-enabled.
 #   dwell_seconds     how long this strategy is shown before `agent` moves
 #                     on, if the person has not made progress toward bed
-#                     in that time.
+#                     in that time. Progress pauses that countdown, but
+#                     only up to three dwells in total -- someone who
+#                     lingers near the bed without getting in still moves
+#                     the ladder on rather than pinning it forever.
 #   cooldown_seconds  how long after this strategy is dropped before it
 #                     may be selected again this same session.
 #   intrusiveness     1 (calmest) to 5 (escalation) -- informational, shown
@@ -154,6 +157,10 @@ strategies:
     body: "Your bed is behind you."
     say: "Let's go back to bed now{name_vocative}."
 
+  # `agent` never selects this rung by working down the ladder -- it is
+  # reached only by an actual escalation, which also alerts the caregiver.
+  # Reordering or re-enabling it here cannot change that; `order` only
+  # fixes its position on the dashboard's Strategies page.
   - id: escalate_phone
     order: 10
     enabled: true
@@ -165,8 +172,12 @@ strategies:
     dwell_seconds: .inf
     cooldown_seconds: 0
     intrusiveness: 5
-    face: asleep
-    brightness: 0.15
+    # `speaking` at `guided_return`'s brightness: this is the one moment
+    # the person most needs to see and hear the screen, so it must not be
+    # dimmer or sleepier than the rung before it. Not brighter either --
+    # it may be firing at someone on the floor at 3am.
+    face: speaking
+    brightness: 0.7
     headline: "Someone is coming to help"
     body: ""
     say: "Someone is coming to help."
