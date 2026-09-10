@@ -93,6 +93,17 @@ services:
     environment:
       REDIS_URL: ${REDIS_URL}
       OLLAMA_URL: ${OLLAMA_URL}
+      # The night window is local time; containers default to UTC, so this
+      # must be set for AGENT_NIGHT_START/END to mean what they say.
+      TZ: ${TZ}
+      AGENT_NIGHT_START: ${AGENT_NIGHT_START}
+      AGENT_NIGHT_END: ${AGENT_NIGHT_END}
+      AGENT_OBSERVE_SECONDS: ${AGENT_OBSERVE_SECONDS}
+      AGENT_COOLDOWN_SECONDS: ${AGENT_COOLDOWN_SECONDS}
+      AGENT_IN_BED_STABLE_SECONDS: ${AGENT_IN_BED_STABLE_SECONDS}
+      AGENT_FLOOR_LIMIT_SECONDS: ${AGENT_FLOOR_LIMIT_SECONDS}
+      AGENT_ABSENT_LIMIT_SECONDS: ${AGENT_ABSENT_LIMIT_SECONDS}
+      AGENT_FAKE: ${AGENT_FAKE}
     volumes:
       - ./data:/app/data
       - ./config:/app/config:ro

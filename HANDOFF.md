@@ -2,7 +2,7 @@
 
 Read this before touching any issue. It contains everything not in the code yet: the fixed decisions, the conventions, the contracts between services, and the rules that must never be broken. `PLAN.md` is the design rationale. This file is the execution brief.
 
-Last updated: 2026-09-09. If you change a decision below, update this file in the same PR.
+Last updated: 2026-09-10. If you change a decision below, update this file in the same PR.
 
 ## 1. What this project is, in three sentences
 
@@ -102,14 +102,14 @@ Rules:
 
 ## 6. The agent core, summarised for implementers
 
-Phases: `IDLE → OBSERVING → ENGAGED → COOLDOWN → IDLE`, with `ENGAGED → ESCALATED → COOLDOWN`.
+Phases: `IDLE → OBSERVING → ENGAGED → COOLDOWN → IDLE`, with `ENGAGED → ESCALATED → COOLDOWN`. This is the summary for the ordinary, nudging path; rule 5 (below) can escalate straight to `ESCALATED` from any of `IDLE`, `OBSERVING`, `ENGAGED`, or `COOLDOWN`, and outranks this summary when the two disagree.
 
-- Enter `OBSERVING` on `sitting_up` or `standing` inside the night window. Wait 20 s. If back `in_bed`, return to `IDLE`.
+- Enter `OBSERVING` on `sitting_up` or `standing` inside the night window. Wait 20 s. If back `in_bed`, return to `IDLE`. The night window gates starting this nudging session only; it does not gate rule 5.
 - Enter `ENGAGED` after 20 s up, or on any `Utterance`. Goal defaults to `return_to_bed`.
 - In `ENGAGED`, run strategies in configured order. Each strategy: emit `Show`, optionally `Say`, wait its dwell time, evaluate. Move to the next on no progress.
 - Goal switches: `restroom`, `drink_water`, `comfort`, `wait_for_caregiver`. Each returns to `return_to_bed` when satisfied. Emit `GoalChanged`.
-- `ESCALATED` when strategies are exhausted, distress is detected twice, or rule 5 fires. Emit `Notify(critical or attention, repeat_until_ack=True)`.
-- `COOLDOWN` for 5 min after `in_bed` is stable for 2 min. No new session during cooldown.
+- `ESCALATED` when strategies are exhausted, distress is detected twice, or rule 5 fires. Rule 5 fires on `on_floor`/`absent` beyond its configured limit from *any* phase, session already running or not, and regardless of the night window (HANDOFF.md rule 5 has no "only if a session is live" qualifier). Emit `Notify(critical or attention, repeat_until_ack=True)`.
+- `COOLDOWN` for 5 min after `in_bed` is stable for 2 min. No new *nudging* session during cooldown; rule 5 can still escalate out of it.
 
 LLM calls, all with structured JSON output validated by pydantic:
 
