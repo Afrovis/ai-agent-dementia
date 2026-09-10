@@ -84,6 +84,22 @@ logger = logging.getLogger(SERVICE_NAME)
 
 ESCALATE_PHONE_ID = "escalate_phone"
 
+MAX_PROGRESS_DWELL_MULTIPLIER = 3.0
+"""How far "progress" may stretch one strategy's dwell before the ladder
+moves on regardless (`StrategyEngine.note_progress`).
+
+`agent.session.Session._is_progress` counts standing in the bed zone as
+progress, and re-arms the dwell on every `PersonState` that says so. Some
+of those readings are a person genuinely climbing back into bed, and
+interrupting them would be the wrong thing. But a person who stands at the
+bedside without getting in produces exactly the same readings forever, and
+without a cap the ladder pins on its current strategy for the rest of the
+night -- silently, if that strategy is `ambient_orient` -- and never
+reaches escalation either, since rule 5 sees neither `on_floor` nor
+`absent`. Three dwells is long enough to let a slow, real return finish
+and short enough that a stalled one still moves.
+"""
+
 DEFAULT_STRATEGIES_DIR = Path("config")
 DEFAULT_STRATEGIES_FILENAME = "strategies.yaml"
 DEFAULT_STRATEGIES_EXAMPLE_FILENAME = "strategies.example.yaml"
@@ -114,6 +130,20 @@ class StrategyDef:
     body_template: str
     say_template: str | None = None
     photo_id: str | None = None
+    terminal: bool = False
+    """Whether this strategy may only ever be selected through
+    `StrategyEngine.force`, never by the ordinary ladder.
+
+    `escalate_phone` is the only one (issue #14). It is the sentence that
+    tells the person help is on the way, and saying that is only honest
+    once `agent.session.Session` has actually entered `ESCALATED` and
+    published the `Notify` that summons a caregiver. Reaching it by simply
+    running out of ordinary strategies would speak those words with nobody
+    told, so `StrategyEngine._first_available_id` skips every terminal
+    strategy and "strategies exhausted" fires instead. Deliberately not
+    overridable from yaml: this is a safety property of the ladder, not a
+    caregiver preference.
+    """
 
 
 # The ladder, HANDOFF.md section 7 / PLAN.md section 5.3, in catalogue
@@ -229,11 +259,21 @@ DEFAULT_STRATEGIES: tuple[StrategyDef, ...] = (
         # documentation, not a timer anything reads.
         dwell_seconds=float("inf"),
         cooldown_seconds=0.0,
-        face="asleep",
-        brightness=0.15,
+        # `speaking` at the same brightness as `guided_return`, the most
+        # intrusive ordinary rung. The earlier `asleep`/0.15 pairing was
+        # dimmer and less awake than every strategy preceding it, and
+        # dimmer than the phase-level `ESCALATED` fallback in
+        # `agent.main._show_for_phase` (`awake`/0.2) that it replaced --
+        # the wrong direction for the one moment the person most needs to
+        # see and hear the screen. Not raised past `guided_return` either:
+        # this fires at 3am, possibly at someone on the floor.
+        face="speaking",
+        brightness=0.7,
         headline_template="Someone is coming to help",
         body_template="",
         say_template="Someone is coming to help.",
+        # Force-only: see `StrategyDef.terminal`.
+        terminal=True,
     ),
 )
 
@@ -305,7 +345,32 @@ def render_template(template: str, profile: PersonProfile, **extra: str) -> str:
         "name_vocative": name_vocative,
     }
     fields.update(extra)
-    rendered = template.format_map(_SafeFormatDict(fields))
+    try:
+        rendered = template.format_map(_SafeFormatDict(fields))
+    except (ValueError, IndexError, KeyError) as exc:
+        # `_SafeFormatDict` only rescues an *unknown* placeholder name.
+        # A template that is malformed as a format string at all -- an
+        # unclosed "{name", a positional "{0}" -- still raises out of
+        # `format_map`, and `agent.main`'s loop has no handler, so an
+        # uncaught one here would take the whole service down mid-session
+        # at 3am. `load_strategies` rejects such a template at load time
+        # (see `_check_template`) so this should be unreachable in
+        # practice; it is the backstop for the code defaults themselves
+        # and for any future caller that builds a `StrategyDef` directly.
+        # An empty string is the safe degradation: a blank headline or
+        # body shows nothing, and a blank `say` is rejected by
+        # `agent.rules.validate_say` and becomes silence.
+        logger.warning(
+            json.dumps(
+                {
+                    "service": SERVICE_NAME,
+                    "message": "malformed strategy template, rendering as empty",
+                    "template": template,
+                    "error": str(exc),
+                }
+            )
+        )
+        return ""
     return " ".join(rendered.split())
 
 
@@ -436,7 +501,32 @@ def _apply_override(by_id: Mapping[str, StrategyDef], entry: object) -> Strategy
     if "face" in entry:
         overrides["face"] = str(entry["face"])
 
-    return replace(base, **overrides)
+    merged = replace(base, **overrides)
+    # Validate the caregiver's templates here, while there is still a code
+    # default to fall back to. Raising sends the caller down its
+    # "malformed strategy entry" path, which logs and keeps `base`
+    # untouched -- the same shape as every other bad-config outcome in
+    # this function. The alternative is discovering the typo when the
+    # strategy is selected, mid-session, in the middle of the night.
+    for label in ("headline_template", "body_template", "say_template"):
+        _check_template(label, getattr(merged, label))
+    return merged
+
+
+def _check_template(label: str, template: str | None) -> None:
+    """Raise `ValueError` if `template` is not a usable format string.
+
+    Only catches templates that are malformed *as format strings*; an
+    unknown placeholder name is fine and degrades to an empty string at
+    render time (`render_template`), which is a caregiver's typo showing
+    up as a slightly odd sentence rather than as a rejected config.
+    """
+    if template is None:
+        return
+    try:
+        template.format_map(_SafeFormatDict({}))
+    except (ValueError, IndexError, KeyError) as exc:
+        raise ValueError(f"{label} {template!r} is not a valid template: {exc}") from exc
 
 
 @dataclass
@@ -457,6 +547,10 @@ class StrategyEngine:
     _cooldown_until: dict[str, datetime] = field(default_factory=dict, init=False, repr=False)
     current_id: str | None = field(default=None, init=False)
     _started_at: datetime | None = field(default=None, init=False, repr=False)
+    # When the current strategy was first selected. Unlike `_started_at`,
+    # `note_progress` never moves this, so it is the fixed reference the
+    # `MAX_PROGRESS_DWELL_MULTIPLIER` cap is measured against.
+    _selected_at: datetime | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._by_id = {s.id: s for s in self.strategies}
@@ -493,6 +587,15 @@ class StrategyEngine:
         if after_id is not None and after_id in ids:
             start = ids.index(after_id) + 1
         for sid in ids[start:]:
+            # A terminal strategy is force-only and must never be reached
+            # by simply running out of ordinary ones -- see
+            # `StrategyDef.terminal`. Skipping it here is what makes
+            # "strategies exhausted" reachable at all with the real
+            # catalogue: `escalate_phone` is enabled with a zero cooldown,
+            # so it would otherwise always be "available" and the
+            # exhaustion branch of `maybe_advance` would be dead code.
+            if self._by_id[sid].terminal:
+                continue
             if self._is_available(sid, now):
                 return sid
         return None
@@ -513,6 +616,7 @@ class StrategyEngine:
         sid = self._first_available_id(now)
         self.current_id = sid
         self._started_at = now if sid is not None else None
+        self._selected_at = self._started_at
         return self.current()
 
     def force(self, strategy_id: str, now: datetime) -> StrategyDef | None:
@@ -531,15 +635,28 @@ class StrategyEngine:
         """
         self.current_id = strategy_id
         self._started_at = now
+        self._selected_at = now
         return self._by_id.get(strategy_id)
 
     def note_progress(self, now: datetime) -> None:
         """Extend the current strategy's dwell window: called whenever
         `agent.session.Session` sees "progress" (heading to or reaching
         the bed) while a strategy is showing, so a person who is
-        responding to it is not interrupted by an unrelated timeout."""
-        if self.current_id is not None:
-            self._started_at = now
+        responding to it is not interrupted by an unrelated timeout.
+
+        Bounded by `MAX_PROGRESS_DWELL_MULTIPLIER` (see there): once this
+        strategy has been current for that multiple of its own dwell, the
+        extension stops and the next `maybe_advance` moves the ladder on,
+        however much progress is still being reported. A caller may keep
+        calling this every reading; past the cap it simply does nothing.
+        """
+        current = self.current()
+        if current is None or self._selected_at is None:
+            return
+        held_for = (now - self._selected_at).total_seconds()
+        if held_for >= current.dwell_seconds * MAX_PROGRESS_DWELL_MULTIPLIER:
+            return
+        self._started_at = now
 
     def maybe_advance(self, now: datetime) -> tuple[StrategyDef | None, bool, bool]:
         """If the current strategy's dwell has elapsed, put it on cooldown
@@ -565,6 +682,7 @@ class StrategyEngine:
         next_id = self._first_available_id(now, after_id=current.id)
         self.current_id = next_id
         self._started_at = now if next_id is not None else None
+        self._selected_at = self._started_at
         if next_id is None:
             return None, True, True
         return self.current(), True, False
@@ -576,4 +694,5 @@ class StrategyEngine:
         ladder."""
         self.current_id = None
         self._started_at = None
+        self._selected_at = None
         self._cooldown_until.clear()

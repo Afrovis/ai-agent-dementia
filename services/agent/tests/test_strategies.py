@@ -359,3 +359,139 @@ def test_no_shipped_say_reads_as_a_dropped_in_name_for_an_unset_name():
         )
         assert ", there" not in text, f"{strategy.id!r} produced {text!r}"
         assert not text.rstrip(".").endswith(" there"), f"{strategy.id!r} produced {text!r}"
+
+
+# --- Regression tests for the five strategy-engine review findings --------
+#
+# Each of these fails against the engine as originally written. They are
+# grouped here because they share one theme: the seam between the ordinary
+# ladder and escalation, where a bug is invisible in ordinary testing
+# because every individual piece behaves correctly on its own.
+
+
+def test_the_ladder_never_selects_the_terminal_strategy():
+    """`escalate_phone` is enabled with a zero cooldown, so before the
+    `terminal` flag existed it was simply the sixth rung: running out of
+    ordinary strategies selected it, the device told the person help was
+    coming, and no caregiver had been notified at all. It must only ever
+    arrive through `force`."""
+    engine = StrategyEngine(list(DEFAULT_STRATEGIES))
+    now = NOW
+    seen = []
+    current = engine.start(now)
+    assert current is not None
+    seen.append(current.id)
+    for _ in range(20):
+        now += timedelta(seconds=600)
+        new_current, _changed, exhausted = engine.maybe_advance(now)
+        if exhausted:
+            break
+        assert new_current is not None
+        seen.append(new_current.id)
+    assert ESCALATE_PHONE_ID not in seen
+    assert seen == [
+        "ambient_orient",
+        "soft_greeting",
+        "orient_time_place",
+        "validate_and_redirect",
+        "guided_return",
+    ]
+
+
+def test_running_out_of_ordinary_strategies_reports_exhausted():
+    """The real catalogue, not a synthetic one. `escalate_phone` used to
+    keep `_first_available_id` non-empty forever, which made the whole
+    exhaustion branch unreachable in production while the synthetic
+    fixtures kept it green."""
+    engine = StrategyEngine(list(DEFAULT_STRATEGIES))
+    now = NOW
+    engine.start(now)
+    exhausted = False
+    for _ in range(20):
+        now += timedelta(seconds=600)
+        _current, _changed, exhausted = engine.maybe_advance(now)
+        if exhausted:
+            break
+    assert exhausted is True
+    assert engine.current() is None
+
+
+def test_force_still_reaches_the_terminal_strategy():
+    """The other half of the above: skipping terminal strategies in the
+    ladder must not make them unreachable."""
+    engine = StrategyEngine(list(DEFAULT_STRATEGIES))
+    assert engine.force(ESCALATE_PHONE_ID, NOW) is not None
+    assert engine.current_id == ESCALATE_PHONE_ID
+
+
+def test_the_escalation_strategy_is_visible_and_awake():
+    """It was `asleep` at brightness 0.15: dimmer and sleepier than every
+    rung before it, at the one moment the person most needs to see the
+    screen."""
+    escalate = next(s for s in DEFAULT_STRATEGIES if s.id == ESCALATE_PHONE_ID)
+    guided = next(s for s in DEFAULT_STRATEGIES if s.id == "guided_return")
+    assert escalate.face == "speaking"
+    assert escalate.brightness >= guided.brightness
+    assert escalate.terminal is True
+
+
+def test_progress_cannot_extend_a_strategy_forever():
+    """Standing in the bed zone without getting in reports progress on
+    every reading. Unbounded, that pinned the ladder on one strategy for
+    the whole night."""
+    engine = StrategyEngine(strategies_by_order(dwell=10.0, cooldown=1000.0))
+    engine.start(NOW)
+    assert engine.current_id == "a"
+
+    # Progress every second, well past the three-dwell cap.
+    advanced_at = None
+    for i in range(1, 120):
+        now = NOW + timedelta(seconds=i)
+        engine.note_progress(now)
+        _current, changed, _exhausted = engine.maybe_advance(now)
+        if changed:
+            advanced_at = i
+            break
+    assert advanced_at is not None, "ladder never advanced despite the cap"
+    assert engine.current_id == "b"
+
+
+def test_progress_still_pauses_the_dwell_up_to_the_cap():
+    """The cap must not defeat the point of `note_progress`: a person
+    genuinely climbing into bed still gets more than one bare dwell."""
+    engine = StrategyEngine(strategies_by_order(dwell=10.0, cooldown=1000.0))
+    engine.start(NOW)
+    for i in range(1, 12):
+        now = NOW + timedelta(seconds=i)
+        engine.note_progress(now)
+        _current, changed, _exhausted = engine.maybe_advance(now)
+        assert changed is False, f"advanced at {i}s despite continuous progress"
+    assert engine.current_id == "a"
+
+
+@pytest.mark.parametrize("bad", ["Hello {name", "It is {0} now", "{}"])
+def test_a_malformed_template_renders_empty_instead_of_raising(bad):
+    """`_SafeFormatDict` only rescues unknown placeholder *names*. A
+    template malformed as a format string still raised out of
+    `format_map`, and `agent.main`'s loop has no handler, so a caregiver's
+    typo crashed the service mid-session."""
+    assert render_template(bad, DEFAULT_PROFILE) == ""
+
+
+def test_a_malformed_template_in_yaml_keeps_the_code_default(tmp_path):
+    """Better still: rejected at load time, while a good default is still
+    available to fall back to."""
+    path = tmp_path / "strategies.yaml"
+    path.write_text('strategies:\n  - id: soft_greeting\n    say: "Hello {name"\n')
+    loaded = {s.id: s for s in load_strategies(path)}
+    default = next(s for s in DEFAULT_STRATEGIES if s.id == "soft_greeting")
+    assert loaded["soft_greeting"].say_template == default.say_template
+
+
+def test_a_valid_template_in_yaml_still_overrides(tmp_path):
+    """The load-time check must reject only genuinely malformed templates,
+    not ordinary caregiver edits."""
+    path = tmp_path / "strategies.yaml"
+    path.write_text('strategies:\n  - id: soft_greeting\n    say: "Good evening{name_vocative}."\n')
+    loaded = {s.id: s for s in load_strategies(path)}
+    assert loaded["soft_greeting"].say_template == "Good evening{name_vocative}."

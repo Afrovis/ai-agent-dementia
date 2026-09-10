@@ -617,3 +617,69 @@ def test_session_state_strategy_index_tracks_the_live_value():
     assert transition is not None
     assert transition.strategy_index == 1
     assert session.strategy_index == 1
+
+
+# --- Regression tests for the strategy-engine review findings ------------
+
+
+def test_lingering_at_the_bedside_does_not_pin_the_ladder():
+    """Review finding: `zone == "bed"` counts as progress on every
+    reading, so someone standing at the bedside without getting in used to
+    hold `ambient_orient` -- which is silent -- for the whole night, with
+    no advance and no escalation (rule 5 sees neither `on_floor` nor
+    `absent`)."""
+    session = make_session(
+        observe_seconds=1.0,
+        in_bed_stable_seconds=99999.0,
+        floor_limit_seconds=99999.0,
+        absent_limit_seconds=99999.0,
+    )
+    session.on_person_state("standing", "other", NIGHT)
+    session.on_person_state("standing", "other", NIGHT + timedelta(seconds=2))
+    assert session.phase == Phase.ENGAGED
+
+    seen = []
+    for i in range(3, 1200):
+        now = NIGHT + timedelta(seconds=i)
+        transition = session.on_person_state("standing", "bed", now)
+        if transition is not None and transition.strategy is not None:
+            seen.append(transition.strategy.id)
+        if session.phase == Phase.ESCALATED:
+            break
+
+    assert seen, "the ladder never advanced while the person lingered at the bed"
+    assert session.phase == Phase.ESCALATED
+
+
+def test_the_real_catalogue_escalates_rather_than_speaking_the_escalation_line():
+    """Review finding: with the real catalogue the ladder used to reach
+    `escalate_phone` while still `ENGAGED`, telling the person help was
+    coming with no `Notify` sent and no caregiver told, then freezing there
+    on its infinite dwell."""
+    session = make_session(
+        observe_seconds=1.0,
+        in_bed_stable_seconds=99999.0,
+        floor_limit_seconds=99999.0,
+        absent_limit_seconds=99999.0,
+    )
+    session.on_person_state("standing", "other", NIGHT)
+    session.on_person_state("standing", "other", NIGHT + timedelta(seconds=2))
+
+    escalation = None
+    for i in range(3, 1200):
+        transition = session.tick(NIGHT + timedelta(seconds=i))
+        if transition is None:
+            continue
+        # While ENGAGED the terminal strategy must never be selected.
+        if transition.phase == Phase.ENGAGED and transition.strategy is not None:
+            assert transition.strategy.id != ESCALATE_PHONE_ID
+        if transition.phase == Phase.ESCALATED:
+            escalation = transition
+            break
+
+    assert escalation is not None, "the ladder never escalated"
+    assert escalation.reason == "strategies_exhausted"
+    assert escalation.notify is not None, "escalated without telling the caregiver"
+    assert escalation.strategy is not None
+    assert escalation.strategy.id == ESCALATE_PHONE_ID
+    assert session.goal == "wait_for_caregiver"

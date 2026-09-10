@@ -187,9 +187,20 @@ def _maybe_publish_say(
         return
 
     text = render_template(strategy.say_template, profile, time_words=time_as_words(now))
+    # The minimum-silence gap paces ordinary strategy speech, one sentence
+    # then quiet. A terminal strategy (`escalate_phone`) is not ordinary
+    # speech: it is the single sentence telling a person who may be on the
+    # floor that help is coming, published in the same breath as the
+    # critical `Notify` that summons it. If an ordinary strategy happened
+    # to speak in the seconds before the escalation, the gap check would
+    # drop that sentence and leave them with a silent screen, so the
+    # terminal strategy is exempt from this one check. Every other rule 3
+    # check -- one sentence, no forbidden phrasing, no question -- still
+    # applies to it exactly as before.
+    seconds_since_last_say = None if strategy.terminal else session.seconds_since_last_say(now)
     result = validate_say(
         text,
-        seconds_since_last_say=session.seconds_since_last_say(now),
+        seconds_since_last_say=seconds_since_last_say,
         min_gap_seconds=session.config.say_min_gap_seconds,
     )
     if not result.accepted:
