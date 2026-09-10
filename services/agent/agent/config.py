@@ -73,6 +73,21 @@ class AgentConfig:
     see `agent.goals`'s module docstring. `AGENT_RESTROOM_TIMEOUT_SECONDS`.
     """
 
+    strategies_path: str | None = None
+    """Path to the caregiver-editable strategy catalogue yaml (issue #14),
+    passed straight to `agent.strategies.load_strategies` (which applies
+    the `STRATEGIES_PATH` env var itself if this is left `None` -- kept
+    out of the `from_env`-computed default below the same way `perceive.
+    main.PerceiveConfig.zones_path` keeps `ZONES_PATH` out of its own
+    `from_env`, so a caller passing an explicit path in a test does not
+    also have to fight this field's own env lookup). `STRATEGIES_PATH`."""
+
+    say_min_gap_seconds: float = 8.0
+    """The minimum silence, in seconds, `agent.rules.validate_say` requires
+    between one published `Say` and the next (HANDOFF.md rule 3: "Spoken
+    output is one sentence, then silence for at least 8 seconds").
+    `AGENT_SAY_MIN_GAP_SECONDS`."""
+
     zone_confirm_readings: int = 3
     """How many consecutive `PersonState` readings must agree on a zone
     before that zone may drive a goal change (issue #13). `perceive`
@@ -100,6 +115,8 @@ class AgentConfig:
             floor_limit_seconds=float(env.get("AGENT_FLOOR_LIMIT_SECONDS", "0")),
             absent_limit_seconds=float(env.get("AGENT_ABSENT_LIMIT_SECONDS", "600")),
             restroom_timeout_seconds=float(env.get("AGENT_RESTROOM_TIMEOUT_SECONDS", "900")),
+            strategies_path=env.get("STRATEGIES_PATH"),
+            say_min_gap_seconds=float(env.get("AGENT_SAY_MIN_GAP_SECONDS", "8")),
             zone_confirm_readings=int(env.get("AGENT_ZONE_CONFIRM_READINGS", "3")),
         )
 

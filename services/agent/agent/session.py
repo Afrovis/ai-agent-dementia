@@ -48,18 +48,35 @@ Issue #13's goal tree (`agent.goals`) and what it can and cannot observe:
   `agent.rules.validate_goal` check as every deterministic switch above,
   and returns `None` -- not an exception -- on an ordinary rejection.
 
-One remaining fixed seam for a later issue:
+Issue #14's strategy engine (`agent.strategies.StrategyEngine`) is now
+wired in:
 
-- `strategy_index` never leaves `0`. The strategy engine -- ordering,
-  cooldowns, dwell times, and "strategies exhausted" as an escalation
-  trigger distinct from rule 5 -- is issue #14. "Strategies exhausted" is
-  therefore not implemented anywhere in this module; the only escalation
-  trigger implemented is rule 5.
+- Entering `ENGAGED` (`_enter_engaged`) selects the first available
+  strategy in configured order and sets `strategy_index` to its position;
+  if none is available at all (every strategy disabled or on cooldown),
+  the session escalates immediately instead of showing nothing.
+- While `ENGAGED`, `_run_strategy_engine` advances past a strategy once
+  its dwell elapses with no progress, or -- HANDOFF.md section 6's
+  "strategies exhausted" -- escalates once none remain. "Progress"
+  (`_is_progress`) is deliberately narrow: heading to or reaching the bed
+  (`zone == "bed"` or `state == "in_bed"`), the one signal this issue can
+  actually observe toward the default goal.
+- Entering `ESCALATED`, from any cause (rule 5, or strategies exhausted),
+  forces `escalate_phone` selected via `StrategyEngine.force` -- see that
+  method's docstring for why it stays selected rather than being resolved
+  by code, the same reasoning `agent.goals` already documents for
+  `wait_for_caregiver`.
 
-Also out of scope, and not faked: distress detection ("distress detected
+`Transition.strategy` carries the concrete `StrategyDef` a phase or
+strategy-only update selected, alongside `strategy_index` for
+`SessionState`, so `agent.main` can render its `Show`/`Say` without
+reaching back into this module.
+
+Still out of scope, and not faked: distress detection ("distress detected
 twice" in HANDOFF.md section 6) does not exist here at all, because it
 depends on `interpret` (issue #15), which makes an LLM call this module
-must never depend on.
+must never depend on. `validate_and_redirect`'s "composed from utterance"
+is the same seam, see `agent.strategies`'s module docstring.
 """
 
 from __future__ import annotations
@@ -72,6 +89,7 @@ from datetime import datetime
 from agent.config import AgentConfig
 from agent.goals import RESTROOM_GOAL, ROOT_GOAL, WAIT_FOR_CAREGIVER_GOAL
 from agent.rules import Phase, validate, validate_goal
+from agent.strategies import DEFAULT_STRATEGIES, ESCALATE_PHONE_ID, StrategyDef, StrategyEngine
 
 DEFAULT_GOAL = ROOT_GOAL
 
@@ -127,6 +145,14 @@ class Transition:
     reason: str
     notify: NotifySpec | None = None
     goal_change: GoalChangeResult | None = None
+    strategy: StrategyDef | None = None
+    """The strategy selected or reselected on this update, if any (issue
+    #14): set when entering `ENGAGED` (first strategy), when a
+    dwell-elapsed advance picks the next one with no phase change, or when
+    entering `ESCALATED` forces `escalate_phone`. `None` on every other
+    update (`IDLE`, `COOLDOWN`, a goal-only change). Not part of any event
+    schema -- `agent.main` reads it to build the `Show`/`Say` a strategy
+    implies; `SessionState` only ever carries `strategy_index`."""
 
 
 @dataclass
@@ -138,11 +164,18 @@ class Session:
 
     config: AgentConfig
     id_fn: Callable[[], str] = _new_session_id
+    strategies: list[StrategyDef] = field(default_factory=lambda: list(DEFAULT_STRATEGIES))
+    """The configured catalogue, in `agent.strategies.StrategyDef` form --
+    `agent.main` loads this from yaml (`agent.strategies.load_strategies`)
+    and passes it in; defaults to the code catalogue so a fresh checkout
+    with no yaml still runs, exactly as `agent.strategies` documents."""
 
     phase: Phase = Phase.IDLE
     session_id: str | None = None
     goal: str = DEFAULT_GOAL
     strategy_index: int = 0
+
+    _engine: StrategyEngine = field(init=False, repr=False)
 
     # Rule 5's timers: when the current unbroken run of `on_floor`/`absent`
     # began, or `None` while the person is in neither state right now.
@@ -166,6 +199,16 @@ class Session:
     # `confirm_frames` pattern for `state` -- see `_confirmed_zone`.
     _pending_zone: str | None = field(default=None, init=False, repr=False)
     _pending_zone_count: int = field(default=0, init=False, repr=False)
+
+    # When the last `Say` `agent.main` actually published happened, for
+    # `agent.rules.validate_say`'s minimum-gap check on the next one.
+    # `None` before any `Say` this session (also cleared on return to
+    # `IDLE`, `_reset_timers`), which that check treats as "no minimum gap
+    # to enforce yet".
+    _last_say_at: datetime | None = field(default=None, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._engine = StrategyEngine(self.strategies)
 
     def _confirmed_zone(self, zone: str) -> str | None:
         """Consecutive-reading hysteresis for `PersonState.zone`, analogous
@@ -225,7 +268,14 @@ class Session:
             session_id=self.session_id, from_goal=old_goal, to_goal=target_goal, reason=reason
         )
 
-    def _apply(self, target: Phase, *, reason: str, notify: NotifySpec | None = None) -> Transition:
+    def _apply(
+        self,
+        target: Phase,
+        *,
+        reason: str,
+        now: datetime,
+        notify: NotifySpec | None = None,
+    ) -> Transition:
         """Validate and apply `self.phase -> target`, returning the `Transition`
         to publish.
 
@@ -236,6 +286,14 @@ class Session:
         rather than silently swallowing it. See `agent.rules`'s module
         docstring: routing even our own transitions through `validate` is
         the point, not an accident.
+
+        `now` is issue #14's addition, used only by the `ENGAGED`/
+        `ESCALATED` branches below to drive `self._engine`: entering
+        `ENGAGED` always has a strategy available by the time this is
+        called (`_enter_engaged` checks `self._engine.has_available`
+        first), so `self._engine.start(now)` returning `None` here would
+        also be this file's own logic disagreeing with itself, hence the
+        raise rather than a quiet fallback.
         """
         result = validate(self.phase, target)
         if not result.accepted:
@@ -252,6 +310,7 @@ class Session:
         self.session_id = session_id
 
         goal_change: GoalChangeResult | None = None
+        strategy: StrategyDef | None = None
         if target == Phase.IDLE:
             # Goal resets to the root on every return to `IDLE`. Routed
             # through `_apply_goal` like any other goal change (issue #13);
@@ -260,14 +319,28 @@ class Session:
             goal_change = self._apply_goal(DEFAULT_GOAL, reason="session_ended", must_be_legal=True)
             self.strategy_index = 0
             self._reset_timers()
+        elif target == Phase.ENGAGED:
+            # The first strategy in configured order, per issue #14's
+            # module-docstring summary. `_enter_engaged` is the only
+            # caller and always confirms `self._engine.has_available(now)`
+            # first.
+            strategy = self._engine.start(now)
+            if strategy is None:
+                raise AssertionError("session logic entered ENGAGED with no strategy available")
+            self.strategy_index = self._engine.index_of(strategy.id)
         elif target == Phase.ESCALATED:
-            # Rule 5 escalating sets `wait_for_caregiver`, from whatever
-            # goal was active -- see the module docstring for why this
-            # goal's success condition ("caregiver present") is never
-            # satisfied by code here.
+            # Rule 5 escalating (or strategies exhausting) sets
+            # `wait_for_caregiver`, from whatever goal was active -- see
+            # the module docstring for why this goal's success condition
+            # ("caregiver present") is never satisfied by code here.
             goal_change = self._apply_goal(
                 WAIT_FOR_CAREGIVER_GOAL, reason=reason, must_be_legal=True
             )
+            # `escalate_phone` is the terminal strategy for every path
+            # into `ESCALATED`, forced rather than chosen -- see
+            # `StrategyEngine.force`'s docstring.
+            strategy = self._engine.force(ESCALATE_PHONE_ID, now)
+            self.strategy_index = self._engine.index_of(ESCALATE_PHONE_ID)
 
         return Transition(
             phase=self.phase,
@@ -277,6 +350,7 @@ class Session:
             reason=reason,
             notify=notify,
             goal_change=goal_change,
+            strategy=strategy,
         )
 
     def _reset_timers(self) -> None:
@@ -288,6 +362,8 @@ class Session:
         self._restroom_since = None
         self._pending_zone = None
         self._pending_zone_count = 0
+        self._last_say_at = None
+        self._engine.reset()
 
     def _update_rule5_timers(self, state: str, now: datetime) -> None:
         if state == "on_floor":
@@ -343,6 +419,7 @@ class Session:
                 return self._apply(
                     Phase.ESCALATED,
                     reason="rule5_on_floor",
+                    now=now,
                     notify=NotifySpec(
                         level="critical",
                         title="Possible fall",
@@ -356,6 +433,7 @@ class Session:
                 return self._apply(
                     Phase.ESCALATED,
                     reason="rule5_absent",
+                    now=now,
                     notify=NotifySpec(
                         level="critical",
                         title="Person missing",
@@ -386,20 +464,22 @@ class Session:
         if self.phase == Phase.IDLE:
             if state in ("sitting_up", "standing") and self.config.in_night_window(now):
                 self._observing_since = now
-                return self._apply(Phase.OBSERVING, reason=f"person_{state}")
+                return self._apply(Phase.OBSERVING, reason=f"person_{state}", now=now)
             return None
 
         if self.phase == Phase.OBSERVING:
             if state == "in_bed":
-                return self._apply(Phase.IDLE, reason="returned_to_bed")
+                return self._apply(Phase.IDLE, reason="returned_to_bed", now=now)
             if self._observing_since is not None:
                 elapsed = (now - self._observing_since).total_seconds()
                 if elapsed >= self.config.observe_seconds:
-                    return self._apply(Phase.ENGAGED, reason="observe_timeout")
+                    return self._enter_engaged("observe_timeout", now)
             return None
 
         if self.phase in (Phase.ENGAGED, Phase.ESCALATED):
             phase_transition = self._track_in_bed_stability(state, now)
+            if phase_transition is None:
+                phase_transition = self._run_strategy_engine(now, state=state, zone=zone)
             goal_change = self._update_goal_from_zone(zone, state, now)
             return self._combine(phase_transition, goal_change)
 
@@ -520,8 +600,107 @@ class Session:
         `PersonState` does), and `ENGAGED`/`ESCALATED`/`COOLDOWN` are not
         eligible for this particular entry."""
         if self.phase == Phase.OBSERVING:
-            return self._apply(Phase.ENGAGED, reason="utterance")
+            return self._enter_engaged("utterance", now)
         return None
+
+    def _enter_engaged(self, reason: str, now: datetime) -> Transition:
+        """Enter `ENGAGED`, or escalate immediately instead if there is
+        nothing to show: `self._engine.has_available(now)` is checked
+        *before* committing to the transition, since `_apply`'s own
+        `ENGAGED` branch raises if `self._engine.start` comes back empty
+        (an invariant this method exists to guarantee never happens).
+
+        The "nothing available" case -- every strategy disabled and/or on
+        cooldown, right at the moment a session would start -- is
+        HANDOFF.md section 6's "strategies exhausted" escalation trigger,
+        reached here before ever showing anything, rather than only
+        discovered mid-session (see `_run_strategy_engine` for that path).
+        """
+        if self._engine.has_available(now):
+            return self._apply(Phase.ENGAGED, reason=reason, now=now)
+        return self._apply(
+            Phase.ESCALATED,
+            reason="strategies_exhausted",
+            now=now,
+            notify=NotifySpec(
+                level="attention",
+                title="No reorientation strategy available",
+                body="Every strategy is disabled or on cooldown; check the strategy configuration.",
+            ),
+        )
+
+    def _is_progress(self, state: str, zone: str) -> bool:
+        """ "Progress" toward the strategy engine's implicit goal --
+        getting the person back to bed -- deliberately narrow: heading
+        toward it (`zone == "bed"`) or already there (`state ==
+        "in_bed"`), the one signal this issue can actually observe.
+        Raw and unconfirmed, unlike the goal-switching zone reads
+        (`_confirmed_zone`): a false pause here only delays a strategy
+        advance by a beat, while a missed one wastes a whole dwell period
+        on a person already back in bed."""
+        return state == "in_bed" or zone == "bed"
+
+    def _run_strategy_engine(
+        self, now: datetime, *, state: str | None = None, zone: str | None = None
+    ) -> Transition | None:
+        """Drive `self._engine` for one `ENGAGED` update: pause the
+        current strategy's dwell timer on progress, otherwise advance past
+        it once its dwell has elapsed, escalating if none remain.
+
+        A no-op outside `ENGAGED` -- called from the `ENGAGED`/`ESCALATED`
+        branch of `on_person_state` and from `tick`, where it does nothing
+        while `ESCALATED` (see `StrategyEngine.force`'s docstring for why
+        `escalate_phone` never advances). `state`/`zone` are `None` from
+        `tick` (no new `PersonState` to check for progress this call).
+        """
+        if self.phase != Phase.ENGAGED:
+            return None
+
+        if state is not None and self._is_progress(state, zone or ""):
+            self._engine.note_progress(now)
+            return None
+
+        new_strategy, changed, exhausted = self._engine.maybe_advance(now)
+        if exhausted:
+            return self._apply(
+                Phase.ESCALATED,
+                reason="strategies_exhausted",
+                now=now,
+                notify=NotifySpec(
+                    level="attention",
+                    title="Strategies exhausted",
+                    body="No remaining reorientation strategy; the caregiver should check in.",
+                ),
+            )
+        if changed:
+            self.strategy_index = self._engine.index_of(new_strategy.id if new_strategy else None)
+            return Transition(
+                phase=self.phase,
+                session_id=self.session_id,
+                goal=self.goal,
+                strategy_index=self.strategy_index,
+                reason="strategy_advanced",
+                notify=None,
+                goal_change=None,
+                strategy=new_strategy,
+            )
+        return None
+
+    def record_say(self, now: datetime) -> None:
+        """Record that a `Say` was just published, for `agent.rules.
+        validate_say`'s minimum-gap check on the next one. Called by
+        `agent.main` only after a `Say` actually passes validation and is
+        published -- a rejected `Say` must not reset this clock, since
+        nothing was actually said."""
+        self._last_say_at = now
+
+    def seconds_since_last_say(self, now: datetime) -> float | None:
+        """`None` before any `Say` has been published this session (also
+        after a return to `IDLE`, `_reset_timers`), which `agent.rules.
+        validate_say` treats as "no minimum gap to enforce yet"."""
+        if self._last_say_at is None:
+            return None
+        return (now - self._last_say_at).total_seconds()
 
     def _track_in_bed_stability(self, state: str, now: datetime) -> Transition | None:
         """From `ENGAGED` or `ESCALATED`, `in_bed` held unbroken for
@@ -535,7 +714,7 @@ class Session:
         elapsed = (now - self._in_bed_since).total_seconds()
         if elapsed >= self.config.in_bed_stable_seconds:
             self._cooldown_since = now
-            return self._apply(Phase.COOLDOWN, reason="in_bed_stable")
+            return self._apply(Phase.COOLDOWN, reason="in_bed_stable", now=now)
         return None
 
     def tick(self, now: datetime) -> Transition | None:
@@ -552,13 +731,24 @@ class Session:
         if self.phase == Phase.OBSERVING and self._observing_since is not None:
             elapsed = (now - self._observing_since).total_seconds()
             if elapsed >= self.config.observe_seconds:
-                return self._apply(Phase.ENGAGED, reason="observe_timeout")
+                return self._enter_engaged("observe_timeout", now)
+
+        # `phase_transition` (a strategy advance/exhaustion) and a
+        # restroom-timeout goal change are independent of each other and
+        # can both be true on the same `tick` -- merged through `_combine`
+        # (the same helper `on_person_state` uses for phase-change-plus-
+        # goal-change) rather than letting whichever is checked first
+        # silently mask the other for a whole extra loop iteration.
+        phase_transition: Transition | None = None
+        if self.phase == Phase.ENGAGED:
+            phase_transition = self._run_strategy_engine(now)
 
         if self.phase == Phase.COOLDOWN and self._cooldown_since is not None:
             elapsed = (now - self._cooldown_since).total_seconds()
             if elapsed >= self.config.cooldown_seconds:
-                return self._apply(Phase.IDLE, reason="cooldown_elapsed")
+                return self._apply(Phase.IDLE, reason="cooldown_elapsed", now=now)
 
+        goal_change: GoalChangeResult | None = None
         if self.goal == RESTROOM_GOAL and self._restroom_since is not None:
             elapsed = (now - self._restroom_since).total_seconds()
             if elapsed >= self.config.restroom_timeout_seconds:
@@ -567,19 +757,9 @@ class Session:
                 # for a "back at the bed" reading and return to the parent
                 # goal anyway, rather than leaving `restroom` active
                 # forever.
-                change = self._apply_goal(
+                goal_change = self._apply_goal(
                     DEFAULT_GOAL, reason="restroom_timeout", must_be_legal=True
                 )
                 self._restroom_since = None
-                if change is not None:
-                    return Transition(
-                        phase=self.phase,
-                        session_id=self.session_id,
-                        goal=self.goal,
-                        strategy_index=self.strategy_index,
-                        reason="restroom_timeout",
-                        notify=None,
-                        goal_change=change,
-                    )
 
-        return None
+        return self._combine(phase_transition, goal_change)

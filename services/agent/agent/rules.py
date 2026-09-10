@@ -49,14 +49,75 @@ change against `ALLOWED_TRANSITIONS`, and for the same reason -- issue
 every one of those proposals to pass through this layer before it has any
 effect. `agent.session.Session` already routes its own deterministic goal
 switches through it too, exactly as it does for phase changes.
+
+`validate_strategy()` is issue #14's real replacement for the seam
+`validate()` used to carry as a caller-supplied `strategy_disabled` bool
+with no one actually computing it. `agent.strategies.StrategyEngine` is
+now that caller: every candidate it considers while selecting or advancing
+a strategy is run through `validate_strategy()`, which rejects it if the
+engine reports it disabled (the caregiver turned it off in config) or
+still on cooldown (its `cooldown_seconds` has not elapsed since it was
+last used) -- an ordinary, expected outcome the engine reacts to by
+trying the next candidate in order, not an exception. `validate()` keeps
+its own `strategy`/`strategy_disabled` parameters and delegates to this
+function internally, so a caller pairing a phase transition with a
+strategy choice (as `agent.session.Session._apply` does for the strategy
+selected on entering `ENGAGED` or forced on entering `ESCALATED`) still
+gets one combined accept/reject decision from a single call, unchanged
+from issue #12's shape.
+
+`validate_say()` is HANDOFF.md rule 3 ("Spoken output is one sentence,
+then silence for at least 8 seconds ... Never the words 'no', 'you
+can't', 'you're wrong'. Validate, then redirect.") made into deterministic
+code every outgoing `Say` passes through, in `agent.main`, regardless of
+whether the text came from a caregiver's template (today) or `compose`'s
+LLM output (issue #15) -- the LLM never owns safety, so this check sits
+after composition, not instead of it. See its own docstring for exactly
+what the memory-testing-question check does and does not catch.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 
 from agent.goals import ALLOWED_GOAL_CHANGES
+
+# HANDOFF.md rule 3, verbatim: never these words/phrases in a `Say`, checked
+# case-insensitively as whole words/phrases so "known" does not trip on
+# "no". Matched against the raw text `agent.main` is about to publish,
+# whatever composed it.
+_FORBIDDEN_PHRASES: tuple[str, ...] = ("no", "you can't", "you're wrong")
+
+# A single interior `.`/`!`/`?` (with anything non-whitespace on both
+# sides) means more than one sentence. A trailing one is fine and does not
+# split the text into a second, empty sentence.
+_SENTENCE_BOUNDARY_RE = re.compile(r"[.!?]+")
+
+# Conservative, form-only interrogative check -- see `validate_say`'s
+# docstring for exactly what this does and does not catch.
+_QUESTION_STARTERS = (
+    "who",
+    "what",
+    "when",
+    "where",
+    "why",
+    "how",
+    "do you",
+    "did you",
+    "does",
+    "can you",
+    "could you",
+    "would you",
+    "will you",
+    "remember",
+    "recall",
+    "is it",
+    "isn't it",
+    "was it",
+    "wasn't it",
+)
 
 
 class Phase(StrEnum):
@@ -105,13 +166,16 @@ def validate(
     of who is proposing it -- `agent.session.Session`'s own logic today, an
     LLM's `plan` output from issue #15 tomorrow.
 
-    `strategy`/`strategy_disabled` are a seam for issue #14's strategy
-    engine: once strategies have configured cooldowns and an enabled flag,
-    a caller will pass the strategy a proposed transition would select and
-    this function will reject the transition if that strategy is disabled
-    or still on cooldown, exactly like an illegal phase transition. Neither
-    parameter has any effect yet beyond the explicit check below, because
-    issue #12 has no strategy engine to ask.
+    `strategy`/`strategy_disabled` let a caller pair this phase check with
+    a strategy choice in one call -- `agent.session.Session._apply` does
+    this for the strategy selected on entering `ENGAGED` or forced on
+    entering `ESCALATED`. `strategy_disabled` is real state now (issue
+    #14): `agent.strategies.StrategyEngine` computes whether `strategy` is
+    disabled in config or still on cooldown before calling this, exactly
+    like an illegal phase transition. The check itself is delegated to
+    `validate_strategy`, which the engine also calls directly when
+    choosing between candidates with no phase change involved (e.g.
+    advancing to the next strategy within `ENGAGED`).
     """
     allowed = ALLOWED_TRANSITIONS.get(current, frozenset())
     if proposed not in allowed:
@@ -121,13 +185,26 @@ def validate(
         )
 
     if strategy_disabled:
-        # TODO(#14): the strategy engine will pass real cooldown/enabled
-        # state here instead of a caller-supplied bool.
+        return validate_strategy(strategy, disabled=True)
+
+    return RuleResult(accepted=True, reason=None)
+
+
+def validate_strategy(strategy: str | None, *, disabled: bool) -> RuleResult:
+    """Decide whether `strategy` may be selected right now.
+
+    `disabled` is computed by the caller (`agent.strategies.StrategyEngine`):
+    true if the caregiver turned the strategy off in config, or if it is
+    still on its configured cooldown. This function does not track either
+    of those itself -- it is the single point every strategy choice is
+    routed through before it takes effect, per HANDOFF.md rule 1, not the
+    place cooldown state lives.
+    """
+    if disabled:
         return RuleResult(
             accepted=False,
             reason=f"strategy {strategy!r} is disabled or on cooldown",
         )
-
     return RuleResult(accepted=True, reason=None)
 
 
@@ -148,4 +225,80 @@ def validate_goal(current: str, proposed: str) -> RuleResult:
             accepted=False,
             reason=f"{current} -> {proposed} is not an allowed goal change",
         )
+    return RuleResult(accepted=True, reason=None)
+
+
+def validate_say(
+    text: str,
+    *,
+    seconds_since_last_say: float | None,
+    min_gap_seconds: float,
+) -> RuleResult:
+    """HANDOFF.md rule 3, as a deterministic gate every outgoing `Say` must
+    pass before `agent.main` publishes it -- whether the text is a
+    caregiver's fixed template (every strategy this issue implements) or
+    an LLM's `compose` output (issue #15). Rejecting is the everyday,
+    expected outcome for a bad candidate, exactly like `validate()`/
+    `validate_strategy()`: silence is always safe, a wrong sentence at 3am
+    is not, so `agent.main` falls back to silence rather than publishing
+    on rejection, and never raises here.
+
+    Checks, in order:
+
+    1. **Non-empty.** An empty or whitespace-only string is not a sentence.
+    2. **Exactly one sentence.** Splits on `.`/`!`/`?` and rejects if more
+       than one non-empty piece remains, or if none does.
+    3. **No forbidden phrasing.** Case-insensitive, whole-word/phrase match
+       against "no", "you can't", "you're wrong" (HANDOFF.md rule 3,
+       verbatim).
+    4. **No question that tests memory** -- *the honest scope of this
+       check*: it rejects text that is a question in *form* only, either
+       ending in `?` or opening with a small, fixed list of interrogative
+       starters ("who", "what", "remember", "do you", ...). This is a
+       conservative syntactic filter, not a semantic one: it will reject
+       "Do you want tea?" (harmless) exactly as it rejects "Do you
+       remember your address?" (a memory test), because this module has no
+       way to tell those apart, and correctly rejecting the second matters
+       more than wrongly rejecting the first. It will just as certainly
+       *miss* a memory-testing question phrased as a statement ("Tell me
+       your address.") or one lacking a `?` mark and any listed starter.
+       Nothing in this codebase claims to detect memory-testing intent in
+       general -- only interrogative form -- and every strategy template
+       this issue ships was written not to need this catch at all.
+    5. **Minimum silence gap.** `seconds_since_last_say` is `None` before
+       any `Say` has been published this session, which always passes this
+       check; otherwise it must be at least `min_gap_seconds` (default 8,
+       HANDOFF.md rule 3), the minimum silence HANDOFF.md requires after
+       one sentence before the next.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return RuleResult(accepted=False, reason="say text is empty")
+
+    sentences = [s for s in _SENTENCE_BOUNDARY_RE.split(stripped) if s.strip()]
+    if len(sentences) == 0:
+        return RuleResult(accepted=False, reason=f"no sentence found in {text!r}")
+    if len(sentences) > 1:
+        return RuleResult(accepted=False, reason=f"more than one sentence in {text!r}")
+
+    lowered = stripped.lower()
+    for phrase in _FORBIDDEN_PHRASES:
+        if re.search(rf"\b{re.escape(phrase)}\b", lowered):
+            return RuleResult(accepted=False, reason=f"forbidden phrase {phrase!r} in {text!r}")
+
+    if stripped.endswith("?") or lowered.startswith(_QUESTION_STARTERS):
+        return RuleResult(
+            accepted=False,
+            reason=f"looks like a question, not allowed by rule 3: {text!r}",
+        )
+
+    if seconds_since_last_say is not None and seconds_since_last_say < min_gap_seconds:
+        return RuleResult(
+            accepted=False,
+            reason=(
+                f"only {seconds_since_last_say:.1f}s since the last Say, "
+                f"minimum is {min_gap_seconds}s"
+            ),
+        )
+
     return RuleResult(accepted=True, reason=None)

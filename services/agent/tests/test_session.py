@@ -5,19 +5,23 @@ and advances them by hand, never sleeping and never touching a real clock,
 per HANDOFF.md section 4.
 """
 
+from dataclasses import replace as dc_replace
 from datetime import datetime, timedelta
 
 from agent.config import AgentConfig
 from agent.rules import Phase
 from agent.session import Session
+from agent.strategies import DEFAULT_STRATEGIES, ESCALATE_PHONE_ID
 
 NIGHT = datetime(2026, 1, 1, 23, 0)  # inside the default 21:00-07:00 window
 DAY = datetime(2026, 1, 1, 12, 0)  # outside it
 
 
-def make_session(**config_kwargs) -> Session:
+def make_session(*, strategies=None, **config_kwargs) -> Session:
     config = AgentConfig(**config_kwargs)
     ids = iter(f"sess-{i}" for i in range(1, 100))
+    if strategies is not None:
+        return Session(config=config, id_fn=lambda: next(ids), strategies=strategies)
     return Session(config=config, id_fn=lambda: next(ids))
 
 
@@ -245,9 +249,13 @@ def test_full_cycle_idle_observing_engaged_cooldown_idle():
     assert session.strategy_index == 0
 
 
-def test_strategy_index_stays_a_fixed_seam_for_a_later_issue():
+def test_strategy_index_is_zero_before_any_strategy_is_selected():
+    # Issue #14 fills in the strategy engine; before `ENGAGED` is ever
+    # reached (here: still `OBSERVING`), no strategy has been selected yet
+    # and the index stays at its initial 0.
     session = make_session()
     session.on_person_state("standing", "other", NIGHT)
+    assert session.phase == Phase.OBSERVING
     assert session.strategy_index == 0
 
 
@@ -366,8 +374,15 @@ def test_restroom_times_out_back_to_the_parent_goal():
     _transition, t = feed_zone(session, "walking", "bathroom_path", t)
     assert session.goal == "restroom"
 
+    # Issue #14: the strategy engine's own dwell timer is independent of
+    # the restroom timeout, and by 60s later it may well have advanced the
+    # current strategy on its own (a `tick` with no accompanying
+    # `PersonState` cannot observe "progress" toward the bed either way).
+    # That is expected, unrelated behaviour; what this test actually
+    # checks is that the *goal* has not timed out yet.
     still_within = session.tick(t + timedelta(seconds=60))
-    assert still_within is None
+    if still_within is not None:
+        assert still_within.goal_change is None
     assert session.goal == "restroom"
 
     transition = session.tick(t + timedelta(seconds=121))
@@ -471,3 +486,134 @@ def test_propose_goal_rejects_an_illegal_change():
     transition = session.propose_goal("drink_water", "llm_plan", NIGHT + timedelta(seconds=2))
     assert transition is None
     assert session.goal == "restroom"
+
+
+# --- issue #14: the strategy engine wired into Session -------------------
+
+
+def small_strategies(*, dwell=100.0, cooldown=50.0, n=3):
+    """A small, deterministic strategy catalogue -- same trick as
+    `tests/test_strategies.py`'s `strategies_by_order`, independent of
+    `DEFAULT_STRATEGIES`'s real dwell/cooldown values."""
+    base = DEFAULT_STRATEGIES[0]
+    return [
+        dc_replace(
+            base, id=f"s{i}", order=i, enabled=True, dwell_seconds=dwell, cooldown_seconds=cooldown
+        )
+        for i in range(1, n + 1)
+    ]
+
+
+def test_entering_engaged_selects_the_first_strategy():
+    session = make_session(strategies=small_strategies(), observe_seconds=20.0)
+    session.on_person_state("standing", "other", NIGHT)
+    transition = session.tick(NIGHT + timedelta(seconds=21))
+    assert transition is not None
+    assert transition.phase == Phase.ENGAGED
+    assert transition.strategy is not None
+    assert transition.strategy.id == "s1"
+    assert session.strategy_index == 0
+
+
+def test_dwell_elapsed_with_no_progress_advances_the_strategy():
+    session = make_session(strategies=small_strategies(dwell=30.0), observe_seconds=1.0)
+    session.on_person_state("standing", "other", NIGHT)
+    session.tick(NIGHT + timedelta(seconds=2))
+    assert session.phase == Phase.ENGAGED
+
+    # No progress (state stays "standing", zone stays "other") for longer
+    # than the 30s dwell: the strategy must advance with no phase change.
+    transition = session.on_person_state("standing", "other", NIGHT + timedelta(seconds=35))
+    assert transition is not None
+    assert transition.phase == Phase.ENGAGED
+    assert transition.strategy is not None
+    assert transition.strategy.id == "s2"
+    assert session.strategy_index == 1
+
+
+def test_progress_toward_bed_does_not_advance_the_strategy():
+    session = make_session(strategies=small_strategies(dwell=30.0), observe_seconds=1.0)
+    session.on_person_state("standing", "other", NIGHT)
+    session.tick(NIGHT + timedelta(seconds=2))
+    assert session.phase == Phase.ENGAGED
+
+    # "Progress": the person is seen back at the bed zone before the dwell
+    # would otherwise have elapsed. The strategy must not advance.
+    transition = session.on_person_state("standing", "bed", NIGHT + timedelta(seconds=35))
+    assert transition is None
+    assert session.strategy_index == 0
+
+
+def test_exhausting_every_strategy_escalates_and_publishes_a_notify():
+    session = make_session(strategies=small_strategies(dwell=10.0, cooldown=1000.0, n=2))
+    session.on_person_state("standing", "other", NIGHT)
+    session.tick(NIGHT + timedelta(seconds=21))
+    assert session.phase == Phase.ENGAGED
+    assert session.strategy_index == 0
+
+    # s1's dwell elapses with no progress -> advance to s2.
+    session.on_person_state("standing", "other", NIGHT + timedelta(seconds=32))
+    assert session.phase == Phase.ENGAGED
+    assert session.strategy_index == 1
+
+    # s2's dwell elapses too, and nothing else is available -> escalate.
+    transition = session.on_person_state("standing", "other", NIGHT + timedelta(seconds=43))
+    assert transition is not None
+    assert transition.phase == Phase.ESCALATED
+    assert transition.notify is not None
+    assert transition.notify.level == "attention"
+    assert session.phase == Phase.ESCALATED
+
+
+def test_escalate_phone_is_selected_on_escalation_and_stays_selected():
+    # Uses the real `DEFAULT_STRATEGIES` catalogue (the default when no
+    # `strategies=` override is given): `escalate_phone` is only in the
+    # real catalogue, not in the small synthetic one used above.
+    session = make_session(floor_limit_seconds=0.0)
+    session.on_person_state("standing", "other", NIGHT)
+    transition = session.on_person_state("on_floor", "other", NIGHT + timedelta(seconds=1))
+    assert transition is not None
+    assert transition.phase == Phase.ESCALATED
+    assert transition.strategy is not None
+    assert transition.strategy.id == ESCALATE_PHONE_ID
+
+    # Time passing, and more "on_floor" readings, must not move it off
+    # `escalate_phone`: `_run_strategy_engine` is a no-op outside `ENGAGED`
+    # (see its docstring), so nothing advances it on a timer, and an
+    # unchanged "on_floor" reading produces no further `Transition` at all
+    # (`_track_in_bed_stability`/`_update_goal_from_zone` both no-op here
+    # too).
+    assert session.on_person_state("on_floor", "other", NIGHT + timedelta(seconds=500)) is None
+    assert session.phase == Phase.ESCALATED
+
+
+def test_a_disabled_strategy_is_skipped_and_the_next_one_is_selected():
+    strategies = small_strategies()
+    strategies[0] = dc_replace(strategies[0], enabled=False)
+    session = make_session(strategies=strategies, observe_seconds=1.0)
+    session.on_person_state("standing", "other", NIGHT)
+    transition = session.tick(NIGHT + timedelta(seconds=2))
+    assert transition is not None
+    assert transition.strategy.id == "s2"
+
+
+def test_no_strategy_available_at_all_escalates_immediately_instead_of_engaging():
+    strategies = [dc_replace(s, enabled=False) for s in small_strategies()]
+    session = make_session(strategies=strategies, observe_seconds=1.0)
+    session.on_person_state("standing", "other", NIGHT)
+    transition = session.tick(NIGHT + timedelta(seconds=2))
+    assert transition is not None
+    assert transition.phase == Phase.ESCALATED
+    assert transition.notify is not None
+
+
+def test_session_state_strategy_index_tracks_the_live_value():
+    session = make_session(strategies=small_strategies(dwell=10.0), observe_seconds=1.0)
+    session.on_person_state("standing", "other", NIGHT)
+    session.tick(NIGHT + timedelta(seconds=2))
+    assert session.strategy_index == 0
+
+    transition = session.on_person_state("standing", "other", NIGHT + timedelta(seconds=13))
+    assert transition is not None
+    assert transition.strategy_index == 1
+    assert session.strategy_index == 1

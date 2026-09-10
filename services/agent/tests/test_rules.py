@@ -1,11 +1,19 @@
 """Tests for `agent.rules`: every accept/reject case in `ALLOWED_TRANSITIONS`,
-including its exact boundaries, plus the strategy-disabled seam, and (issue
-#13) every accept/reject case in `agent.goals.ALLOWED_GOAL_CHANGES`."""
+including its exact boundaries, the strategy-disabled seam, (issue #13)
+every accept/reject case in `agent.goals.ALLOWED_GOAL_CHANGES`, and (issue
+#14) `validate_strategy` and `validate_say`."""
 
 import pytest
 
 from agent.goals import ALLOWED_GOAL_CHANGES, GOALS
-from agent.rules import ALLOWED_TRANSITIONS, Phase, validate, validate_goal
+from agent.rules import (
+    ALLOWED_TRANSITIONS,
+    Phase,
+    validate,
+    validate_goal,
+    validate_say,
+    validate_strategy,
+)
 
 ALL_PHASES = list(Phase)
 ALL_GOALS = sorted(GOALS)
@@ -131,3 +139,95 @@ def test_unknown_goal_is_rejected():
     assert result.accepted is False
     result = validate_goal("made_up_goal", "return_to_bed")
     assert result.accepted is False
+
+
+# --- validate_strategy (issue #14) ---------------------------------------
+
+
+def test_validate_strategy_accepts_when_not_disabled():
+    result = validate_strategy("ambient_orient", disabled=False)
+    assert result.accepted is True
+    assert result.reason is None
+
+
+def test_validate_strategy_rejects_when_disabled():
+    result = validate_strategy("ambient_orient", disabled=True)
+    assert result.accepted is False
+    assert "ambient_orient" in result.reason
+
+
+# --- validate_say (issue #14, HANDOFF.md rule 3) -------------------------
+
+
+def test_validate_say_accepts_one_calm_sentence():
+    result = validate_say("Let's rest now.", seconds_since_last_say=None, min_gap_seconds=8.0)
+    assert result.accepted is True
+
+
+def test_validate_say_rejects_empty_text():
+    result = validate_say("   ", seconds_since_last_say=None, min_gap_seconds=8.0)
+    assert result.accepted is False
+
+
+def test_validate_say_rejects_more_than_one_sentence():
+    result = validate_say(
+        "It is night. Let's rest.", seconds_since_last_say=None, min_gap_seconds=8.0
+    )
+    assert result.accepted is False
+    assert "one sentence" in result.reason
+
+
+def test_validate_say_accepts_a_single_trailing_period():
+    result = validate_say("It is night.", seconds_since_last_say=None, min_gap_seconds=8.0)
+    assert result.accepted is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "No, that's not right.",
+        "You can't do that.",
+        "You're wrong about that.",
+    ],
+)
+def test_validate_say_rejects_every_forbidden_phrase(text):
+    result = validate_say(text, seconds_since_last_say=None, min_gap_seconds=8.0)
+    assert result.accepted is False
+
+
+def test_validate_say_does_not_false_positive_on_a_word_containing_no():
+    # "known" contains "no" as a substring but not as a whole word.
+    result = validate_say(
+        "It is well known that nights are calm.", seconds_since_last_say=None, min_gap_seconds=8.0
+    )
+    assert result.accepted is True
+
+
+def test_validate_say_rejects_a_question_mark():
+    result = validate_say(
+        "Do you remember where you live?", seconds_since_last_say=None, min_gap_seconds=8.0
+    )
+    assert result.accepted is False
+
+
+def test_validate_say_rejects_an_interrogative_opener_even_without_a_mark():
+    result = validate_say(
+        "Remember your address for me now", seconds_since_last_say=None, min_gap_seconds=8.0
+    )
+    assert result.accepted is False
+
+
+def test_validate_say_enforces_the_minimum_gap():
+    result = validate_say("Let's rest now.", seconds_since_last_say=3.0, min_gap_seconds=8.0)
+    assert result.accepted is False
+    assert "8" in result.reason
+
+
+def test_validate_say_accepts_when_gap_is_satisfied():
+    result = validate_say("Let's rest now.", seconds_since_last_say=8.0, min_gap_seconds=8.0)
+    assert result.accepted is True
+
+
+def test_validate_say_no_gap_check_before_any_say():
+    result = validate_say("Let's rest now.", seconds_since_last_say=None, min_gap_seconds=8.0)
+    assert result.accepted is True
