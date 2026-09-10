@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "perception-bench"
+version = "0.1.0"
+description = "Night Companion perception bench (issue #11): synthetic, daylight, and infrared fixtures for the perceive pipeline"
+requires-python = ">=3.12"
+dependencies = [
+    "pillow>=10.0",
+    "numpy>=1.26",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+# Only needed to run tier 2 against real pose backends (`--daylight-pose-backend`).
+# Tier 1 and every unit test need neither, per this issue's hard constraints.
+mediapipe = ["mediapipe>=0.10"]
+yolo = ["ultralytics>=8.1"]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[tool.setuptools.packages.find]
+include = ["perception_bench*"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
