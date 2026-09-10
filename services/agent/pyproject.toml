@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agent"
 version = "0.1.0"
-description = "Night Companion agent service (fake agent dev fixture; real session core is M2)"
+description = "Night Companion agent service: session state machine (issue #12), plus the M0 fake agent dev fixture"
 requires-python = ">=3.12"
 dependencies = [
     "redis>=5.0",

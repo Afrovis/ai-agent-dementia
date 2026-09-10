@@ -1,0 +1,101 @@
+"""`agent`'s env-driven configuration (issue #12).
+
+Same shape as `perceive.main.PerceiveConfig` and `capture.main.CaptureConfig`:
+a frozen dataclass, a `from_env` classmethod (env, then defaults in code --
+`agent` has no yaml config yet), and every field documented in
+`.env.example`.
+
+`REDIS_URL` is read directly in `agent.main.run`, the same way `perceive`
+and `capture` keep it out of their config dataclasses.
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from datetime import datetime
+from datetime import time as dt_time
+
+
+def _parse_hhmm(value: str) -> dt_time:
+    """Parse a local `HH:MM` string (`AGENT_NIGHT_START`/`AGENT_NIGHT_END`)."""
+    hours, minutes = value.strip().split(":")
+    return dt_time(int(hours), int(minutes))
+
+
+@dataclass(frozen=True)
+class AgentConfig:
+    """`agent`'s tunables (HANDOFF.md section 6 and the issue #12 brief)."""
+
+    night_start: dt_time = dt_time(21, 0)
+    """Local time the night window opens. A session may only *start* inside
+    the window (HANDOFF.md: "Enter OBSERVING ... inside the night window").
+    `AGENT_NIGHT_START`."""
+
+    night_end: dt_time = dt_time(7, 0)
+    """Local time the night window closes. `AGENT_NIGHT_END`."""
+
+    observe_seconds: float = 20.0
+    """How long `OBSERVING` waits for the person to either settle back
+    `in_bed` (-> `IDLE`) or stay up (-> `ENGAGED`). HANDOFF.md section 11
+    is explicit that this delay must stay configurable rather than be
+    skipped for a faster demo. `AGENT_OBSERVE_SECONDS`."""
+
+    cooldown_seconds: float = 300.0
+    """How long `COOLDOWN` holds before returning to `IDLE`, during which
+    no new session may start. `AGENT_COOLDOWN_SECONDS`."""
+
+    in_bed_stable_seconds: float = 120.0
+    """How long `in_bed` must hold, unbroken, before the machine leaves
+    `ENGAGED`/`ESCALATED` for `COOLDOWN`. `AGENT_IN_BED_STABLE_SECONDS`."""
+
+    floor_limit_seconds: float = 0.0
+    """How long `on_floor` is tolerated, from any phase with a live session,
+    before HANDOFF.md rule 5 fires and skips straight to `ESCALATED`.
+    Defaults to `0`, i.e. escalate on the very first classified frame:
+    `on_floor` is the single highest-risk state this system observes, and
+    unlike `absent` there is no benign everyday reason for it, so there is
+    no grace period to justify. `AGENT_FLOOR_LIMIT_SECONDS`."""
+
+    absent_limit_seconds: float = 600.0
+    """How long `absent` is tolerated before rule 5 fires the same way.
+    Ten minutes, not zero, because someone out of camera view at night is
+    ordinarily just using the bathroom -- normal and expected -- whereas
+    lying on the floor never is; that asymmetry is why `absent` gets a
+    grace period and `on_floor` does not. `AGENT_ABSENT_LIMIT_SECONDS`."""
+
+    @classmethod
+    def from_env(cls, env: dict[str, str] | None = None) -> AgentConfig:
+        """Build an `AgentConfig` from environment variables, defaults otherwise."""
+        env = os.environ if env is None else env
+        return cls(
+            night_start=_parse_hhmm(env.get("AGENT_NIGHT_START", "21:00")),
+            night_end=_parse_hhmm(env.get("AGENT_NIGHT_END", "07:00")),
+            observe_seconds=float(env.get("AGENT_OBSERVE_SECONDS", "20")),
+            cooldown_seconds=float(env.get("AGENT_COOLDOWN_SECONDS", "300")),
+            in_bed_stable_seconds=float(env.get("AGENT_IN_BED_STABLE_SECONDS", "120")),
+            floor_limit_seconds=float(env.get("AGENT_FLOOR_LIMIT_SECONDS", "0")),
+            absent_limit_seconds=float(env.get("AGENT_ABSENT_LIMIT_SECONDS", "600")),
+        )
+
+    def in_night_window(self, when: datetime) -> bool:
+        """Whether `when`'s local time of day falls inside the night window.
+
+        The window wraps midnight whenever `night_end` is earlier in the
+        day than `night_start` (the default `21:00`-`07:00` always does):
+        in that case "inside the window" means "at or after `night_start`,
+        *or* before `night_end`", not a simple `start <= t < end` range.
+
+        `night_start == night_end` is treated as an always-on 24-hour
+        window rather than the empty one a literal `start <= t < end`
+        would produce. A zero-width window is not a state anyone would
+        deliberately configure -- it silently disables session start
+        entirely, forever -- so the safe reading of "someone set both the
+        same" is "no window restriction", not "never".
+        """
+        if self.night_start == self.night_end:
+            return True
+        t = when.time()
+        if self.night_start < self.night_end:
+            return self.night_start <= t < self.night_end
+        return t >= self.night_start or t < self.night_end

@@ -1,86 +1,193 @@
-"""Tests for the fake agent's step table and per-step publish, using FakeBus.
+"""Tests for `agent.main`: wiring `agent.session.Session` to the bus.
 
-Per HANDOFF.md section 4, every service must be testable with no camera,
-mic, Ollama, or Redis. These tests exercise `run_once` and `STEPS` directly
-against a `FakeBus`; they never call the infinite, real-time `run()` loop
-or sleep for real durations.
+Uses `FakeBus` throughout, per HANDOFF.md section 4: no Redis, camera,
+mic, or Ollama. `now_fn` is always an explicit, advancing fixed clock, so
+nothing here sleeps for a real duration.
 """
 
+from datetime import datetime, timedelta
+
 from nc_shared.bus import FakeBus
-from nc_shared.events import Say, Show
+from nc_shared.events import Notify, PersonState, SessionState, Show, Utterance
 
-from agent.main import STEPS, run_once
+from agent.config import AgentConfig
+from agent.main import (
+    PERSON_GROUP,
+    PERSON_STREAM,
+    UTTERANCE_GROUP,
+    UTTERANCE_STREAM,
+    maybe_emit_health,
+    maybe_emit_session_heartbeat,
+    run_once,
+)
+from agent.session import Session
 
-VALID_FACES = {"asleep", "awake", "speaking", "listening"}
+NIGHT = datetime(2026, 1, 1, 23, 0)
 
 
-def test_run_once_publishes_a_valid_show_for_every_step():
+def make_bus() -> FakeBus:
     bus = FakeBus()
-    bus.ensure_group("show", "test-group")
-
-    for step in STEPS:
-        run_once(bus, step)
-
-    read = bus.read("show", "test-group", "consumer-1", count=len(STEPS))
-    assert len(read) == len(STEPS)
-    for (_, event), step in zip(read, STEPS, strict=True):
-        assert isinstance(event, Show)
-        assert event.face in VALID_FACES
-        assert event.face == step.face
-        assert event.headline == step.headline
-        assert event.body == step.body
-        assert event.photo_id == step.photo_id
-        assert event.brightness == step.brightness
-        assert 0.0 <= event.brightness <= 1.0
-        assert event.source == "agent"
+    bus.ensure_group(PERSON_STREAM, PERSON_GROUP)
+    bus.ensure_group(UTTERANCE_STREAM, UTTERANCE_GROUP)
+    bus.ensure_group("session", "test")
+    bus.ensure_group("notify", "test")
+    bus.ensure_group("show", "test")
+    return bus
 
 
-def test_run_once_publishes_say_only_when_the_step_has_say_text():
+def make_clock(start: datetime):
+    """A `now_fn` that returns `start` until advanced by the caller."""
+    box = {"now": start}
+
+    def now_fn():
+        return box["now"]
+
+    def advance(seconds: float):
+        box["now"] = box["now"] + timedelta(seconds=seconds)
+
+    return now_fn, advance
+
+
+def test_run_once_publishes_session_state_and_show_on_a_phase_change():
+    bus = make_bus()
+    config = AgentConfig()
+    session = Session(config=config)
+    now_fn, _advance = make_clock(NIGHT)
+
+    bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
+    published = run_once(bus, session, now_fn=now_fn)
+
+    assert len(published) == 1
+    assert published[0].phase == "OBSERVING"
+
+    session_events = bus.read("session", "test", "c1", count=10)
+    assert len(session_events) == 1
+    assert isinstance(session_events[0][1], SessionState)
+    assert session_events[0][1].phase == "OBSERVING"
+
+    show_events = bus.read("show", "test", "c1", count=10)
+    assert len(show_events) == 1
+    assert isinstance(show_events[0][1], Show)
+
+
+def test_run_once_acks_person_state_messages():
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    now_fn, _advance = make_clock(NIGHT)
+
+    bus.publish(PersonState(source="perceive", state="in_bed", confidence=0.9, zone="bed"))
+    run_once(bus, session, now_fn=now_fn)
+
+    assert bus.pending(PERSON_STREAM, PERSON_GROUP) == []
+
+
+def test_utterance_moves_observing_to_engaged_through_run_once():
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    now_fn, advance = make_clock(NIGHT)
+
+    bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    assert session.phase.value == "OBSERVING"
+
+    advance(2)
+    bus.publish(Utterance(source="listen", text="hello", confidence=0.9, duration_s=1.0))
+    published = run_once(bus, session, now_fn=now_fn)
+
+    assert any(event.phase == "ENGAGED" for event in published)
+    assert bus.pending(UTTERANCE_STREAM, UTTERANCE_GROUP) == []
+
+
+def test_escalation_publishes_a_notify_with_repeat_until_ack_and_source():
+    bus = make_bus()
+    session = Session(config=AgentConfig(floor_limit_seconds=0.0))
+    now_fn, advance = make_clock(NIGHT)
+
+    bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+
+    advance(1)
+    bus.publish(PersonState(source="perceive", state="on_floor", confidence=0.9, zone="other"))
+    published = run_once(bus, session, now_fn=now_fn)
+
+    assert any(event.phase == "ESCALATED" for event in published)
+
+    notify_events = bus.read("notify", "test", "c1", count=10)
+    assert len(notify_events) == 1
+    notify = notify_events[0][1]
+    assert isinstance(notify, Notify)
+    assert notify.repeat_until_ack is True
+    assert notify.source == "agent"
+    assert notify.level == "critical"
+
+
+def test_escalation_from_idle_publishes_a_notify_too():
+    # A fall straight from `in_bed` to `on_floor`, no prior session: rule 5
+    # must still escalate and `agent.main` must still wire up a real
+    # `Notify`, not just a `Transition`.
+    bus = make_bus()
+    session = Session(config=AgentConfig(floor_limit_seconds=0.0))
+    now_fn, _advance = make_clock(NIGHT)
+
+    bus.publish(PersonState(source="perceive", state="on_floor", confidence=0.9, zone="other"))
+    published = run_once(bus, session, now_fn=now_fn)
+
+    assert any(event.phase == "ESCALATED" for event in published)
+
+    notify_events = bus.read("notify", "test", "c1", count=10)
+    assert len(notify_events) == 1
+    notify = notify_events[0][1]
+    assert isinstance(notify, Notify)
+    assert notify.repeat_until_ack is True
+    assert notify.source == "agent"
+    assert notify.level == "critical"
+
+
+def test_run_once_ticks_the_observing_timeout_with_no_new_messages():
+    bus = make_bus()
+    session = Session(config=AgentConfig(observe_seconds=20.0))
+    now_fn, advance = make_clock(NIGHT)
+
+    bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    assert session.phase.value == "OBSERVING"
+
+    advance(25)
+    published = run_once(bus, session, now_fn=now_fn)
+    assert any(event.phase == "ENGAGED" for event in published)
+
+
+def test_maybe_emit_session_heartbeat_respects_interval():
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+
+    last = maybe_emit_session_heartbeat(bus, session, None, NIGHT, interval=60.0)
+    assert last == NIGHT
+
+    soon = NIGHT + timedelta(seconds=10)
+    unchanged = maybe_emit_session_heartbeat(bus, session, last, soon, interval=60.0)
+    assert unchanged == last
+
+    later = NIGHT + timedelta(seconds=61)
+    updated = maybe_emit_session_heartbeat(bus, session, last, later, interval=60.0)
+    assert updated == later
+
+    events = bus.read("session", "test", "c1", count=10)
+    assert len(events) == 2
+
+
+def test_maybe_emit_health_respects_interval():
     bus = FakeBus()
-    bus.ensure_group("say", "test-group")
+    bus.ensure_group("health", "test")
 
-    for step in STEPS:
-        run_once(bus, step)
+    last = maybe_emit_health(bus, None, 0.0)
+    assert last == 0.0
 
-    read = bus.read("say", "test-group", "consumer-1", count=len(STEPS))
-    expected_says = [step for step in STEPS if step.say_text is not None]
-    assert len(read) == len(expected_says)
+    unchanged = maybe_emit_health(bus, last, 10.0)
+    assert unchanged == last
 
-    for (_, event), step in zip(read, expected_says, strict=True):
-        assert isinstance(event, Say)
-        assert event.text == step.say_text
-        assert event.strategy == (step.say_strategy or "")
-        assert event.interruptible == step.interruptible
-        assert event.source == "agent"
+    updated = maybe_emit_health(bus, last, 31.0)
+    assert updated == 31.0
 
-
-def test_run_once_uses_the_given_session_id():
-    bus = FakeBus()
-    bus.ensure_group("show", "test-group")
-
-    run_once(bus, STEPS[0], session_id="custom-session")
-
-    _, event = bus.read("show", "test-group", "consumer-1")[0]
-    assert event.session_id == "custom-session"
-
-
-def test_steps_cycle_through_every_face_state():
-    faces = {step.face for step in STEPS}
-    assert faces == VALID_FACES
-
-
-def test_steps_vary_brightness():
-    brightnesses = {step.brightness for step in STEPS}
-    assert len(brightnesses) > 1
-    assert all(0.0 <= b <= 1.0 for b in brightnesses)
-
-
-def test_at_least_one_step_has_a_photo_id():
-    assert any(step.photo_id is not None for step in STEPS)
-
-
-def test_photo_ids_are_demo_ids():
-    # A fresh checkout has no caregiver-uploaded photos, so the fake agent
-    # may only reference the `demo_` images that `embodiment` ships. Any
-    # other id would 404 on every cycle of `docker compose up`.
-    assert all(step.photo_id.startswith("demo_") for step in STEPS if step.photo_id is not None)
+    events = bus.read("health", "test", "c1", count=10)
+    assert len(events) == 2
