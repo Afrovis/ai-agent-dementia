@@ -5,13 +5,27 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "perceive"
 version = "0.1.0"
-description = "Night Companion perceive service (placeholder, not yet implemented)"
+description = "Night Companion perceive service: person detection and pose classification (issue #8)"
 requires-python = ">=3.12"
 dependencies = [
     "redis>=5.0",
+    "pillow>=10.0",
+    "numpy>=1.26",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
+# Real pose backends are optional: PERCEIVE_POSE_BACKEND=scripted (every
+# test, and the future perception bench, issue #11) needs neither
+# installed, matching HANDOFF.md's "every service must be testable with no
+# camera, mic, Ollama, or Redis". Install the extra matching whichever
+# PERCEIVE_POSE_BACKEND is configured.
+mediapipe = [
+    "mediapipe>=0.10",
+]
+yolo = [
+    "ultralytics>=8.1",
+]
 dev = [
     "pytest",
     "ruff",
