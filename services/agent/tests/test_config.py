@@ -17,6 +17,8 @@ def test_from_env_defaults():
     assert config.absent_limit_seconds == 600.0
     assert config.restroom_timeout_seconds == 900.0
     assert config.zone_confirm_readings == 3
+    assert config.strategies_path is None
+    assert config.say_min_gap_seconds == 8.0
 
 
 def test_from_env_reads_every_key():
@@ -30,6 +32,8 @@ def test_from_env_reads_every_key():
         "AGENT_ABSENT_LIMIT_SECONDS": "300",
         "AGENT_RESTROOM_TIMEOUT_SECONDS": "600",
         "AGENT_ZONE_CONFIRM_READINGS": "5",
+        "STRATEGIES_PATH": "/tmp/strategies.yaml",
+        "AGENT_SAY_MIN_GAP_SECONDS": "10",
     }
     config = AgentConfig.from_env(env)
     assert config.night_start == time(22, 30)
@@ -41,6 +45,8 @@ def test_from_env_reads_every_key():
     assert config.absent_limit_seconds == 300.0
     assert config.restroom_timeout_seconds == 600.0
     assert config.zone_confirm_readings == 5
+    assert config.strategies_path == "/tmp/strategies.yaml"
+    assert config.say_min_gap_seconds == 10.0
 
 
 def test_night_window_wraps_midnight_default():

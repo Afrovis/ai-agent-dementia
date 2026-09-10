@@ -19,18 +19,20 @@ caregiver, fail quiet to the person"):
   `HEARTBEAT_INTERVAL_S` otherwise, so a silent `agent` cannot be mistaken
   for a calm night -- the same reasoning as `perceive`'s `PersonState`
   heartbeat and `capture`'s idle fps.
-- `Show`, minimally: a dim clock at `IDLE`/`COOLDOWN`, the `awake` face at
-  `OBSERVING`/`ENGAGED`/`ESCALATED`. HANDOFF.md section 7's strategy
-  catalogue -- a distinct `Show` per strategy -- is issue #14; this issue
-  owns only the phase machine, so this is deliberately just enough to make
-  the phase visible on the embodiment page, not a strategy.
-- No `Say`, ever. HANDOFF.md rule 3 governs spoken text precisely (one
-  sentence, no memory-testing questions, never "no"/"you can't"/"you're
-  wrong"), and composing that text is `compose` (issue #15), chosen by a
-  strategy (issue #14). Emitting anything here would be inventing dialogue
-  ahead of both strategy selection and composition, which HANDOFF.md
-  section 11 rules out ("no fabricated behaviour"). The safest reading of
-  issue #12's scope is silence until #14/#15 exist to fill it in properly.
+- `Show`: a dim clock at `IDLE`/`COOLDOWN` (`_show_for_phase`, unchanged
+  from issue #12), or, whenever `agent.session.Session` selected a
+  strategy (`Transition.strategy` is set -- every `ENGAGED`/`ESCALATED`
+  update), that strategy's `Show` rendered through `agent.strategies.
+  render_template` (issue #14).
+- `Say`: only when the selected strategy has a `say_template`, rendered
+  the same way, and only after it passes `agent.rules.validate_say`
+  (HANDOFF.md rule 3: one sentence, a minimum silence gap, no forbidden
+  phrasing, no memory-testing question by form). A `Say` that fails
+  validation is logged loudly and never published -- silence, not a wrong
+  sentence at 3am. Composing strategy 4's text from what the person
+  actually said is `compose` (issue #15); every strategy here uses a
+  fixed, caregiver-editable template instead (see `agent.strategies`'s
+  module docstring), so nothing here fabricates dialogue ahead of that.
 - `Notify(critical, repeat_until_ack=True, source="agent")` on entering
   `ESCALATED`, built from the `NotifySpec` `agent.session.Session` attaches
   to that `Transition`.
@@ -53,11 +55,29 @@ from datetime import datetime
 
 import redis
 from nc_shared.bus import Bus
-from nc_shared.events import GoalChanged, Health, Notify, PersonState, SessionState, Show, Utterance
+from nc_shared.events import (
+    GoalChanged,
+    Health,
+    Notify,
+    PersonState,
+    Say,
+    SessionState,
+    Show,
+    Utterance,
+)
 
 from agent.config import AgentConfig
-from agent.rules import Phase
+from agent.rules import Phase, validate_say
 from agent.session import Session, Transition
+from agent.strategies import (
+    DEFAULT_PROFILE,
+    ESCALATE_PHONE_ID,
+    PersonProfile,
+    StrategyDef,
+    load_strategies,
+    render_template,
+    time_as_words,
+)
 
 SERVICE_NAME = "agent"
 HEALTH_INTERVAL_S = 30.0
@@ -78,8 +98,9 @@ def _log(message: str, level: int = logging.INFO, **fields: object) -> None:
 
 
 def _show_for_phase(phase: Phase, session_id: str | None) -> Show:
-    """The minimal, honest `Show` for `phase`. See the module docstring for
-    why this is intentionally not a strategy: issue #14 owns those."""
+    """The minimal, honest `Show` for `phase` when no strategy is selected
+    (`IDLE`/`COOLDOWN`, and briefly `OBSERVING` before a strategy exists to
+    show). See `_show_for_transition` for the strategy-driven case."""
     if phase == Phase.IDLE:
         return Show(
             source=SERVICE_NAME,
@@ -99,6 +120,9 @@ def _show_for_phase(phase: Phase, session_id: str | None) -> Show:
             brightness=0.1,
         )
     if phase == Phase.ESCALATED:
+        # Safety fallback only: `_apply` always forces `escalate_phone`
+        # selected on entering `ESCALATED` (issue #14), so
+        # `_show_for_transition` normally never reaches this branch.
         return Show(
             source=SERVICE_NAME,
             session_id=session_id,
@@ -107,7 +131,7 @@ def _show_for_phase(phase: Phase, session_id: str | None) -> Show:
             body="",
             brightness=0.2,
         )
-    # OBSERVING or ENGAGED: awake, no strategy text yet (issue #14).
+    # OBSERVING: awake, before a strategy is selected.
     return Show(
         source=SERVICE_NAME,
         session_id=session_id,
@@ -118,15 +142,102 @@ def _show_for_phase(phase: Phase, session_id: str | None) -> Show:
     )
 
 
-def _publish_transition(bus, transition: Transition) -> SessionState:
-    """Publish everything one `Transition` implies: `SessionState`, an
-    optional `GoalChanged` (issue #13), an optional `Notify`, and the
-    phase's `Show`. Returns the `SessionState` published, for callers that
-    just want to know what happened.
+def _show_for_strategy(
+    strategy: StrategyDef, session_id: str | None, now: datetime, profile: PersonProfile
+) -> Show:
+    """Render one strategy's `Show` fields (issue #14): its fixed `face`/
+    `brightness`/`photo_id`, and its headline/body templates interpolated
+    through `agent.strategies.render_template` with `profile` and the
+    current time-as-words."""
+    extra = {"time_words": time_as_words(now)}
+    return Show(
+        source=SERVICE_NAME,
+        session_id=session_id,
+        face=strategy.face,
+        headline=render_template(strategy.headline_template, profile, **extra),
+        body=render_template(strategy.body_template, profile, **extra),
+        photo_id=strategy.photo_id,
+        brightness=strategy.brightness,
+    )
 
-    `SessionState` is always republished here, even for a goal-only
-    update with no phase change, so `SessionState.goal` -- shown on the
-    dashboard timeline alongside `GoalChanged` -- never lags behind."""
+
+def _show_for_transition(transition: Transition, now: datetime, profile: PersonProfile) -> Show:
+    """The `Show` to publish for `transition`: strategy-driven whenever one
+    was selected, `_show_for_phase`'s minimal fallback otherwise."""
+    if transition.strategy is not None:
+        return _show_for_strategy(transition.strategy, transition.session_id, now, profile)
+    return _show_for_phase(transition.phase, transition.session_id)
+
+
+def _maybe_publish_say(
+    bus,
+    transition: Transition,
+    session: Session,
+    now: datetime,
+    profile: PersonProfile,
+) -> None:
+    """Publish a `Say` for `transition.strategy`, if it has a
+    `say_template`, after passing it through `agent.rules.validate_say`
+    (HANDOFF.md rule 3). A rejection is logged loudly and nothing is
+    published -- silence, never a wrong sentence at 3am -- and does not
+    move `session`'s minimum-gap clock, since nothing was actually said.
+    """
+    strategy = transition.strategy
+    if strategy is None or strategy.say_template is None:
+        return
+
+    text = render_template(strategy.say_template, profile, time_words=time_as_words(now))
+    result = validate_say(
+        text,
+        seconds_since_last_say=session.seconds_since_last_say(now),
+        min_gap_seconds=session.config.say_min_gap_seconds,
+    )
+    if not result.accepted:
+        _log(
+            "rejected Say, falling back to silence",
+            level=logging.WARNING,
+            event_type="Say",
+            strategy=strategy.id,
+            reason=result.reason,
+        )
+        return
+
+    say_event = Say(
+        source=SERVICE_NAME,
+        session_id=transition.session_id,
+        text=text,
+        strategy=strategy.id,
+        # `escalate_phone` must not be interrupted by barge-in the way an
+        # ordinary strategy's speech can be (HANDOFF.md section 7:
+        # `listen`'s barge-in) -- there is nothing left to redirect to.
+        interruptible=strategy.id != ESCALATE_PHONE_ID,
+    )
+    bus.publish(say_event)
+    session.record_say(now)
+    _log("published Say", event_type="Say", strategy=strategy.id)
+
+
+def _publish_transition(
+    bus,
+    transition: Transition,
+    session: Session,
+    now: datetime,
+    *,
+    profile: PersonProfile = DEFAULT_PROFILE,
+) -> SessionState:
+    """Publish everything one `Transition` implies: `SessionState`, an
+    optional `GoalChanged` (issue #13), an optional `Notify`, the `Show`
+    (phase-driven or strategy-driven, issue #14), and, if the selected
+    strategy has one, a `Say` that has passed `agent.rules.validate_say`.
+    Returns the `SessionState` published, for callers that just want to
+    know what happened.
+
+    `SessionState` is always republished here, even for a goal-only or
+    strategy-only update with no phase change, so `SessionState.goal`/
+    `.strategy_index` -- shown on the dashboard timeline -- never lag
+    behind. `profile` is issue #16's seam: always `DEFAULT_PROFILE` until
+    a real person profile exists to load (see `agent.strategies`'s module
+    docstring)."""
     event = SessionState(
         source=SERVICE_NAME,
         session_id=transition.session_id,
@@ -171,9 +282,11 @@ def _publish_transition(bus, transition: Transition) -> SessionState:
         bus.publish(notify_event)
         _log("published Notify", event_type="Notify", notify_level=notify_event.level)
 
-    show_event = _show_for_phase(transition.phase, transition.session_id)
+    show_event = _show_for_transition(transition, now, profile)
     bus.publish(show_event)
     _log("published Show", event_type="Show", face=show_event.face)
+
+    _maybe_publish_say(bus, transition, session, now, profile)
 
     return event
 
@@ -186,16 +299,19 @@ def run_once(
     count: int = 10,
     block_ms: int = 200,
     now_fn: Callable[[], datetime] = datetime.now,
+    profile: PersonProfile = DEFAULT_PROFILE,
 ) -> list[SessionState]:
     """Read whatever `PersonState`/`Utterance` messages are waiting, feed
     them through `session` in arrival order, and publish one `SessionState`
-    (plus any `Notify`/`Show`) per resulting phase change. Also calls
-    `session.tick` once, so timers advance even when nothing new arrived.
+    (plus any `Notify`/`Show`/`Say`) per resulting update. Also calls
+    `session.tick` once, so timers -- including a strategy's dwell -- advance
+    even when nothing new arrived.
 
     Returns the `SessionState`s published, most recent last. Side-effect-
     free beyond bus reads/acks/publishes, so tests can call it directly and
     in a loop with a `FakeBus`, instead of going through the infinite,
-    real-time `run()` loop.
+    real-time `run()` loop. `profile` defaults to `DEFAULT_PROFILE`
+    (issue #16's seam, see `agent.strategies`).
     """
     published: list[SessionState] = []
 
@@ -205,9 +321,10 @@ def run_once(
     for msg_id, event in person_messages:
         bus.ack(PERSON_STREAM, PERSON_GROUP, msg_id)
         assert isinstance(event, PersonState)
-        transition = session.on_person_state(event.state, event.zone, now_fn())
+        now = now_fn()
+        transition = session.on_person_state(event.state, event.zone, now)
         if transition is not None:
-            published.append(_publish_transition(bus, transition))
+            published.append(_publish_transition(bus, transition, session, now, profile=profile))
 
     utterance_messages = bus.read(
         UTTERANCE_STREAM, UTTERANCE_GROUP, consumer, count=count, block_ms=0
@@ -215,13 +332,15 @@ def run_once(
     for msg_id, event in utterance_messages:
         bus.ack(UTTERANCE_STREAM, UTTERANCE_GROUP, msg_id)
         assert isinstance(event, Utterance)
-        transition = session.on_utterance(now_fn())
+        now = now_fn()
+        transition = session.on_utterance(now)
         if transition is not None:
-            published.append(_publish_transition(bus, transition))
+            published.append(_publish_transition(bus, transition, session, now, profile=profile))
 
-    transition = session.tick(now_fn())
+    now = now_fn()
+    transition = session.tick(now)
     if transition is not None:
-        published.append(_publish_transition(bus, transition))
+        published.append(_publish_transition(bus, transition, session, now, profile=profile))
 
     return published
 
@@ -303,10 +422,11 @@ def run() -> None:
 
     Reads `AGENT_NIGHT_START`, `AGENT_NIGHT_END`, `AGENT_OBSERVE_SECONDS`,
     `AGENT_COOLDOWN_SECONDS`, `AGENT_IN_BED_STABLE_SECONDS`,
-    `AGENT_FLOOR_LIMIT_SECONDS`, `AGENT_ABSENT_LIMIT_SECONDS`, `REDIS_URL`,
-    and `TZ` from the environment (defaults documented in `.env.example`;
-    `TZ` matters because `AGENT_NIGHT_START`/`AGENT_NIGHT_END` are local
-    time and containers default to UTC otherwise). A short sleep between
+    `AGENT_FLOOR_LIMIT_SECONDS`, `AGENT_ABSENT_LIMIT_SECONDS`,
+    `AGENT_SAY_MIN_GAP_SECONDS`, `STRATEGIES_PATH`, `REDIS_URL`, and `TZ`
+    from the environment (defaults documented in `.env.example`; `TZ`
+    matters because `AGENT_NIGHT_START`/`AGENT_NIGHT_END` are local time
+    and containers default to UTC otherwise). A short sleep between
     iterations when nothing was published avoids a busy loop.
     """
     if os.environ.get("AGENT_FAKE", "false").strip().lower() == "true":
@@ -319,10 +439,11 @@ def run() -> None:
     redis_url = os.environ.get("REDIS_URL", "redis://bus:6379")
     _log_startup_timezone_check(config)
 
+    strategies = load_strategies(config.strategies_path)
     bus = Bus(redis.Redis.from_url(redis_url))
     bus.ensure_group(PERSON_STREAM, PERSON_GROUP)
     bus.ensure_group(UTTERANCE_STREAM, UTTERANCE_GROUP)
-    session = Session(config=config)
+    session = Session(config=config, strategies=strategies)
 
     last_health_at: float | None = None
     last_heartbeat_at: datetime | None = None

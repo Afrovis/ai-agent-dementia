@@ -9,6 +9,7 @@ description = "Night Companion agent service: session state machine (issue #12),
 requires-python = ">=3.12"
 dependencies = [
     "redis>=5.0",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]

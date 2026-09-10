@@ -1,0 +1,172 @@
+# Caregiver-editable strategy catalogue for `agent` (issue #14). Copy this
+# file to `config/strategies.yaml` (or point STRATEGIES_PATH at your own
+# file) and edit the fields below -- order, enable/disable, cooldown,
+# dwell, and every phrase -- to match how you want the agent to talk to
+# your person. A missing key, an empty/missing file, or one that fails to
+# parse all degrade to the built-in defaults in
+# `services/agent/agent/strategies.py` (`DEFAULT_STRATEGIES`) rather than
+# crashing `agent` -- logged as a warning, never fatal, exactly like
+# `perceive`'s `zones.yaml`.
+#
+# HANDOFF.md section 7 / PLAN.md section 5.3 list ten strategies. Only six
+# are implemented, and only those six may appear below:
+#
+#   1  ambient_orient          2  soft_greeting        3  orient_time_place
+#   4  validate_and_redirect   5  guided_return        10 escalate_phone
+#
+# Deliberately absent, and not a bug:
+#
+#   6  familiar_voice   needs a caregiver-uploaded voice clip -- no
+#   7  music_or_story   ingestion path exists for either yet. Out of scope
+#                        for every current issue, not just this one.
+#   9  escalate_gentle  needs in-home chime hardware PLAN.md marks v2.
+#   8  path_light       needs a smart-plug integration -- scoped to issue
+#                        #21, a separate piece of work, not this file.
+#
+# Every entry below only *overrides* fields on the matching built-in
+# strategy (matched by `id`); an id this file lists that `agent` does not
+# know about is logged and ignored, and any field you leave out keeps its
+# code default. Fields:
+#
+#   id                the strategy's fixed identifier (do not invent new
+#                     ones here; see the "deliberately absent" list above)
+#   order             position in the ladder `agent` tries within `ENGAGED`,
+#                     lowest first. Reordering here changes which strategy
+#                     is tried next, not what any strategy does.
+#   enabled           false removes it from selection entirely (not even
+#                     tried, not even to fail a cooldown check) until
+#                     re-enabled.
+#   dwell_seconds     how long this strategy is shown before `agent` moves
+#                     on, if the person has not made progress toward bed
+#                     in that time.
+#   cooldown_seconds  how long after this strategy is dropped before it
+#                     may be selected again this same session.
+#   intrusiveness     1 (calmest) to 5 (escalation) -- informational, shown
+#                     on the dashboard's Strategies page; does not change
+#                     selection order or dwell on its own.
+#   face              the embodiment's face state while this strategy is
+#                     shown: asleep, awake, speaking, or listening.
+#   brightness        screen brightness, 0.0 to 1.0.
+#   headline          big on-screen text.
+#   body              smaller on-screen text below the headline.
+#   say               the sentence spoken aloud, or omit/null for none
+#                     (`ambient_orient`'s catalogue entry: "Say: none").
+#                     Every `say` here must already satisfy HANDOFF.md
+#                     rule 3 (one sentence, no "no"/"you can't"/"you're
+#                     wrong", no question) -- `agent.rules.validate_say`
+#                     enforces this at publish time regardless, and a
+#                     template that fails it is simply never spoken.
+#   photo_id          a photo shown behind the face, or omit/null for none.
+#                     Looked up the same way `Show.photo_id` always is
+#                     (caregiver uploads under PHOTO_DIR, falling back to
+#                     the `demo_room`/`demo_family` bundled examples).
+#
+# `{name}` and `{caregiver_name}` in any headline/body/say interpolate the
+# person profile (issue #16 loads a real one; until then both fall back to
+# a generic, still-natural-reading phrase rather than ever showing a
+# literal "{name}"). `{time_words}` interpolates the current hour as words,
+# e.g. "3 o'clock at night".
+#
+# `{name_vocative}` is a separate, name-shaped placeholder for a name
+# dropped into the middle or end of a sentence ("Let's rest now, Jean.")
+# rather than used as a plain word ("Hello, {name}" reads fine as "Hello,
+# there" with no name configured, so it uses `{name}` directly). It
+# renders as ", <name>" when a name is configured, and as nothing at all
+# -- not ", there" -- when it is not, so the sentence around it still
+# reads naturally either way. Use `{name_vocative}` rather than writing
+# `, {name}` yourself whenever a template addresses the person by name
+# mid-sentence.
+#
+# Every `say` here is one sentence on purpose (HANDOFF.md rule 3). PLAN.md
+# section 5.3's illustrative phrasing for `orient_time_place` and
+# `validate_and_redirect` is two sentences and predates that rule; rule 3
+# wins, so keep any edit here to one sentence too -- `agent.rules.
+# validate_say` silently drops a `say` that is not, which is much harder
+# to notice than a failing test.
+
+strategies:
+  - id: ambient_orient
+    order: 1
+    enabled: true
+    dwell_seconds: 30
+    cooldown_seconds: 120
+    intrusiveness: 1
+    face: awake
+    brightness: 0.3
+    headline: "It is night"
+    body: "It is {time_words}{name_vocative}."
+    say: null
+
+  - id: soft_greeting
+    order: 2
+    enabled: true
+    dwell_seconds: 20
+    cooldown_seconds: 120
+    intrusiveness: 2
+    face: awake
+    brightness: 0.5
+    headline: "Hello, {name}"
+    body: "It is {time_words}."
+    say: "Hello {name}, it's {time_words}."
+
+  - id: orient_time_place
+    order: 3
+    enabled: true
+    dwell_seconds: 30
+    cooldown_seconds: 180
+    intrusiveness: 2
+    face: awake
+    brightness: 0.5
+    headline: "You are home"
+    body: "You are in your bedroom, and it is {time_words}."
+    say: "You are home in your bedroom, and it is {time_words}."
+    photo_id: demo_room
+
+  - id: validate_and_redirect
+    order: 4
+    enabled: true
+    dwell_seconds: 20
+    cooldown_seconds: 180
+    intrusiveness: 3
+    face: listening
+    brightness: 0.5
+    headline: "I'm listening"
+    body: ""
+    # HANDOFF.md's catalogue description for this strategy is "composed
+    # from utterance" -- responding to what the person actually said.
+    # That composition is `interpret`/`compose` (issue #15), which this
+    # system does not have yet, so this is a fixed fallback: it validates
+    # a feeling in general terms and redirects, without inventing any
+    # acknowledgement of specific words the person used. One sentence
+    # (rule 3, see the note above); `{name_vocative}` degrades to nothing
+    # rather than a bare ", there" when no name is configured.
+    say: "It's alright{name_vocative}, let's rest now and talk more in the morning."
+
+  - id: guided_return
+    order: 5
+    enabled: true
+    dwell_seconds: 30
+    cooldown_seconds: 180
+    intrusiveness: 3
+    face: speaking
+    brightness: 0.7
+    headline: "Let's head back to bed"
+    body: "Your bed is behind you."
+    say: "Let's go back to bed now{name_vocative}."
+
+  - id: escalate_phone
+    order: 10
+    enabled: true
+    # "Until Ack" in HANDOFF.md's table: `agent` never advances past this
+    # strategy on a timer at all once selected (see
+    # `agent.strategies.StrategyEngine.force`), so `dwell_seconds` and
+    # `cooldown_seconds` here are documentation, not a timer anything
+    # reads.
+    dwell_seconds: .inf
+    cooldown_seconds: 0
+    intrusiveness: 5
+    face: asleep
+    brightness: 0.15
+    headline: "Someone is coming to help"
+    body: ""
+    say: "Someone is coming to help."
