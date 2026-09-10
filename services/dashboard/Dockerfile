@@ -10,4 +10,9 @@ RUN pip install --no-cache-dir -e /app/shared \
 
 WORKDIR /app/services/dashboard
 
+# Matches DASHBOARD_PORT's default in .env.example; docker-compose.yml maps
+# the actual configured port, this just documents it for `docker inspect`
+# and anyone running the image directly.
+EXPOSE 8444
+
 CMD ["python", "-m", "dashboard"]

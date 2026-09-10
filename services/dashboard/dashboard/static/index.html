@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Night Companion &mdash; Zones</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+  <main id="page">
+    <h1>Zones</h1>
+    <p>
+      Draw the <strong>bed</strong> zone, <strong>door</strong> zone, and
+      <strong>bathroom path</strong> on a frame from the room, so
+      <code>perceive</code> can tell where the person is relative to each
+      one. Coordinates are saved normalised (0.0&ndash;1.0), so redrawing is
+      not needed if the camera resolution changes later.
+    </p>
+    <p id="precedence-note">
+      When zones overlap, the order that decides which one wins is fixed:
+      <strong>bed</strong>, then <strong>door</strong>, then
+      <strong>bathroom path</strong>, then &ldquo;other&rdquo; for anywhere
+      else. Draw zones not to overlap where that matters &mdash; see
+      <code>perceive/zones.py</code> for why the order is fixed.
+    </p>
+
+    <div id="frame-missing" class="hidden">
+      <p>
+        <strong>No camera frame yet.</strong> Open the bedside embodiment
+        page on the device by the bed and grant it camera permission, then
+        reload this page. The dashboard only keeps the most recent frame in
+        memory &mdash; nothing is recorded to disk &mdash; and needs at
+        least one to arrive before there is anything to draw on.
+      </p>
+    </div>
+
+    <p id="load-failed" class="hidden" role="alert">
+      <strong>The editor could not load.</strong> Reload the page. If it keeps
+      failing, check that the <code>dashboard</code> service is running and see
+      its logs.
+    </p>
+
+    <div id="editor" class="hidden">
+      <div id="zone-picker" role="group" aria-label="Active zone">
+        <button type="button" class="zone-btn" data-zone="bed">Bed</button>
+        <button type="button" class="zone-btn" data-zone="door">Door</button>
+        <button type="button" class="zone-btn" data-zone="bathroom_path">Bathroom path</button>
+      </div>
+
+      <div id="canvas-wrap">
+        <canvas id="zones-canvas"></canvas>
+      </div>
+
+      <div id="zone-controls">
+        <button type="button" id="undo-btn">Undo last point</button>
+        <button type="button" id="close-btn">Close shape</button>
+        <button type="button" id="edit-btn">Edit shape</button>
+        <button type="button" id="clear-btn">Clear zone</button>
+      </div>
+      <p id="zone-hint"></p>
+
+      <form id="zones-form" hx-post="/zones" hx-target="#save-result" hx-swap="innerHTML">
+        <input type="hidden" name="zones_json" id="zones-json-input" value="{}" />
+        <button type="submit" id="save-btn">Save zones</button>
+      </form>
+      <div id="save-result" role="status"></div>
+    </div>
+  </main>
+
+  <script src="/static/script.js"></script>
+</body>
+</html>

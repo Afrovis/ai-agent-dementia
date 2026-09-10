@@ -141,8 +141,16 @@ Bus(redis.Redis.from_url('redis://bus:6379')).publish(
 
 ## Gotchas
 
-`dashboard` on port 8444 is a placeholder. It logs that it is not implemented
-and serves nothing. Not a regression, and not part of M0.
+`dashboard` on port 8444 serves the Zones editor (issue #10): draw the bed,
+door, and bathroom-path zones on a live frame from the room and save them to
+`config/zones.yaml`. Every route needs HTTP Basic auth against
+`DASHBOARD_PASSWORD`; with that unset (the default in a fresh `.env`) every
+route answers 503 naming the variable rather than serving anything, camera
+frame included. Set `DASHBOARD_PASSWORD` and restart the container to use
+it. `perceive` only reads `zones.yaml` at startup, so a save here needs
+`docker compose restart perceive` before it takes effect. The rest of the
+dashboard (Tonight, History, Person profile, Strategies, System) is still a
+placeholder, not part of M0.
 
 `capture` needs OpenCV only for `CAPTURE_SOURCE=usb` or `rtsp`. The browser
 MVP source is the default and needs none of it, so the container does not

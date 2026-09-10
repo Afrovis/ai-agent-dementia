@@ -1,0 +1,132 @@
+/* Night Companion dashboard: plain CSS, no framework, matching the
+   embodiment page's dark background and warm amber accent (PLAN.md
+   section 8's palette, reused here for visual consistency rather than
+   any hard requirement on the dashboard's look). */
+
+:root {
+  --bg: #16130f;
+  --panel: #221d17;
+  --amber: #e8a55c;
+  --text: #f2e6d8;
+  --muted: #b9ab97;
+  --border: #3a332a;
+  --error: #e85c5c;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Helvetica Neue", Arial, sans-serif;
+}
+
+#page {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px 20px 60px;
+}
+
+h1 {
+  color: var(--amber);
+}
+
+#precedence-note {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 16px;
+}
+
+.hidden {
+  display: none !important;
+}
+
+#zone-picker {
+  display: flex;
+  gap: 8px;
+  margin: 16px 0 8px;
+}
+
+.zone-btn {
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 2px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 15px;
+}
+
+.zone-btn.active {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.zone-btn[data-zone="bed"].active { border-color: #e8a55c; color: #e8a55c; }
+.zone-btn[data-zone="door"].active { border-color: #5ca8e8; color: #5ca8e8; }
+.zone-btn[data-zone="bathroom_path"].active { border-color: #8ce85c; color: #8ce85c; }
+
+#canvas-wrap {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  line-height: 0;
+  max-width: 100%;
+}
+
+#zones-canvas {
+  width: 100%;
+  height: auto;
+  display: block;
+  cursor: crosshair;
+  background: #000;
+}
+
+#zone-controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 12px 0;
+}
+
+#zone-controls button {
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+}
+
+#zone-hint {
+  color: var(--muted);
+  min-height: 1.2em;
+}
+
+#save-btn {
+  padding: 10px 20px;
+  border-radius: 6px;
+  border: none;
+  background: var(--amber);
+  color: #1a1206;
+  font-weight: bold;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+#save-result {
+  margin-top: 12px;
+}
+
+#save-result .error {
+  color: var(--error);
+}
+
+#save-result ul {
+  color: var(--error);
+}
