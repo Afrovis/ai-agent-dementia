@@ -29,10 +29,9 @@ caregiver, fail quiet to the person"):
   (HANDOFF.md rule 3: one sentence, a minimum silence gap, no forbidden
   phrasing, no memory-testing question by form). A `Say` that fails
   validation is logged loudly and never published -- silence, not a wrong
-  sentence at 3am. Composing strategy 4's text from what the person
-  actually said is `compose` (issue #15); every strategy here uses a
-  fixed, caregiver-editable template instead (see `agent.strategies`'s
-  module docstring), so nothing here fabricates dialogue ahead of that.
+  sentence at 3am. Issue #15 composes strategy 4 from the latest utterance
+  with the local LLM; a failed call falls back to the caregiver's fixed
+  template, and both paths pass through the same deterministic validator.
 - `Notify(critical, repeat_until_ack=True, source="agent")` on entering
   `ESCALATED`, built from the `NotifySpec` `agent.session.Session` attaches
   to that `Transition`.
@@ -67,6 +66,8 @@ from nc_shared.events import (
 )
 
 from agent.config import AgentConfig
+from agent.goals import GOALS
+from agent.llm import LLMClient, OllamaLLM
 from agent.rules import Phase, validate_say
 from agent.session import Session, Transition
 from agent.strategies import (
@@ -169,12 +170,42 @@ def _show_for_transition(transition: Transition, now: datetime, profile: PersonP
     return _show_for_phase(transition.phase, transition.session_id)
 
 
+def _profile_for_llm(profile: PersonProfile) -> dict[str, str]:
+    """Convert the display profile to the small mapping the LLM boundary owns."""
+    return {"name": profile.name, "caregiver_name": profile.caregiver_name}
+
+
+def _session_state_for_llm(session: Session) -> dict[str, object]:
+    """Expose only advisory planner context, never executable state changes."""
+    ordered_strategies = sorted(session.strategies, key=lambda strategy: strategy.order)
+    current_strategy = next(
+        (
+            strategy.id
+            for index, strategy in enumerate(ordered_strategies)
+            if index == session.strategy_index and session.phase == Phase.ENGAGED
+        ),
+        None,
+    )
+    return {
+        "phase": session.phase.value,
+        "session_id": session.session_id,
+        "goal": session.goal,
+        "strategy_index": session.strategy_index,
+        "current_strategy": current_strategy,
+        "strategy_order": [strategy.id for strategy in ordered_strategies],
+        "allowed_goals": sorted(GOALS),
+        "recent_utterances": list(session.recent_utterances),
+        "scene_note": session.last_scene_note,
+    }
+
+
 def _maybe_publish_say(
     bus,
     transition: Transition,
     session: Session,
     now: datetime,
     profile: PersonProfile,
+    llm: LLMClient | None = None,
 ) -> None:
     """Publish a `Say` for `transition.strategy`, if it has a
     `say_template`, after passing it through `agent.rules.validate_say`
@@ -187,6 +218,21 @@ def _maybe_publish_say(
         return
 
     text = render_template(strategy.say_template, profile, time_words=time_as_words(now))
+    if llm is not None and strategy.id == "validate_and_redirect":
+        composition = llm.compose(
+            strategy.id,
+            strategy.say_template,
+            _profile_for_llm(profile),
+            time_as_words(now),
+            session.last_scene_note,
+            session.recent_utterances[-1] if session.recent_utterances else None,
+        )
+        # A model failure cannot replace the caregiver's known-safe phrase.
+        # The rendered template still passes the same deterministic Say gate.
+        if composition is None:
+            _log("LLM composition unavailable; using caregiver fallback", level=logging.WARNING)
+        else:
+            text = composition.text
     # The minimum-silence gap paces ordinary strategy speech, one sentence
     # then quiet. A terminal strategy (`escalate_phone`) is not ordinary
     # speech: it is the single sentence telling a person who may be on the
@@ -235,6 +281,7 @@ def _publish_transition(
     now: datetime,
     *,
     profile: PersonProfile = DEFAULT_PROFILE,
+    llm: LLMClient | None = None,
 ) -> SessionState:
     """Publish everything one `Transition` implies: `SessionState`, an
     optional `GoalChanged` (issue #13), an optional `Notify`, the `Show`
@@ -297,7 +344,7 @@ def _publish_transition(
     bus.publish(show_event)
     _log("published Show", event_type="Show", face=show_event.face)
 
-    _maybe_publish_say(bus, transition, session, now, profile)
+    _maybe_publish_say(bus, transition, session, now, profile, llm)
 
     return event
 
@@ -311,6 +358,7 @@ def run_once(
     block_ms: int = 200,
     now_fn: Callable[[], datetime] = datetime.now,
     profile: PersonProfile = DEFAULT_PROFILE,
+    llm: LLMClient | None = None,
 ) -> list[SessionState]:
     """Read whatever `PersonState`/`Utterance` messages are waiting, feed
     them through `session` in arrival order, and publish one `SessionState`
@@ -333,9 +381,12 @@ def run_once(
         bus.ack(PERSON_STREAM, PERSON_GROUP, msg_id)
         assert isinstance(event, PersonState)
         now = now_fn()
+        session.record_scene_note(event.scene_note)
         transition = session.on_person_state(event.state, event.zone, now)
         if transition is not None:
-            published.append(_publish_transition(bus, transition, session, now, profile=profile))
+            published.append(
+                _publish_transition(bus, transition, session, now, profile=profile, llm=llm)
+            )
 
     utterance_messages = bus.read(
         UTTERANCE_STREAM, UTTERANCE_GROUP, consumer, count=count, block_ms=0
@@ -344,14 +395,76 @@ def run_once(
         bus.ack(UTTERANCE_STREAM, UTTERANCE_GROUP, msg_id)
         assert isinstance(event, Utterance)
         now = now_fn()
+        prior_turns = session.recent_utterances
         transition = session.on_utterance(now)
+        llm_active = session.phase in (Phase.OBSERVING, Phase.ENGAGED)
+        if llm_active:
+            # Record only after snapshotting the prior turns used by
+            # ``interpret``. Composition triggered by this same update can
+            # still see the newest utterance.
+            session.record_utterance(event.text)
         if transition is not None:
-            published.append(_publish_transition(bus, transition, session, now, profile=profile))
+            published.append(
+                _publish_transition(bus, transition, session, now, profile=profile, llm=llm)
+            )
+
+        if llm is not None and llm_active:
+            interpretation = llm.interpret(event.text, prior_turns, _profile_for_llm(profile))
+            if interpretation is not None:
+                interpreted = session.on_interpretation(
+                    interpretation.intent.value, interpretation.distress, now
+                )
+                if interpreted is not None:
+                    published.append(
+                        _publish_transition(
+                            bus, interpreted, session, now, profile=profile, llm=llm
+                        )
+                    )
+
+            # Interpretation may just have escalated. A plan must never run
+            # afterward and use an otherwise legal goal-reset edge to undo
+            # ``wait_for_caregiver``.
+            plan = (
+                llm.plan(_session_state_for_llm(session))
+                if session.phase == Phase.ENGAGED
+                else None
+            )
+            if plan is not None:
+                if plan.goal_change is not None:
+                    proposed = session.propose_goal(plan.goal_change, "llm_plan", now)
+                    if proposed is not None:
+                        published.append(
+                            _publish_transition(
+                                bus, proposed, session, now, profile=profile, llm=llm
+                            )
+                        )
+                    else:
+                        _log(
+                            "rejected LLM goal proposal",
+                            level=logging.WARNING,
+                            goal=plan.goal_change,
+                        )
+                elif plan.next_strategy is not None:
+                    proposed = session.propose_strategy(plan.next_strategy, now)
+                    if proposed is not None:
+                        published.append(
+                            _publish_transition(
+                                bus, proposed, session, now, profile=profile, llm=llm
+                            )
+                        )
+                    else:
+                        _log(
+                            "rejected LLM strategy proposal",
+                            level=logging.WARNING,
+                            strategy=plan.next_strategy,
+                        )
 
     now = now_fn()
     transition = session.tick(now)
     if transition is not None:
-        published.append(_publish_transition(bus, transition, session, now, profile=profile))
+        published.append(
+            _publish_transition(bus, transition, session, now, profile=profile, llm=llm)
+        )
 
     return published
 
@@ -455,11 +568,16 @@ def run() -> None:
     bus.ensure_group(PERSON_STREAM, PERSON_GROUP)
     bus.ensure_group(UTTERANCE_STREAM, UTTERANCE_GROUP)
     session = Session(config=config, strategies=strategies)
+    llm = OllamaLLM(
+        ollama_url=os.environ.get("OLLAMA_URL", "http://host.docker.internal:11434"),
+        model=config.llm_model,
+        timeout_seconds=config.llm_timeout_seconds,
+    )
 
     last_health_at: float | None = None
     last_heartbeat_at: datetime | None = None
     while True:
-        published = run_once(bus, session)
+        published = run_once(bus, session, llm=llm)
         now = datetime.now()
         if published:
             last_heartbeat_at = now

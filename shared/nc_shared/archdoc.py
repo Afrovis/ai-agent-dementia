@@ -87,6 +87,12 @@ EXTERNAL_CONNECTIONS = (
         "services/agent/agent/strategies.py",
     ),
     ExternalConnection(
+        "agent",
+        "Ollama `/api/generate` on the host",
+        "calls",
+        "services/agent/agent/llm.py",
+    ),
+    ExternalConnection(
         "notify",
         "ntfy topic, or the log when `NTFY_URL` is empty",
         "calls",

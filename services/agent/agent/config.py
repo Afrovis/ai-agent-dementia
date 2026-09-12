@@ -102,6 +102,17 @@ class AgentConfig:
     HANDOFF.md rule 5, which must keep firing on the very first reading.
     `AGENT_ZONE_CONFIRM_READINGS`."""
 
+    llm_model: str = "llama3.1:8b"
+    """Local Ollama text model used for interpret/compose/plan (issue #15).
+    `AGENT_LLM_MODEL`."""
+
+    llm_timeout_seconds: float = 10.0
+    """Hard timeout for one local Ollama text request. The latency budgets
+    remain under one second for interpret and under two seconds to first
+    token for compose/plan; this larger ceiling prevents a cold model load
+    from crashing the agent while still bounding a failed request.
+    `AGENT_LLM_TIMEOUT_SECONDS`."""
+
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> AgentConfig:
         """Build an `AgentConfig` from environment variables, defaults otherwise."""
@@ -118,6 +129,8 @@ class AgentConfig:
             strategies_path=env.get("STRATEGIES_PATH"),
             say_min_gap_seconds=float(env.get("AGENT_SAY_MIN_GAP_SECONDS", "8")),
             zone_confirm_readings=int(env.get("AGENT_ZONE_CONFIRM_READINGS", "3")),
+            llm_model=env.get("AGENT_LLM_MODEL") or "llama3.1:8b",
+            llm_timeout_seconds=float(env.get("AGENT_LLM_TIMEOUT_SECONDS") or "10"),
         )
 
     def in_night_window(self, when: datetime) -> bool:

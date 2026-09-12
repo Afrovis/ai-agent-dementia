@@ -25,15 +25,14 @@ Deliberately absent, and not faked:
 
 ## Where the LLM does and does not sit
 
-Nothing in this module calls an LLM, and nothing here is aware one exists
-(HANDOFF.md rule 1). Two of the five ladder strategies have documented
-seams for future issues that do call one:
+Nothing in this module calls an LLM (HANDOFF.md rule 1). It exposes bounded
+selection seams to callers that handle model proposals:
 
-- `validate_and_redirect`'s catalogue description is "composed from
-  utterance" -- that composition is `interpret`/`compose`, issue #15. This
-  module uses the caregiver's configured template verbatim instead, and
-  fabricates no acknowledgement of anything the person actually said (see
-  `DEFAULT_STRATEGIES`).
+- `validate_and_redirect`'s caregiver template is the safe fallback for
+  issue #15's local composition; `agent.main` performs that call and runs
+  either result through `validate_say`.
+- `StrategyEngine.propose_next` accepts a planner suggestion only when it
+  is the exact next configured, enabled, off-cooldown, non-terminal rung.
 - Every strategy's `say_template`/`headline_template`/`body_template` is
   caregiver-editable text (`config/strategies.example.yaml`), rendered
   through `render_template` below with a `PersonProfile` -- currently
@@ -637,6 +636,29 @@ class StrategyEngine:
         self._started_at = now
         self._selected_at = now
         return self._by_id.get(strategy_id)
+
+    def propose_next(self, strategy_id: str, now: datetime) -> StrategyDef | None:
+        """Accept one planner suggestion only when it is the deterministic
+        next available ordinary strategy.
+
+        The planner may shorten a dwell, but it may not skip the configured
+        order, reselect a cooled-down/disabled strategy, or select a terminal
+        escalation action.  ``_first_available_id`` is the same route normal
+        advancement uses, including ``validate_strategy`` for each candidate.
+        ``None`` is an ordinary rejected advisory proposal.
+        """
+        current = self.current()
+        if current is None or current.terminal:
+            return None
+        next_id = self._first_available_id(now, after_id=current.id)
+        if next_id != strategy_id:
+            return None
+
+        self._cooldown_until[current.id] = now + timedelta(seconds=current.cooldown_seconds)
+        self.current_id = next_id
+        self._started_at = now
+        self._selected_at = now
+        return self.current()
 
     def note_progress(self, now: datetime) -> None:
         """Extend the current strategy's dwell window: called whenever

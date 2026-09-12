@@ -4,13 +4,10 @@ This is the layer HANDOFF.md rule 1 is about: "The LLM never owns safety.
 State transitions, escalation timers, and hard limits live in deterministic
 code in the `agent` service. The LLM interprets, composes, and proposes.
 Every LLM proposal passes through `rules.validate()` before it has any
-effect." Nothing in this module calls an LLM, and nothing here is aware
-that one exists. `interpret`, `compose`, and `plan` (issue #15) will each
-eventually produce a *proposed* phase (via `plan`) or strategy choice; this
-module is what stands between that proposal and anything actually
-happening. `agent.session.Session` already routes every transition it
-computes itself through `validate()` too, so this is not a dead file
-waiting for #15 -- it is load-bearing today.
+effect." Nothing in this module calls an LLM. Issue #15's structured
+interpretation, composition, and planning results all reach deterministic
+session, strategy, or speech checks before taking effect. `Session` also
+routes every transition it computes itself through `validate()`.
 
 `ALLOWED_TRANSITIONS` is the transition table HANDOFF.md section 6
 describes -- `IDLE -> OBSERVING -> ENGAGED -> COOLDOWN -> IDLE`, with
@@ -45,7 +42,7 @@ Beyond that, nothing else. In particular:
 issue #13: it checks a proposed goal change against `agent.goals.
 ALLOWED_GOAL_CHANGES` the same way `validate()` checks a proposed phase
 change against `ALLOWED_TRANSITIONS`, and for the same reason -- issue
-#15's `plan` will propose goal changes, and HANDOFF.md rule 1 requires
+#15's `plan` proposes goal changes, and HANDOFF.md rule 1 requires
 every one of those proposals to pass through this layer before it has any
 effect. `agent.session.Session` already routes its own deterministic goal
 switches through it too, exactly as it does for phase changes.
@@ -70,7 +67,7 @@ from issue #12's shape.
 then silence for at least 8 seconds ... Never the words 'no', 'you
 can't', 'you're wrong'. Validate, then redirect.") made into deterministic
 code every outgoing `Say` passes through, in `agent.main`, regardless of
-whether the text came from a caregiver's template (today) or `compose`'s
+whether the text came from a caregiver's template or `compose`'s
 LLM output (issue #15) -- the LLM never owns safety, so this check sits
 after composition, not instead of it. See its own docstring for exactly
 what the memory-testing-question check does and does not catch.

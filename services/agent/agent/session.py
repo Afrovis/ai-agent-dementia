@@ -7,10 +7,9 @@ itself, matching `capture.gate.MotionGate`/`perceive.classify.StateTracker`'s
 injected-clock convention. Tests build `datetime`s directly, so they are
 deterministic and never sleep for real.
 
-`Session` consumes `PersonState.state`/`.zone` and bare `Utterance`
-arrivals (call sites just need to know "an utterance happened", not its
-text or confidence -- interpreting *what* was said is `interpret`, issue
-#15) and produces `Transition`s: phase changes for `agent.main` to publish
+`Session` consumes `PersonState.state`/`.zone`, bare `Utterance` arrivals,
+and already-validated structured interpretations from `agent.main`. It
+never calls an LLM itself. It produces `Transition`s: phase changes to publish
 as `SessionState`, an optional `Notify` alongside a move into `ESCALATED`,
 and now (issue #13) an optional goal change for `agent.main` to publish as
 `GoalChanged`, with or without an accompanying phase change.
@@ -37,12 +36,11 @@ Issue #13's goal tree (`agent.goals`) and what it can and cannot observe:
   as a stand-in), so this goal is entered but never satisfied by code
   here; the session ends the ordinary way, via `in_bed` stability into
   `COOLDOWN`, same as issue #12.
-- `drink_water` and `comfort`: legal `validate_goal` targets, defined in
-  the tree, but nothing in this file enters them. Both need `interpret`/
-  `plan` (issue #15), an LLM call this module must never depend on.
-- A stated need ("I need the toilet"): needs STT plus intent
-  classification (issue #15). `on_utterance` still only knows that an
-  utterance happened, not what was said, exactly as issue #12 left it.
+- `drink_water` and `comfort`: legal `validate_goal` targets. Structured
+  interpretation maps pain to `comfort`; a validated planner proposal can
+  enter either without putting model code inside this state machine.
+- A stated restroom need is mapped to `restroom` by `on_interpretation`,
+  after `agent.main` obtains a validated local-model result.
 - `propose_goal()` is the one public entry point for an LLM's `plan`
   proposal (issue #15) to go through: it runs the same
   `agent.rules.validate_goal` check as every deterministic switch above,
@@ -72,11 +70,10 @@ strategy-only update selected, alongside `strategy_index` for
 `SessionState`, so `agent.main` can render its `Show`/`Say` without
 reaching back into this module.
 
-Still out of scope, and not faked: distress detection ("distress detected
-twice" in HANDOFF.md section 6) does not exist here at all, because it
-depends on `interpret` (issue #15), which makes an LLM call this module
-must never depend on. `validate_and_redirect`'s "composed from utterance"
-is the same seam, see `agent.strategies`'s module docstring.
+Issue #15's deterministic interpretation consequences also live here: two
+consecutive distress scores of 2 or 3 escalate, while intent and planner
+strategy/goal proposals can act only through the existing rule and strategy
+engine seams.
 """
 
 from __future__ import annotations
@@ -87,7 +84,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 
 from agent.config import AgentConfig
-from agent.goals import RESTROOM_GOAL, ROOT_GOAL, WAIT_FOR_CAREGIVER_GOAL
+from agent.goals import COMFORT_GOAL, RESTROOM_GOAL, ROOT_GOAL, WAIT_FOR_CAREGIVER_GOAL
 from agent.rules import Phase, validate, validate_goal
 from agent.strategies import DEFAULT_STRATEGIES, ESCALATE_PHONE_ID, StrategyDef, StrategyEngine
 
@@ -206,6 +203,13 @@ class Session:
     # `IDLE`, `_reset_timers`), which that check treats as "no minimum gap
     # to enforce yet".
     _last_say_at: datetime | None = field(default=None, init=False, repr=False)
+
+    # The LLM is deliberately kept out of this state machine.  `main`
+    # passes its already-validated interpretation here and this small
+    # counter makes the "distress detected twice" rule deterministic.
+    _consecutive_distress: int = field(default=0, init=False, repr=False)
+    _recent_utterances: list[str] = field(default_factory=list, init=False, repr=False)
+    _last_scene_note: str | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._engine = StrategyEngine(self.strategies)
@@ -363,7 +367,32 @@ class Session:
         self._pending_zone = None
         self._pending_zone_count = 0
         self._last_say_at = None
+        self._consecutive_distress = 0
+        self._recent_utterances.clear()
+        self._last_scene_note = None
         self._engine.reset()
+
+    def record_utterance(self, text: str) -> None:
+        """Remember the bounded dialogue context supplied to ``interpret``.
+
+        This is session data, not an LLM dependency.  Keeping only the
+        latest three turns gives the caller the documented context window
+        without retaining an unbounded transcript in the long-lived agent.
+        """
+        self._recent_utterances.append(text)
+        del self._recent_utterances[:-3]
+
+    @property
+    def recent_utterances(self) -> tuple[str, ...]:
+        return tuple(self._recent_utterances)
+
+    def record_scene_note(self, scene_note: str | None) -> None:
+        """Keep the newest perception note for a later composition call."""
+        self._last_scene_note = scene_note
+
+    @property
+    def last_scene_note(self) -> str | None:
+        return self._last_scene_note
 
     def _update_rule5_timers(self, state: str, now: datetime) -> None:
         if state == "on_floor":
@@ -575,6 +604,13 @@ class Session:
         the same way a zone-triggered one is timestamped, even though this
         method makes no other use of the clock itself.
         """
+        # Planner proposals are meaningful only while the ordinary strategy
+        # ladder is active. In particular, never let a plan use the table's
+        # internal ``wait_for_caregiver -> return_to_bed`` reset edge to undo
+        # an escalation; only `_apply(IDLE)` may perform that reset.
+        if self.phase != Phase.ENGAGED:
+            return None
+
         change = self._apply_goal(goal, reason=reason)
         if change is None:
             return None
@@ -591,6 +627,72 @@ class Session:
             notify=None,
             goal_change=change,
         )
+
+    def propose_strategy(self, strategy_id: str, now: datetime) -> Transition | None:
+        """Apply a planner's next-strategy proposal through the engine.
+
+        ``StrategyEngine.propose_next`` accepts only the exact next enabled,
+        off-cooldown, non-terminal rung.  Thus a plan can shorten the current
+        dwell but can neither skip the caregiver's configured ladder nor
+        manufacture an escalation.  Rejections are ordinary advisory no-ops.
+        """
+        if self.phase != Phase.ENGAGED:
+            return None
+        strategy = self._engine.propose_next(strategy_id, now)
+        if strategy is None:
+            return None
+        self.strategy_index = self._engine.index_of(strategy.id)
+        return Transition(
+            phase=self.phase,
+            session_id=self.session_id,
+            goal=self.goal,
+            strategy_index=self.strategy_index,
+            reason="llm_plan_strategy",
+            strategy=strategy,
+        )
+
+    def on_interpretation(self, intent: str, distress: int, now: datetime) -> Transition | None:
+        """Apply the deterministic consequences of one LLM interpretation.
+
+        The caller owns the LLM call; this method only receives its compact
+        result.  A distress score of 2 or 3 is a positive detection.  Two
+        consecutive positive utterance interpretations escalate an active
+        session.  A non-distressed utterance resets the counter, so a pair
+        of unrelated, ambiguous readings cannot accumulate into an alert.
+
+        Intent is advisory as well: only the two mappings that have a clear
+        goal-tree meaning are proposed here, and ``propose_goal`` still
+        routes them through ``validate_goal``.  Unknown intents are inert.
+        """
+        if self.phase != Phase.ENGAGED:
+            self._consecutive_distress = 0
+            return None
+
+        if distress >= 2:
+            self._consecutive_distress += 1
+        else:
+            self._consecutive_distress = 0
+
+        if self._consecutive_distress >= 2:
+            return self._apply(
+                Phase.ESCALATED,
+                reason="distress_detected_twice",
+                now=now,
+                notify=NotifySpec(
+                    level="attention",
+                    title="Repeated distress detected",
+                    body="Two consecutive utterances sounded distressed; please check in.",
+                ),
+            )
+
+        intent_goals = {
+            "need_restroom": RESTROOM_GOAL,
+            "pain": COMFORT_GOAL,
+        }
+        target_goal = intent_goals.get(intent)
+        if target_goal is None:
+            return None
+        return self.propose_goal(target_goal, f"interpreted_{intent}", now)
 
     def on_utterance(self, now: datetime) -> Transition | None:
         """Any `Utterance` moves `OBSERVING` straight to `ENGAGED`

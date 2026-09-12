@@ -137,6 +137,7 @@ against the files that implement them.
 | `perceive` | Ollama `/api/generate` on the host | calls | `services/perceive/perceive/vision.py` |
 | `perceive` | `config/zones.yaml` at startup | reads | `services/perceive/perceive/zones.py` |
 | `agent` | `config/strategies.yaml` at startup | reads | `services/agent/agent/strategies.py` |
+| `agent` | Ollama `/api/generate` on the host | calls | `services/agent/agent/llm.py` |
 | `notify` | ntfy topic, or the log when `NTFY_URL` is empty | calls | `services/notify/notify/backends.py` |
 | `store` | SQLite `data/night.db` | writes | `services/store/store/main.py` |
 | `dashboard` | Caregiver browser, HTTP Basic auth | both | `services/dashboard/dashboard/app.py` |

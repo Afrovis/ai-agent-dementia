@@ -488,6 +488,18 @@ def test_propose_goal_rejects_an_illegal_change():
     assert session.goal == "restroom"
 
 
+def test_propose_goal_cannot_undo_wait_for_caregiver_after_escalation():
+    session = make_session()
+    transition = session.on_person_state("on_floor", "other", NIGHT)
+    assert transition is not None
+    assert session.phase == Phase.ESCALATED
+
+    proposed = session.propose_goal("return_to_bed", "llm_plan", NIGHT + timedelta(seconds=1))
+
+    assert proposed is None
+    assert session.goal == "wait_for_caregiver"
+
+
 # --- issue #14: the strategy engine wired into Session -------------------
 
 

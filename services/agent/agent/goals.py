@@ -37,19 +37,13 @@ or for hardware this system does not have. Per goal:
   (`AgentConfig.restroom_timeout_seconds`) exists only so the goal cannot
   stick forever if the person never returns to the bed zone; it is a
   safety valve, not a claim of detecting bathroom use.
-- `drink_water`: success is "drank, then `return_to_bed`". **Not
-  observable today.** Nothing in `perceive`'s `PersonState` or `listen`'s
-  bare `Utterance` arrival distinguishes "asked for water" or "drank" from
-  any other moment. Entry requires STT plus intent classification
-  (`interpret`, issue #15) or the LLM `plan` proposing it, which is why
-  this goal exists in the tree and is a legal `validate_goal` target, but
-  nothing in `agent.session` enters it deterministically.
+- `drink_water`: success is "drank, then `return_to_bed`". The structured
+  planner may propose entry through `Session.propose_goal`, but drinking
+  itself is not observable with the current events.
 - `comfort`: success is "distress reduced (calm voice, sitting still)".
-  **Not observable today**, for the same reason issue #12's module
-  docstring already gives for "distress detected twice": distress
-  detection depends on `interpret` (issue #15), an LLM call this package
-  must never depend on. Legal as a `validate_goal` target; never entered
-  by deterministic code here.
+  Structured interpretation can propose entry for pain and detects repeated
+  distress, while the deterministic session remains responsible for every
+  resulting goal or phase change.
 - `wait_for_caregiver`: success is "caregiver present". **Not observable
   today, and will not be faked as observable.** The only signal available
   after an escalation is `Ack` (stream `ack`, produced by `dashboard`/

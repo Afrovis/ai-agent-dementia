@@ -93,6 +93,8 @@ services:
     environment:
       REDIS_URL: ${REDIS_URL}
       OLLAMA_URL: ${OLLAMA_URL}
+      AGENT_LLM_MODEL: ${AGENT_LLM_MODEL:-llama3.1:8b}
+      AGENT_LLM_TIMEOUT_SECONDS: ${AGENT_LLM_TIMEOUT_SECONDS:-10}
       # The night window is local time; containers default to UTC, so this
       # must be set for AGENT_NIGHT_START/END to mean what they say.
       TZ: ${TZ}
