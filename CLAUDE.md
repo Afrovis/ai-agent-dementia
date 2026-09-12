@@ -28,6 +28,17 @@ Event schemas and the bus wrapper live in `shared/nc_shared`. `events.py`
 holds the pydantic models and the two-way registry mapping each event class
 to its stream name. Add new events there, not in a service.
 
+`ARCHITECTURE.md` is the generated as-built map of services, streams, event
+types, consumer groups, persistence, and outside-world connections. Do not
+edit it by hand. After changing an event, stream, subscription, or declared
+outside connection, regenerate and check it from the repository root:
+
+```sh
+python -m nc_shared.archdoc --write
+docker run --rm -v "$PWD":/repo -w /repo python:3.12-slim \
+  sh -c "pip install -q -e shared[dev] && pytest shared/tests"
+```
+
 ## Running locally
 
 ```sh

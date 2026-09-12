@@ -183,6 +183,8 @@ Run tests for one service: `cd services/agent && pytest`.
 - `ruff check` and `ruff format --check` pass.
 - New config keys are documented in `.env.example` or the example yaml.
 - New events are in `events.py` and in section 5 of this file.
+- `ARCHITECTURE.md` is regenerated when events, streams, subscriptions, or
+  outside-world connections change.
 - Nothing under `data/` is committed. No frame or audio bytes are logged or persisted.
 - If a fixed decision or rule in this file changed, this file changed in the same PR and the PR title starts with `decision:`.
 

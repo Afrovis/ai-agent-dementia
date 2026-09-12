@@ -4,4 +4,6 @@ A local, embodied AI agent that helps a person with dementia get safely back to 
 
 Not a medical device. Not a substitute for supervision.
 
-See [PLAN.md](PLAN.md) for the full design and [HANDOFF.md](HANDOFF.md) for the execution brief agents and contributors should read before picking up an issue.
+See [PLAN.md](PLAN.md) for the full design, [ARCHITECTURE.md](ARCHITECTURE.md)
+for the generated as-built service map, and [HANDOFF.md](HANDOFF.md) for the
+execution brief agents and contributors should read before picking up an issue.

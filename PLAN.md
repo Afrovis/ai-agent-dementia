@@ -70,6 +70,9 @@ A person living with dementia at home often wakes at night, is disoriented in ti
 
 Services communicate over a small event bus. Each service is a separate container so a crash in vision does not take down the face.
 
+This drawing is the intended design. See [ARCHITECTURE.md](ARCHITECTURE.md) for
+the generated, as-built picture of the services and streams in the current code.
+
 ### 4.1 Services
 
 | Service | Responsibility | Tech |
