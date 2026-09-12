@@ -3,6 +3,7 @@ data/
 __pycache__/
 *.pyc
 .venv/
+.venv-dialogue/
 .DS_Store
 *.egg-info/
 build/

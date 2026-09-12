@@ -123,6 +123,11 @@ LLM calls, all with structured JSON output validated by pydantic:
 
 Cloud fallback: only for `interpret` and `plan`, only when `enable_cloud_fallback` is true for the person, only after two consecutive `unclear` intents or `confidence < 0.4`. Log a `CloudCall` row with the exact payload.
 
+Issue #17's dialogue regression suite lives in `tests/dialogue_bench/`: 50
+synthetic scenarios score overall/per-class intent accuracy and every composed
+sentence against the runtime speech rules. It can compare three or more local
+Ollama models without Redis, camera, microphone, or stored personal data.
+
 ## 7. Strategy catalogue
 
 Implement in this order. Numbers match `PLAN.md` section 5.3.

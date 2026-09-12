@@ -109,6 +109,15 @@ docker compose exec store python -m nc_shared.replay play redis://bus:6379 /app/
 `./data` is mounted into every container, so a file written to `/app/data`
 appears in `data/` on the host.
 
+The 50-scenario dialogue regression suite is separate from replay tooling. Its
+unit tests need no Ollama; the actual comparison command calls local Ollama:
+
+```sh
+pip install -e services/agent -e tests/dialogue_bench[dev]
+pytest tests/dialogue_bench/tests
+python -m dialogue_bench --model llama3.1:8b --model qwen2.5:7b
+```
+
 To check the media bridge, open the page, grant camera and microphone
 permission, then watch these climb above zero. They sit at zero when no
 browser is attached, which is correct rather than broken:

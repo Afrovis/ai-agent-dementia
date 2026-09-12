@@ -1,0 +1,195 @@
+# Synthetic utterances only. They contain no recordings or personal data.
+# Every scenario drives both `interpret` and `compose`.
+default_profile:
+  name: Jean
+  preferred_address: Jean
+  caregiver_name: Tom
+  caregiver_relationship: son
+  night_themes:
+    - Looks for a deceased spouse
+    - Believes the children are still young
+  calming_things:
+    - A photo of the garden
+    - Tom is nearby and everything is settled
+  things_to_avoid:
+    - Do not mention the hospital
+    - Avoid loud or urgent language
+  physical_notes:
+    - Uses a walker
+    - Is unsteady at night
+  restroom_location: Through the bedroom door and immediately left
+
+scenarios:
+  - id: restroom-01
+    utterance: "I need to use the toilet."
+    expected_intent: need_restroom
+  - id: restroom-02
+    utterance: "Where is the bathroom?"
+    expected_intent: need_restroom
+  - id: restroom-03
+    utterance: "I have to pee."
+    expected_intent: need_restroom
+  - id: restroom-04
+    utterance: "Please help me get to the restroom."
+    expected_intent: need_restroom
+    scene_note: "The person is standing beside the bed with a walker."
+  - id: restroom-05
+    utterance: "I think I need the loo."
+    expected_intent: need_restroom
+  - id: restroom-06
+    utterance: "Can you show me where the washroom is?"
+    expected_intent: need_restroom
+    profile:
+      restroom_location: "Through the bedroom door and immediately left"
+  - id: restroom-07
+    utterance: "My bladder is full."
+    expected_intent: need_restroom
+
+  - id: person-01
+    utterance: "Where is my husband?"
+    expected_intent: looking_for_person
+  - id: person-02
+    utterance: "I need to find my mother."
+    expected_intent: looking_for_person
+  - id: person-03
+    utterance: "Have you seen Tom?"
+    expected_intent: looking_for_person
+    profile:
+      caregiver_name: "Tom"
+      caregiver_relationship: "son"
+  - id: person-04
+    utterance: "The children should be home by now."
+    expected_intent: looking_for_person
+    profile:
+      night_themes: ["Believes the children are still young"]
+  - id: person-05
+    utterance: "My wife was just here."
+    expected_intent: looking_for_person
+  - id: person-06
+    utterance: "I am waiting for Dad to come back."
+    expected_intent: looking_for_person
+  - id: person-07
+    utterance: "Someone has taken my sister away."
+    expected_intent: looking_for_person
+
+  - id: leave-01
+    utterance: "I have to go to work now."
+    expected_intent: wants_to_leave
+    profile:
+      night_themes: ["Often prepares to leave for work at night"]
+  - id: leave-02
+    utterance: "The train leaves soon."
+    expected_intent: wants_to_leave
+  - id: leave-03
+    utterance: "Open the door, I am going home."
+    expected_intent: wants_to_leave
+  - id: leave-04
+    utterance: "I need to collect the children from school."
+    expected_intent: wants_to_leave
+  - id: leave-05
+    utterance: "My shift starts in ten minutes."
+    expected_intent: wants_to_leave
+  - id: leave-06
+    utterance: "Let me out of this room."
+    expected_intent: wants_to_leave
+    scene_note: "The person is walking toward the bedroom door."
+  - id: leave-07
+    utterance: "I am getting my coat so I can leave."
+    expected_intent: wants_to_leave
+
+  - id: time-01
+    utterance: "Is it morning already?"
+    expected_intent: confused_time
+  - id: time-02
+    utterance: "Why is it dark in the afternoon?"
+    expected_intent: confused_time
+  - id: time-03
+    utterance: "I thought breakfast was ready."
+    expected_intent: confused_time
+  - id: time-04
+    utterance: "What day is it?"
+    expected_intent: confused_time
+  - id: time-05
+    utterance: "It cannot be nighttime."
+    expected_intent: confused_time
+  - id: time-06
+    utterance: "Have I slept through the whole day?"
+    expected_intent: confused_time
+  - id: time-07
+    utterance: "The clock says three but that makes no sense."
+    expected_intent: confused_time
+
+  - id: pain-01
+    utterance: "My hip hurts."
+    expected_intent: pain
+  - id: pain-02
+    utterance: "I have a terrible pain in my chest."
+    expected_intent: pain
+  - id: pain-03
+    utterance: "My leg is aching when I stand."
+    expected_intent: pain
+    profile:
+      physical_notes: ["Uses a walker", "Is unsteady at night"]
+  - id: pain-04
+    utterance: "It hurts too much to lie down."
+    expected_intent: pain
+  - id: pain-05
+    utterance: "I feel sore all over."
+    expected_intent: pain
+  - id: pain-06
+    utterance: "My stomach is hurting again."
+    expected_intent: pain
+  - id: pain-07
+    utterance: "Ow, my back."
+    expected_intent: pain
+
+  - id: fine-01
+    utterance: "I am alright, thank you."
+    expected_intent: fine
+  - id: fine-02
+    utterance: "Everything is okay."
+    expected_intent: fine
+  - id: fine-03
+    utterance: "I am just sitting for a moment."
+    expected_intent: fine
+  - id: fine-04
+    utterance: "Nothing is wrong."
+    expected_intent: fine
+  - id: fine-05
+    utterance: "I feel calm now."
+    expected_intent: fine
+  - id: fine-06
+    utterance: "I am comfortable here."
+    expected_intent: fine
+  - id: fine-07
+    utterance: "Thanks, I can rest."
+    expected_intent: fine
+
+  - id: unclear-01
+    utterance: "The blue one is over there."
+    expected_intent: unclear
+  - id: unclear-02
+    utterance: "Well, perhaps later."
+    expected_intent: unclear
+  - id: unclear-03
+    utterance: "I cannot remember what I was saying."
+    expected_intent: unclear
+  - id: unclear-04
+    utterance: "Something is different."
+    expected_intent: unclear
+  - id: unclear-05
+    utterance: "That is not the one."
+    expected_intent: unclear
+  - id: unclear-06
+    utterance: "Please put it over there."
+    expected_intent: unclear
+    turns: ["I was looking for it.", "The thing from yesterday."]
+  - id: unclear-07
+    utterance: "Hmm."
+    expected_intent: unclear
+  - id: unclear-08
+    utterance: "I do not know."
+    expected_intent: unclear
+    profile:
+      name: "Jean"
+      preferred_address: "Jean"
