@@ -68,12 +68,11 @@ from nc_shared.events import (
 from agent.config import AgentConfig
 from agent.goals import GOALS
 from agent.llm import LLMClient, OllamaLLM
+from agent.profile import DEFAULT_PROFILE, PersonProfile, load_profile
 from agent.rules import Phase, validate_say
 from agent.session import Session, Transition
 from agent.strategies import (
-    DEFAULT_PROFILE,
     ESCALATE_PHONE_ID,
-    PersonProfile,
     StrategyDef,
     load_strategies,
     render_template,
@@ -170,9 +169,9 @@ def _show_for_transition(transition: Transition, now: datetime, profile: PersonP
     return _show_for_phase(transition.phase, transition.session_id)
 
 
-def _profile_for_llm(profile: PersonProfile) -> dict[str, str]:
-    """Convert the display profile to the small mapping the LLM boundary owns."""
-    return {"name": profile.name, "caregiver_name": profile.caregiver_name}
+def _profile_for_llm(profile: PersonProfile) -> dict[str, object]:
+    """Return every PLAN.md profile field as structured, JSON-safe prompt data."""
+    return profile.prompt_data()
 
 
 def _session_state_for_llm(session: Session) -> dict[str, object]:
@@ -293,9 +292,8 @@ def _publish_transition(
     `SessionState` is always republished here, even for a goal-only or
     strategy-only update with no phase change, so `SessionState.goal`/
     `.strategy_index` -- shown on the dashboard timeline -- never lag
-    behind. `profile` is issue #16's seam: always `DEFAULT_PROFILE` until
-    a real person profile exists to load (see `agent.strategies`'s module
-    docstring)."""
+    behind. `profile` is the caregiver-authored profile loaded by `run`;
+    direct callers default to a safe generic profile."""
     event = SessionState(
         source=SERVICE_NAME,
         session_id=transition.session_id,
@@ -369,8 +367,8 @@ def run_once(
     Returns the `SessionState`s published, most recent last. Side-effect-
     free beyond bus reads/acks/publishes, so tests can call it directly and
     in a loop with a `FakeBus`, instead of going through the infinite,
-    real-time `run()` loop. `profile` defaults to `DEFAULT_PROFILE`
-    (issue #16's seam, see `agent.strategies`).
+    real-time `run()` loop. `profile` defaults to `DEFAULT_PROFILE` for
+    tests and other direct callers.
     """
     published: list[SessionState] = []
 
@@ -425,7 +423,7 @@ def run_once(
             # afterward and use an otherwise legal goal-reset edge to undo
             # ``wait_for_caregiver``.
             plan = (
-                llm.plan(_session_state_for_llm(session))
+                llm.plan(_session_state_for_llm(session), _profile_for_llm(profile))
                 if session.phase == Phase.ENGAGED
                 else None
             )
@@ -547,7 +545,8 @@ def run() -> None:
     Reads `AGENT_NIGHT_START`, `AGENT_NIGHT_END`, `AGENT_OBSERVE_SECONDS`,
     `AGENT_COOLDOWN_SECONDS`, `AGENT_IN_BED_STABLE_SECONDS`,
     `AGENT_FLOOR_LIMIT_SECONDS`, `AGENT_ABSENT_LIMIT_SECONDS`,
-    `AGENT_SAY_MIN_GAP_SECONDS`, `STRATEGIES_PATH`, `REDIS_URL`, and `TZ`
+    `AGENT_SAY_MIN_GAP_SECONDS`, `STRATEGIES_PATH`, `PERSON_PATH`,
+    `REDIS_URL`, and `TZ`
     from the environment (defaults documented in `.env.example`; `TZ`
     matters because `AGENT_NIGHT_START`/`AGENT_NIGHT_END` are local time
     and containers default to UTC otherwise). A short sleep between
@@ -564,6 +563,7 @@ def run() -> None:
     _log_startup_timezone_check(config)
 
     strategies = load_strategies(config.strategies_path)
+    profile = load_profile(config.person_path)
     bus = Bus(redis.Redis.from_url(redis_url))
     bus.ensure_group(PERSON_STREAM, PERSON_GROUP)
     bus.ensure_group(UTTERANCE_STREAM, UTTERANCE_GROUP)
@@ -577,7 +577,7 @@ def run() -> None:
     last_health_at: float | None = None
     last_heartbeat_at: datetime | None = None
     while True:
-        published = run_once(bus, session, llm=llm)
+        published = run_once(bus, session, profile=profile, llm=llm)
         now = datetime.now()
         if published:
             last_heartbeat_at = now

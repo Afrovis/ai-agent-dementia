@@ -1,0 +1,29 @@
+# Caregiver-authored profile for `agent` (issue #16). Copy this file to
+# person.yaml and edit it. It remains local and is never logged.
+
+name: Jean
+preferred_address: Jean
+
+caregiver:
+  name: Tom
+  relationship: son
+
+# Describe recurring night-time beliefs neutrally. The agent uses these to
+# validate and redirect, never to test memory.
+night_themes:
+  - Looks for a deceased spouse
+  - Believes the children are still young
+
+calming_things:
+  - A photo of the garden
+  - The phrase "Tom is nearby and everything is settled"
+
+things_to_avoid:
+  - Do not mention the hospital
+  - Avoid loud or urgent language
+
+physical_notes:
+  - Uses a walker
+  - Is unsteady at night
+
+restroom_location: The restroom is through the bedroom door and immediately to the left

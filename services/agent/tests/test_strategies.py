@@ -269,6 +269,12 @@ def test_render_template_fills_known_placeholders():
     assert text == "Hello Jean, it's 3 o'clock at night."
 
 
+def test_render_template_prefers_configured_form_of_address():
+    profile = PersonProfile(name="Jean Smith", preferred_address="Mum")
+    assert render_template("Hello {name}.", profile) == "Hello Mum."
+    assert render_template("Let's rest{name_vocative}.", profile) == "Let's rest, Mum."
+
+
 def test_render_template_degrades_missing_field_instead_of_showing_placeholder():
     text = render_template("Hi {unknown_field}!", DEFAULT_PROFILE)
     assert "{" not in text

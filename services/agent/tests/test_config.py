@@ -18,6 +18,7 @@ def test_from_env_defaults():
     assert config.restroom_timeout_seconds == 900.0
     assert config.zone_confirm_readings == 3
     assert config.strategies_path is None
+    assert config.person_path is None
     assert config.say_min_gap_seconds == 8.0
     assert config.llm_model == "llama3.1:8b"
     assert config.llm_timeout_seconds == 10.0
@@ -35,6 +36,7 @@ def test_from_env_reads_every_key():
         "AGENT_RESTROOM_TIMEOUT_SECONDS": "600",
         "AGENT_ZONE_CONFIRM_READINGS": "5",
         "STRATEGIES_PATH": "/tmp/strategies.yaml",
+        "PERSON_PATH": "/tmp/person.yaml",
         "AGENT_SAY_MIN_GAP_SECONDS": "10",
         "AGENT_LLM_MODEL": "qwen2.5:7b",
         "AGENT_LLM_TIMEOUT_SECONDS": "4.5",
@@ -50,15 +52,19 @@ def test_from_env_reads_every_key():
     assert config.restroom_timeout_seconds == 600.0
     assert config.zone_confirm_readings == 5
     assert config.strategies_path == "/tmp/strategies.yaml"
+    assert config.person_path == "/tmp/person.yaml"
     assert config.say_min_gap_seconds == 10.0
     assert config.llm_model == "qwen2.5:7b"
     assert config.llm_timeout_seconds == 4.5
 
 
 def test_blank_optional_llm_values_use_safe_defaults():
-    config = AgentConfig.from_env({"AGENT_LLM_MODEL": "", "AGENT_LLM_TIMEOUT_SECONDS": ""})
+    config = AgentConfig.from_env(
+        {"AGENT_LLM_MODEL": "", "AGENT_LLM_TIMEOUT_SECONDS": "", "PERSON_PATH": ""}
+    )
     assert config.llm_model == "llama3.1:8b"
     assert config.llm_timeout_seconds == 10.0
+    assert config.person_path is None
 
 
 def test_night_window_wraps_midnight_default():

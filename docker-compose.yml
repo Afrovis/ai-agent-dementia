@@ -109,6 +109,7 @@ services:
       AGENT_ZONE_CONFIRM_READINGS: ${AGENT_ZONE_CONFIRM_READINGS}
       AGENT_SAY_MIN_GAP_SECONDS: ${AGENT_SAY_MIN_GAP_SECONDS}
       STRATEGIES_PATH: ${STRATEGIES_PATH}
+      PERSON_PATH: ${PERSON_PATH:-/app/config/person.yaml}
       AGENT_FAKE: ${AGENT_FAKE}
     volumes:
       - ./data:/app/data

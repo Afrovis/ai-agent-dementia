@@ -9,6 +9,7 @@ from nc_shared.events import Notify, PersonState, Say, Utterance
 from agent.config import AgentConfig
 from agent.llm import Composition, FakeLLM, Intent, Interpretation, Plan
 from agent.main import PERSON_GROUP, PERSON_STREAM, UTTERANCE_GROUP, UTTERANCE_STREAM, run_once
+from agent.profile import PersonProfile
 from agent.session import Session
 from agent.strategies import DEFAULT_STRATEGIES
 
@@ -38,17 +39,26 @@ def test_interpretation_goal_and_planner_are_advisory_and_rule_checked():
         # so restroom -> drink_water must be rejected by validate_goal.
         plans=[Plan(goal_change="drink_water", confidence=0.9)],
     )
+    profile = PersonProfile(name="Jean", night_themes=("looking for work",))
 
     bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
-    run_once(bus, session, now_fn=lambda: now, llm=llm)
+    run_once(bus, session, now_fn=lambda: now, profile=profile, llm=llm)
     bus.publish(
         Utterance(source="listen", text="I need the toilet", confidence=0.9, duration_s=1.0)
     )
-    run_once(bus, session, now_fn=lambda: now + timedelta(seconds=1), llm=llm)
+    run_once(
+        bus,
+        session,
+        now_fn=lambda: now + timedelta(seconds=1),
+        profile=profile,
+        llm=llm,
+    )
 
     assert session.goal == "restroom"
     assert [call[0] for call in llm.calls] == ["interpret", "plan"]
     assert llm.calls[0][1]["last_turns"] == []
+    assert llm.calls[0][1]["profile"]["night_themes"] == ["looking for work"]
+    assert llm.calls[1][1]["profile"] == profile.prompt_data()
     planner_state = llm.calls[1][1]["session_state"]
     assert planner_state["current_strategy"] == "ambient_orient"
     assert planner_state["strategy_order"][0] == "ambient_orient"
@@ -118,14 +128,21 @@ def test_validate_and_redirect_uses_validated_llm_composition():
     ]
     session = Session(config=AgentConfig(), strategies=strategies)
     llm = FakeLLM(compositions=[Composition(text="I hear you, and we can rest together now.")])
+    profile = PersonProfile(name="Jean", things_to_avoid=("mentioning hospital",))
     now = NIGHT
 
     bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
-    run_once(bus, session, now_fn=lambda: now, llm=llm)
+    run_once(bus, session, now_fn=lambda: now, profile=profile, llm=llm)
     bus.publish(
         Utterance(source="listen", text="Where is my mother", confidence=0.9, duration_s=1.0)
     )
-    run_once(bus, session, now_fn=lambda: now + timedelta(seconds=1), llm=llm)
+    run_once(
+        bus,
+        session,
+        now_fn=lambda: now + timedelta(seconds=1),
+        profile=profile,
+        llm=llm,
+    )
     # Preserve the deterministic eight-second silence gap between each
     # ordinary strategy's Say and the composed fourth-rung Say.
     for offset in (10, 20):
@@ -133,6 +150,7 @@ def test_validate_and_redirect_uses_validated_llm_composition():
             bus,
             session,
             now_fn=lambda offset=offset: now + timedelta(seconds=offset),
+            profile=profile,
             llm=llm,
         )
 
@@ -145,6 +163,7 @@ def test_validate_and_redirect_uses_validated_llm_composition():
     )
     compose_calls = [payload for name, payload in llm.calls if name == "compose"]
     assert compose_calls[-1]["latest_utterance"] == "Where is my mother"
+    assert compose_calls[-1]["profile"]["things_to_avoid"] == ["mentioning hospital"]
 
 
 def test_idle_utterance_is_not_sent_to_the_llm():

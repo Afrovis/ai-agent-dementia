@@ -35,10 +35,9 @@ selection seams to callers that handle model proposals:
   is the exact next configured, enabled, off-cooldown, non-terminal rung.
 - Every strategy's `say_template`/`headline_template`/`body_template` is
   caregiver-editable text (`config/strategies.example.yaml`), rendered
-  through `render_template` below with a `PersonProfile` -- currently
-  always `DEFAULT_PROFILE`, since loading a real profile is issue #16.
-  Missing profile fields degrade to a generic phrase, never to a literal
-  `{name}` shown to the person; see `render_template`.
+  through `render_template` below with the `PersonProfile` loaded by
+  `agent.profile` (issue #16). Missing profile fields degrade to a generic
+  phrase, never to a literal `{name}` shown to the person; see `render_template`.
 
 ## The engine
 
@@ -74,6 +73,8 @@ from pathlib import Path
 
 import yaml
 
+from agent.profile import DEFAULT_PROFILE as DEFAULT_PROFILE
+from agent.profile import PersonProfile
 from agent.rules import validate_strategy
 
 SERVICE_NAME = "agent"
@@ -288,21 +289,6 @@ caregiver should not configure an actual person's name as the string
 "there"; this is a known, accepted limitation of the sentinel approach."""
 
 
-@dataclass(frozen=True)
-class PersonProfile:
-    """Interpolation values for strategy templates (PLAN.md section 5.5:
-    "preferred name", "who the caregiver is"). Loading a real profile from
-    the dashboard/config is issue #16; `DEFAULT_PROFILE` below is the safe
-    fallback every strategy is written to still read naturally with.
-    """
-
-    name: str = _UNSET_NAME
-    caregiver_name: str = "your caregiver"
-
-
-DEFAULT_PROFILE = PersonProfile()
-
-
 class _SafeFormatDict(dict):
     """`dict` subclass for `str.format_map` that degrades a missing key to
     an empty string instead of raising `KeyError` -- the mechanism behind
@@ -318,7 +304,7 @@ def render_template(template: str, profile: PersonProfile, **extra: str) -> str:
 
     Every field `PersonProfile` defines always has a value -- its own
     dataclass defaults are the "safe default" issue #14 requires, so a
-    template referencing `{name}` before issue #16 loads a real profile
+    template referencing `{name}` when no real profile is available
     still renders "there" or similar, never a literal `{name}` shown to
     the person. A placeholder this function does not recognise at all
     (a typo in a caregiver's edited template, or a field not listed here)
@@ -337,10 +323,14 @@ def render_template(template: str, profile: PersonProfile, **extra: str) -> str:
     "by name" aside uses this placeholder instead of writing `, {name}`
     itself; the caregiver never sees a mistake like "It's alright, there."
     """
-    name_vocative = f", {profile.name}" if profile.name != _UNSET_NAME else ""
+    spoken_name = profile.preferred_address or profile.name
+    name_vocative = f", {spoken_name}" if spoken_name != _UNSET_NAME else ""
     fields: dict[str, str] = {
-        "name": profile.name,
+        "name": spoken_name,
+        "preferred_address": profile.preferred_address,
         "caregiver_name": profile.caregiver_name,
+        "caregiver_relationship": profile.caregiver_relationship,
+        "restroom_location": profile.restroom_location,
         "name_vocative": name_vocative,
     }
     fields.update(extra)

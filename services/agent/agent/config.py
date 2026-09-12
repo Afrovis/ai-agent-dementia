@@ -2,7 +2,7 @@
 
 Same shape as `perceive.main.PerceiveConfig` and `capture.main.CaptureConfig`:
 a frozen dataclass, a `from_env` classmethod (env, then defaults in code --
-`agent` has no yaml config yet), and every field documented in
+the profile and strategy catalogues have their own YAML loaders), and every field documented in
 `.env.example`.
 
 `REDIS_URL` is read directly in `agent.main.run`, the same way `perceive`
@@ -82,6 +82,11 @@ class AgentConfig:
     `from_env`, so a caller passing an explicit path in a test does not
     also have to fight this field's own env lookup). `STRATEGIES_PATH`."""
 
+    person_path: str | None = None
+    """Path to the caregiver-authored person profile (issue #16). If unset,
+    `agent.profile.load_profile` resolves `PERSON_PATH`, then
+    `config/person.yaml`, then `config/person.example.yaml`. `PERSON_PATH`."""
+
     say_min_gap_seconds: float = 8.0
     """The minimum silence, in seconds, `agent.rules.validate_say` requires
     between one published `Say` and the next (HANDOFF.md rule 3: "Spoken
@@ -127,6 +132,7 @@ class AgentConfig:
             absent_limit_seconds=float(env.get("AGENT_ABSENT_LIMIT_SECONDS", "600")),
             restroom_timeout_seconds=float(env.get("AGENT_RESTROOM_TIMEOUT_SECONDS", "900")),
             strategies_path=env.get("STRATEGIES_PATH"),
+            person_path=env.get("PERSON_PATH") or None,
             say_min_gap_seconds=float(env.get("AGENT_SAY_MIN_GAP_SECONDS", "8")),
             zone_confirm_readings=int(env.get("AGENT_ZONE_CONFIRM_READINGS", "3")),
             llm_model=env.get("AGENT_LLM_MODEL") or "llama3.1:8b",

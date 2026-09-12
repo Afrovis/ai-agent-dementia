@@ -65,7 +65,7 @@
 #                     the `demo_room`/`demo_family` bundled examples).
 #
 # `{name}` and `{caregiver_name}` in any headline/body/say interpolate the
-# person profile (issue #16 loads a real one; until then both fall back to
+# person profile (issue #16); when unavailable both fall back to
 # a generic, still-natural-reading phrase rather than ever showing a
 # literal "{name}"). `{time_words}` interpolates the current hour as words,
 # e.g. "3 o'clock at night".

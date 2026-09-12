@@ -88,8 +88,8 @@ def test_fake_llm_is_scriptable_without_ollama_and_records_calls():
     assert fake.calls[1][1]["latest_utterance"] == "Where is my mother"
     # This is deliberately only an advisory value; this test does not and
     # cannot cause a session change without Session.propose_goal/rules.
-    plan = fake.plan({"goal": "return_to_bed"})
+    plan = fake.plan({"goal": "return_to_bed"}, {"name": "Jean"})
     assert plan is not None
     assert plan.goal_change == "restroom"
     assert [name for name, _ in fake.calls] == ["interpret", "compose", "plan"]
-    assert fake.plan({}) is None
+    assert fake.plan({}, {}) is None
