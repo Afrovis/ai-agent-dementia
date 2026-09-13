@@ -243,6 +243,7 @@ Configured by the caregiver, injected into every prompt:
 Before any real use:
 
 1. **Perception bench**: record consenting volunteers in the actual room at night doing scripted actions (sit up, stand, walk to door, lie on floor). Measure state accuracy and latency per state. Target: over 95 percent on `standing` and `on_floor`, under 2 s latency.
+   - **Recorded-video evaluation** (added 2026-09-13): before volunteers, the project owner records themselves in their own bedroom doing the scripted actions. Each clip is downsampled to exactly what the browser bridge sends (320 by 240, squashed to 4:3, 2 fps), scored offline against a reference timeline built from the recorder's own scenario card, a local vision-language model, and a cloud model that only ever sees face-blurred contact sheets. The same clips are then replayed through the live stack to check agent transitions. RGB in lamp light first; infrared later. Tooling, runbook and privacy rules are in `docs/VIDEO_EVAL.md`.
 2. **Dialogue bench**: 50 scripted scenarios with utterances such as "where is my husband", "I have to catch the train", "I need to pee". Judge the local model's intent classification and compose output for tone rules. Keep this as a regression suite.
 3. **Dry run**: two weeks with a volunteer, no caregiver notifications, review timelines daily.
 4. **Supervised pilot**: with the actual family, caregiver present the first nights.
@@ -274,6 +275,13 @@ Before any real use:
 - Full dashboard: profile, strategies, history, morning summary.
 - Cloud fallback behind a switch.
 - Dry run.
+
+### Milestone 5: Recorded-video evaluation (after the dry-run prep)
+- Fix the three defects found on 2026-09-13: `mediapipe>=0.10` now resolves to 1.0 which dropped `mediapipe.solutions`; the bridge canvas squashes 16:9 to 4:3; the running stack is a stale worktree build.
+- `tools/video_eval/` CLI: prepare, predict, blur, sheets, label-local, label-codex, reconcile, score, replay, as specified in `docs/VIDEO_EVAL.md`.
+- Fill in perception bench tier 3 so confirmed clips score in `python -m perception_bench`.
+- Run the backend, squash vs letterbox, resolution, hysteresis and gate experiments on the RGB clips and decide the bridge fix and the pose backend with numbers.
+- Record the scenario set in section 8 of `docs/VIDEO_EVAL.md` in RGB; infrared clips are a later round.
 
 ### Later
 - Bed pressure sensor and door sensor via Zigbee or Home Assistant.

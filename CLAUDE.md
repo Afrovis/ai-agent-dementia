@@ -119,6 +119,12 @@ pytest tests/dialogue_bench/tests
 python -m dialogue_bench --model llama3.1:8b --model qwen2.5:7b
 ```
 
+Evaluating perception and the agent against recorded bedroom videos is
+described in [docs/VIDEO_EVAL.md](docs/VIDEO_EVAL.md): a one-time tooling
+build under `tools/video_eval/` and a per-video runbook. Recordings, frames
+and labels live outside the repository in `../data-ai-agent-dementia/` and
+never enter git; only face-blurred, verified frames may be sent to Codex.
+
 To check the media bridge, open the page, grant camera and microphone
 permission, then watch these climb above zero. They sit at zero when no
 browser is attached, which is correct rather than broken:
