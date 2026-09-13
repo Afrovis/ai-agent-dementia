@@ -1,9 +1,7 @@
-"""Entry point for the `dashboard` service (issue #10).
+"""Entry point for the `dashboard` service (issues #10 and #22).
 
-Caregiver web dashboard (HANDOFF.md section 4). The only page implemented
-so far is the Zones editor (`dashboard.app`); the rest of PLAN.md section
-9's page list (Tonight, History, Person profile, Strategies, System) is
-later issues.
+Caregiver web dashboard (HANDOFF.md section 4). Tonight and History join the
+Zones editor in issue #22; profile, strategies, and system settings follow.
 
 `DashboardConfig.from_env` reads `DASHBOARD_PASSWORD` and `ZONES_PATH`.
 `DASHBOARD_PASSWORD` is required for the app to serve anything but 503s
@@ -44,6 +42,8 @@ class DashboardConfig:
     port: int = 8444
     password: str | None = None
     zones_path: str | None = None
+    db_path: str = "/app/data/night.db"
+    timezone: str = "UTC"
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> DashboardConfig:
@@ -56,6 +56,8 @@ class DashboardConfig:
             # fail closed the same way a genuinely unset variable does.
             password=env.get("DASHBOARD_PASSWORD") or None,
             zones_path=env.get("ZONES_PATH") or None,
+            db_path=env.get("DB_PATH") or "/app/data/night.db",
+            timezone=env.get("TZ") or "UTC",
         )
 
 
@@ -74,7 +76,13 @@ def run() -> None:
 
     bus = Bus(redis.Redis.from_url(redis_url))
     try:
-        app = create_app(bus, password=config.password, zones_path=config.zones_path)
+        app = create_app(
+            bus,
+            password=config.password,
+            zones_path=config.zones_path,
+            db_path=config.db_path,
+            timezone=config.timezone,
+        )
     except ValueError as exc:
         # A password HTTP Basic cannot carry. Fail loudly with the reason
         # rather than starting a dashboard nobody can ever log in to.

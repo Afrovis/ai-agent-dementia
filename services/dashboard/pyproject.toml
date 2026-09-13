@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "dashboard"
 version = "0.1.0"
-description = "Night Companion dashboard service: caregiver web UI, Zones editor (issue #10)"
+description = "Night Companion caregiver dashboard: Tonight, History, and Zones"
 requires-python = ">=3.12"
 dependencies = [
     "redis>=5.0",
