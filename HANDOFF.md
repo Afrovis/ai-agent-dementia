@@ -232,7 +232,9 @@ M5 issues, in order, each scoped by the matching section of `docs/VIDEO_EVAL.md`
 
 - 48 `perceive: pin mediapipe below 1.0` (defect 1; implemented with a backend API regression test).
 - 49 `video_eval: prepare and predict` (A1, A2, A9: frame extraction in bridge and review formats, offline run of the real backend, tracker and motion gate, zones per placement).
-- 50 `video_eval: blur, sheets and labellers` (A3, A4: fail-closed head blur with verification, contact sheets, Ollama and Codex labellers).
+- 50 `video_eval: blur, sheets and labellers` (A3, A4: implemented with
+  fail-closed head blur and two-scale verification, privacy-reviewed contact
+  sheets, adaptive Ollama labelling, and a sheet-only Codex labeller).
 - 51 `video_eval: reconcile, score, replay` (A5 to A7: reference timeline with human confirmation, per-frame and event metrics against the PLAN.md gates, end-to-end replay report).
 - 52 `embodiment: decide and fix the bridge aspect ratio` (defect 2, after the squash vs letterbox experiment; also send the true camera dimensions).
 - Issue 11 closes when tier 3 (A8) scores the confirmed clips.

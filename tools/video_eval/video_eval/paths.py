@@ -43,3 +43,15 @@ class EvalPaths:
     @property
     def predictions(self) -> Path:
         return self.clip / "predictions"
+
+    @property
+    def blurred(self) -> Path:
+        return self.clip / "blurred"
+
+    @property
+    def sheets(self) -> Path:
+        return self.clip / "sheets"
+
+    @property
+    def labels(self) -> Path:
+        return self.clip / "labels"

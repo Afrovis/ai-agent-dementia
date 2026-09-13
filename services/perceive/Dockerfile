@@ -28,7 +28,8 @@ RUN pip install --no-cache-dir -e /app/shared \
 COPY services/capture/ /app/services/capture/
 COPY tools/video_eval/ /app/tools/video_eval/
 RUN if [ "$INSTALL_VIDEO_EVAL" = "true" ]; then \
-        pip install --no-cache-dir -e /app/services/capture -e /app/tools/video_eval; \
+        pip install --no-cache-dir -e /app/services/capture \
+          -e "/app/services/perceive[yolo]" -e /app/tools/video_eval; \
     fi
 
 WORKDIR /app/services/perceive

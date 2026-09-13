@@ -27,6 +27,31 @@ Prepare the squash and letterbox variants, then run offline prediction:
   --clip 2026-09-13_sample --backend mediapipe
 ```
 
+Build private labels after prediction. Run the local labeller before the final
+blur pass so a YOLO miss can fail closed using its `person_visible` result:
+
+```sh
+.venv-video-eval/bin/python -m video_eval label-local --clip 2026-09-13_sample
+.venv-video-eval/bin/python -m video_eval blur --clip 2026-09-13_sample
+.venv-video-eval/bin/python -m video_eval sheets --clip 2026-09-13_sample
+```
+
+Open and inspect at least three files under the clip's `sheets/`
+directory. Only after confirming that no face is visible, record that review
+and allow the Codex labeller to run:
+
+```sh
+.venv-video-eval/bin/python -m video_eval sheets \
+  --clip 2026-09-13_sample --confirm-reviewed
+.venv-video-eval/bin/python -m video_eval label-codex --clip 2026-09-13_sample
+```
+
+`label-local` defaults to adaptive sampling with `qwen3-vl:8b`; use `--fast`
+for `gemma4:e4b-mlx` or `--all-frames` to disable still-frame propagation.
+Invalid local JSON is retried once, then retained as a null label for human
+reconciliation. `label-codex` can read only files listed beneath the clip's
+`sheets/` directory and refuses to start without the human-review marker.
+
 `zones` prints the path of a prepared bridge frame. Use that frame as the
 reference for manually writing the clip's normalised `zones.yaml`; see
 [`config/zones.example.yaml`](../../config/zones.example.yaml) for the format.

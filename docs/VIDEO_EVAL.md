@@ -463,11 +463,13 @@ new id. Report numbers only, never frames.
 2. **Predict first.** `predict --backend mediapipe` and
    `predict --backend yolo`, both gated. This needs no labels and takes
    about a minute. Check the meta files carry the current git sha.
-3. **Blur and sheets.** `blur --clip <clip>` then `sheets --clip <clip>`.
+3. **Local labels.** `label-local --clip <clip>` in the background. Expect
+   about 10 s per model call. Running this before blur gives the fail-closed
+   path a second signal when YOLO cannot find a person.
+4. **Blur and sheets.** `blur --clip <clip>` then `sheets --clip <clip>`.
    Note how many frames are `upload_ok: false`. On the first clip from a
-   new camera placement, a human looks at three sheets before step 5.
-4. **Local labels.** `label-local --clip <clip>` in the background. Expect
-   about 10 s per frame.
+   new camera placement, a human looks at three sheets, then explicitly runs
+   `sheets --clip <clip> --confirm-reviewed` before step 5.
 5. **Codex labels.** `label-codex --clip <clip>`. Expect about 6 s per
    sheet. Stop and report if any call returns an error mentioning
    content or images; do not retry with different frames.

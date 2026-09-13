@@ -16,8 +16,10 @@ Progress through 2026-09-13:
   bridge variant. A real pinned-MediaPipe run completed in 9.3 seconds over
   488 frames (466 backend calls, 22 gate drops); no images or derived data are
   committed here.
-- Remaining M5 work: blur/sheets/labellers (#50), reconcile/score/replay (#51),
-  and the evidence-based bridge aspect-ratio decision and fix (#52). The
+- Issue #50 adds fail-closed YOLO/MediaPipe privacy blurring, verified 3x3
+  contact sheets, adaptive local Ollama labels, and human-gated Codex labels.
+- Remaining M5 work: reconcile/score/replay (#51), and the evidence-based
+  bridge aspect-ratio decision and fix (#52). The
   sample has no caregiver-authored zones or confirmed reference timeline yet,
   so state accuracy and end-to-end replay remain pending.
 

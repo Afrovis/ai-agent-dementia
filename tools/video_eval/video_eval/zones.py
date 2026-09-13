@@ -28,6 +28,5 @@ def zone_reference_frame(
                 return reference.resolve()
 
     raise RuntimeError(
-        f"no prepared {variant} bridge frames for {clip_id}; "
-        f"run prepare --variant {variant} first"
+        f"no prepared {variant} bridge frames for {clip_id}; run prepare --variant {variant} first"
     )

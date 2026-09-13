@@ -39,6 +39,35 @@ def build_parser() -> argparse.ArgumentParser:
     zones = commands.add_parser("zones", help="print a bridge frame path for drawing zones")
     zones.add_argument("--clip", required=True)
     zones.add_argument("--variant", choices=("squash", "letterbox"), default="squash")
+
+    blur = commands.add_parser("blur", help="fail-closed head blur of review frames")
+    blur.add_argument("--clip", required=True)
+    blur.add_argument("--force", action="store_true")
+
+    sheets = commands.add_parser("sheets", help="build privacy-safe 3x3 contact sheets")
+    sheets.add_argument("--clip", required=True)
+    sheets.add_argument("--force", action="store_true")
+    sheets.add_argument(
+        "--confirm-reviewed",
+        action="store_true",
+        help="record that a human spot-checked the generated sheets",
+    )
+
+    local = commands.add_parser("label-local", help="label review frames with Ollama")
+    local.add_argument("--clip", required=True)
+    local.add_argument("--model", default="qwen3-vl:8b")
+    local.add_argument("--fast", action="store_true", help="use gemma4:e4b-mlx")
+    local.add_argument("--ollama-url", default="http://localhost:11434")
+    adaptive = local.add_mutually_exclusive_group()
+    adaptive.add_argument("--adaptive", action="store_true", dest="adaptive", default=True)
+    adaptive.add_argument("--all-frames", action="store_false", dest="adaptive")
+    local.add_argument("--motion-threshold", type=float, default=0.02)
+    local.add_argument("--force", action="store_true")
+
+    codex = commands.add_parser("label-codex", help="label reviewed contact sheets with Codex")
+    codex.add_argument("--clip", required=True)
+    codex.add_argument("--model")
+    codex.add_argument("--force", action="store_true")
     return parser
 
 
@@ -69,11 +98,40 @@ def main(argv: list[str] | None = None) -> int:
             min_confidence=args.min_confidence,
             walk_threshold=args.walk_threshold,
         )
-    else:
+    elif args.command == "zones":
         from video_eval.zones import zone_reference_frame
 
         print(zone_reference_frame(args.clip, root=args.data_root, variant=args.variant))
         return 0
+    elif args.command == "blur":
+        from video_eval.blur import blur_clip
+
+        result = blur_clip(args.clip, root=args.data_root, force=args.force)
+    elif args.command == "sheets":
+        from video_eval.blur import build_sheets
+
+        result = build_sheets(
+            args.clip,
+            root=args.data_root,
+            force=args.force,
+            confirm_reviewed=args.confirm_reviewed,
+        )
+    elif args.command == "label-local":
+        from video_eval.label_local import FAST_MODEL, label_local
+
+        result = label_local(
+            args.clip,
+            root=args.data_root,
+            model=FAST_MODEL if args.fast else args.model,
+            ollama_url=args.ollama_url,
+            adaptive=args.adaptive,
+            motion_threshold=args.motion_threshold,
+            force=args.force,
+        )
+    else:
+        from video_eval.label_codex import label_codex
+
+        result = label_codex(args.clip, root=args.data_root, model=args.model, force=args.force)
     print(json.dumps(result, sort_keys=True))
     return 0
 
