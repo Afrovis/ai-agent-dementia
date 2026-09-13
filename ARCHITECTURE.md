@@ -74,6 +74,7 @@ flowchart LR
   s_embodiment --> q_notify
   s_light --> q_notify
   s_listen --> q_notify
+  s_store --> q_notify
   q_notify --> s_dashboard
   q_notify --> s_notify
   s_perceive --> q_person
@@ -140,7 +141,7 @@ flowchart LR
 | `frames_raw` | `RawFrame` | embodiment | capture (`capture`) | yes, 50 |
 | `health` | `Health` | agent, capture, light, listen, perceive | dashboard (`dashboard-live`), store (`store`) | no |
 | `light` | `LightCommand` | agent | light (`light`), store (`store`) | no |
-| `notify` | `Notify` | agent, embodiment, light, listen | dashboard (`dashboard-live`), notify (`notify`), store (`store`) | no |
+| `notify` | `Notify` | agent, embodiment, light, listen, store | dashboard (`dashboard-live`), notify (`notify`), store (`store`) | no |
 | `person` | `PersonState` | perceive | agent (`agent`), dashboard (`dashboard-live`), store (`store`) | no |
 | `say` | `Say` | agent | dashboard (`dashboard-live`), embodiment (`embodiment`), store (`store`) | no |
 | `session` | `GoalChanged`, `SessionState` | agent | dashboard (`dashboard-live`), listen (`listen-session`), perceive (`perceive-session`), store (`store`) | no |
@@ -166,7 +167,7 @@ against the files that implement them.
 | `agent` | Ollama `/api/generate` on the host | calls | `services/agent/agent/llm.py` |
 | `notify` | ntfy topic, or the log when `NTFY_URL` is empty | calls | `services/notify/notify/backends.py` |
 | `light` | Shelly Gen2+ smart plug on the local LAN, optional | calls | `services/light/light/backends.py` |
-| `store` | SQLite `data/night.db` | writes | `services/store/store/main.py` |
+| `store` | SQLite `data/night.db` | reads/writes | `services/store/store/main.py` |
 | `dashboard` | Caregiver browser, HTTP Basic auth | both | `services/dashboard/dashboard/app.py` |
 | `dashboard` | `config/zones.yaml` | writes | `services/dashboard/dashboard/app.py` |
 | `dashboard` | SQLite `data/night.db` event history | reads | `services/dashboard/dashboard/history.py` |

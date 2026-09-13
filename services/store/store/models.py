@@ -24,3 +24,12 @@ class EventRow(SQLModel, table=True):
     session_id: str | None = None
     ts: datetime
     payload_json: str
+
+
+class MorningSummaryRow(SQLModel, table=True):
+    """Durable once-per-night delivery marker for the caregiver summary."""
+
+    __tablename__ = "morning_summaries"
+
+    night_key: str = Field(primary_key=True)
+    created_at: datetime

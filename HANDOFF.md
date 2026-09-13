@@ -165,6 +165,13 @@ than watching files. Photo uploads are validated JPEG/PNG/WebP files under
 PCM WAV files under `VOICE_CLIP_DIR`; they are not bus events and playback is
 not implemented yet. Upload bytes and profile text are never logged.
 
+Issue #24 implements the morning summary in `store`, which owns the complete
+SQLite event history. At `MORNING_SUMMARY_TIME` in `TZ`, it publishes one
+informational `Notify` for the prior night with wake-up count, time-to-settle
+durations, the last spoken strategy before each non-escalated resolution,
+health faults, and escalation count. A SQLite delivery marker prevents
+duplicate summaries across restarts.
+
 ## 7. Strategy catalogue
 
 Implement in this order. Numbers match `PLAN.md` section 5.3.

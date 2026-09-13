@@ -1,4 +1,4 @@
-"""Entry point for the `store` service: persists bus events to SQLite.
+"""Entry point for the `store` service: persistence and morning summaries.
 
 `store` reads every stream except the capped `frames`, `audio_in`, and
 `frames_raw` streams (per HANDOFF.md section 5: "Everything else is
@@ -9,6 +9,10 @@ each event as one row in the generic `events` table (see
 `PERSISTED_STREAMS` is derived from `nc_shared.events.EVENT_STREAMS`
 rather than hard-coded, so a new event added to `events.py` is picked up
 automatically unless it targets `frames`, `audio_in`, or `frames_raw`.
+
+Issue #24 also schedules a once-per-night caregiver summary from that event
+history. The summary itself is an informational `Notify` event and therefore
+follows the same delivery and persistence path as every other notification.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ from nc_shared.events import EVENT_STREAMS
 from sqlmodel import Session, SQLModel, create_engine
 
 from store.models import EventRow
+from store.summary import SummaryConfig, maybe_publish_morning_summary
 
 SERVICE_NAME = "store"
 GROUP = "store"
@@ -72,13 +77,28 @@ def run() -> None:
     """Loop forever, consuming from the bus and persisting to SQLite."""
     redis_url = os.environ.get("REDIS_URL", "redis://bus:6379")
     db_path = os.environ.get("DB_PATH", "data/night.db")
-    logger.info("store starting: redis_url=%s db_path=%s", redis_url, db_path)
+    summary_config = SummaryConfig.from_env()
+    logger.info(
+        "store starting: redis_url=%s db_path=%s morning_summary_time=%s timezone=%s",
+        redis_url,
+        db_path,
+        summary_config.send_at.strftime("%H:%M"),
+        summary_config.timezone.key,
+    )
 
     bus = Bus(redis.Redis.from_url(redis_url))
     engine = make_engine(db_path)
 
     while True:
         written = consume_once(bus, engine)
+        summary = maybe_publish_morning_summary(bus, engine, summary_config)
+        if summary is not None:
+            logger.info(
+                "morning summary published: night_key=%s wake_up_count=%s fault_count=%s",
+                summary.night_key,
+                summary.wake_up_count,
+                len(summary.faults),
+            )
         if written == 0:
             time.sleep(1)
 

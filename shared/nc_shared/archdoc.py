@@ -125,7 +125,7 @@ EXTERNAL_CONNECTIONS = (
     ExternalConnection(
         "store",
         "SQLite `data/night.db`",
-        "writes",
+        "reads/writes",
         "services/store/store/main.py",
     ),
     ExternalConnection(
