@@ -78,6 +78,14 @@ services:
     env_file: .env
     environment:
       REDIS_URL: ${REDIS_URL}
+      LISTEN_MODEL: ${LISTEN_MODEL:-small.en}
+      LISTEN_MODEL_CACHE: ${LISTEN_MODEL_CACHE:-/app/data/models/faster-whisper}
+      LISTEN_DEVICE: ${LISTEN_DEVICE:-cpu}
+      LISTEN_COMPUTE_TYPE: ${LISTEN_COMPUTE_TYPE:-int8}
+      LISTEN_VAD_AGGRESSIVENESS: ${LISTEN_VAD_AGGRESSIVENESS:-2}
+      LISTEN_END_SILENCE_MS: ${LISTEN_END_SILENCE_MS:-600}
+      LISTEN_MIN_SPEECH_MS: ${LISTEN_MIN_SPEECH_MS:-180}
+      LISTEN_MAX_UTTERANCE_SECONDS: ${LISTEN_MAX_UTTERANCE_SECONDS:-15}
     volumes:
       - ./data:/app/data
       - ./config:/app/config:ro

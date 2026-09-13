@@ -127,6 +127,17 @@ docker compose exec bus redis-cli XLEN frames_raw
 docker compose exec bus redis-cli XLEN audio_in
 ```
 
+`listen` drains `audio_in` continuously but only runs VAD/STT while a session
+is `OBSERVING` or later. Its first complete utterance downloads `small.en` into
+`data/models/faster-whisper`; later container recreations reuse those weights.
+For hardware-free checks, the service tests inject both VAD and transcription:
+
+```sh
+docker compose build listen
+docker compose run --rm --no-deps listen \
+  sh -c "pip install -q pytest ruff && pytest -q && ruff check . && ruff format --check ."
+```
+
 `frames_raw` is what the browser bridge writes. `capture` reads it, applies
 the motion gate, and republishes onto `frames`, so watch that one to see
 what `perceive` will actually receive:

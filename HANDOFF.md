@@ -2,7 +2,7 @@
 
 Read this before touching any issue. It contains everything not in the code yet: the fixed decisions, the conventions, the contracts between services, and the rules that must never be broken. `PLAN.md` is the design rationale. This file is the execution brief.
 
-Last updated: 2026-09-10. If you change a decision below, update this file in the same PR.
+Last updated: 2026-09-12. If you change a decision below, update this file in the same PR.
 
 ## 1. What this project is, in three sentences
 
@@ -127,6 +127,17 @@ Issue #17's dialogue regression suite lives in `tests/dialogue_bench/`: 50
 synthetic scenarios score overall/per-class intent accuracy and every composed
 sentence against the runtime speech rules. It can compare three or more local
 Ollama models without Redis, camera, microphone, or stored personal data.
+
+Issue #18 implements `listen`: it consumes `SessionState` plus the browser
+bridge's capped `audio_in` stream, discards audio in `IDLE`, and uses WebRTC VAD
+in `OBSERVING`, `ENGAGED`, `COOLDOWN`, and `ESCALATED`. Complete utterances are
+kept only in memory, transcribed locally by faster-whisper `small.en` on CPU,
+and published as session-attributed `Utterance` events. A USB speakerphone is
+selected as the browser/OS input device and therefore uses the same media
+bridge; the service never writes audio to disk. Model weights live under
+`data/models/faster-whisper`, and a transcription failure publishes one
+`attention` notification and unhealthy heartbeats until a later transcription
+succeeds.
 
 ## 7. Strategy catalogue
 

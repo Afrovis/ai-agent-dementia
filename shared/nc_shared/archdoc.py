@@ -81,6 +81,12 @@ EXTERNAL_CONNECTIONS = (
         "services/perceive/perceive/zones.py",
     ),
     ExternalConnection(
+        "listen",
+        "faster-whisper model cache; downloads `small.en` on first use",
+        "reads/writes",
+        "services/listen/listen/transcribe.py",
+    ),
+    ExternalConnection(
         "agent",
         "`config/strategies.yaml` at startup",
         "reads",

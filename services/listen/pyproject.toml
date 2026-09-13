@@ -5,10 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "listen"
 version = "0.1.0"
-description = "Night Companion listen service (placeholder, not yet implemented)"
+description = "Night Companion session-gated VAD and faster-whisper STT service"
 requires-python = ">=3.12"
 dependencies = [
+    "faster-whisper>=1.1,<2",
     "redis>=5.0",
+    "webrtcvad-wheels>=2.0.14,<3",
 ]
 
 [project.optional-dependencies]

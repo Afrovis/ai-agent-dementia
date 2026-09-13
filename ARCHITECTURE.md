@@ -57,21 +57,25 @@ flowchart LR
 
   q_ack --> s_notify
   s_embodiment --> q_audio_in
+  q_audio_in --> s_listen
   s_capture --> q_frames
   q_frames --> s_dashboard
   q_frames --> s_perceive
   s_embodiment --> q_frames_raw
   q_frames_raw --> s_capture
   s_agent --> q_notify
+  s_listen --> q_notify
   q_notify --> s_notify
   s_perceive --> q_person
   q_person --> s_agent
   s_agent --> q_say
   q_say --> s_embodiment
   s_agent --> q_session
+  q_session --> s_listen
   q_session --> s_perceive
   s_agent --> q_show
   q_show --> s_embodiment
+  s_listen --> q_speech_in
   q_speech_in --> s_agent
   browser <-->|"websockets /ws and /media"| s_embodiment
   camera -.->|"frames"| s_capture
@@ -113,16 +117,16 @@ flowchart LR
 | Stream | Events | Published by | Read by (consumer group) | Capped |
 | --- | --- | --- | --- | --- |
 | `ack` | `Ack` | nobody yet | notify (`notify`), store (`store`) | no |
-| `audio_in` | `AudioChunk` | embodiment | nobody yet | yes, 50 |
+| `audio_in` | `AudioChunk` | embodiment | listen (`listen`) | yes, 50 |
 | `frames` | `Frame` | capture | dashboard (`dashboard`), perceive (`perceive`) | yes, 50 |
 | `frames_raw` | `RawFrame` | embodiment | capture (`capture`) | yes, 50 |
 | `health` | `Health` | agent, capture, listen, perceive | store (`store`) | no |
-| `notify` | `Notify` | agent | notify (`notify`), store (`store`) | no |
+| `notify` | `Notify` | agent, listen | notify (`notify`), store (`store`) | no |
 | `person` | `PersonState` | perceive | agent (`agent`), store (`store`) | no |
 | `say` | `Say` | agent | embodiment (`embodiment`), store (`store`) | no |
-| `session` | `GoalChanged`, `SessionState` | agent | perceive (`perceive-session`), store (`store`) | no |
+| `session` | `GoalChanged`, `SessionState` | agent | listen (`listen-session`), perceive (`perceive-session`), store (`store`) | no |
 | `show` | `Show` | agent | embodiment (`embodiment`), store (`store`) | no |
-| `speech_in` | `Utterance` | nobody yet | agent (`agent`), store (`store`) | no |
+| `speech_in` | `Utterance` | listen | agent (`agent`), store (`store`) | no |
 
 ## Outside-world connections
 
@@ -136,6 +140,7 @@ against the files that implement them.
 | `capture` | USB or RTSP camera, optional | reads | `services/capture/capture/sources.py` |
 | `perceive` | Ollama `/api/generate` on the host | calls | `services/perceive/perceive/vision.py` |
 | `perceive` | `config/zones.yaml` at startup | reads | `services/perceive/perceive/zones.py` |
+| `listen` | faster-whisper model cache; downloads `small.en` on first use | reads/writes | `services/listen/listen/transcribe.py` |
 | `agent` | `config/strategies.yaml` at startup | reads | `services/agent/agent/strategies.py` |
 | `agent` | Ollama `/api/generate` on the host | calls | `services/agent/agent/llm.py` |
 | `notify` | ntfy topic, or the log when `NTFY_URL` is empty | calls | `services/notify/notify/backends.py` |
