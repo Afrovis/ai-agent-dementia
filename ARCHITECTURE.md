@@ -17,6 +17,7 @@ flowchart LR
   subgraph room["Room"]
     browser["Night-screen browser<br/>camera, microphone, face, text"]
     camera["Optional USB or RTSP camera"]
+    plug["Hallway light<br/>Shelly smart plug"]
   end
 
   subgraph compose["docker compose"]
@@ -24,6 +25,7 @@ flowchart LR
     s_capture["capture"]
     s_dashboard["dashboard"]
     s_embodiment["embodiment"]
+    s_light["light"]
     s_listen["listen"]
     s_notify["notify"]
     s_perceive["perceive"]
@@ -32,6 +34,7 @@ flowchart LR
     q_audio_in[("audio_in<br/>AudioChunk")]
     q_frames[("frames<br/>Frame")]
     q_frames_raw[("frames_raw<br/>RawFrame")]
+    q_light[("light<br/>LightCommand")]
     q_notify[("notify<br/>Notify")]
     q_person[("person<br/>PersonState")]
     q_say[("say<br/>Say")]
@@ -63,8 +66,11 @@ flowchart LR
   q_frames --> s_perceive
   s_embodiment --> q_frames_raw
   q_frames_raw --> s_capture
+  s_agent --> q_light
+  q_light --> s_light
   s_agent --> q_notify
   s_embodiment --> q_notify
+  s_light --> q_notify
   s_listen --> q_notify
   q_notify --> s_notify
   s_perceive --> q_person
@@ -83,6 +89,7 @@ flowchart LR
   camera -.->|"frames"| s_capture
   s_perceive -.->|"HTTP"| ollama
   s_notify -.->|"ntfy"| phone
+  s_light -.->|"local HTTP RPC"| plug
   cg_browser <--> s_dashboard
   zones -.->|"read at startup"| s_perceive
   s_dashboard -.->|"writes"| zones
@@ -101,10 +108,12 @@ flowchart LR
   sqlite[("data/night.db")]
   s_agent["agent"] --> q_health
   s_capture["capture"] --> q_health
+  s_light["light"] --> q_health
   s_listen["listen"] --> q_health
   s_perceive["perceive"] --> q_health
   q_health --> s_store
   q_p_ack[("ack")] --> s_store
+  q_p_light[("light")] --> s_store
   q_p_notify[("notify")] --> s_store
   q_p_person[("person")] --> s_store
   q_p_say[("say")] --> s_store
@@ -122,8 +131,9 @@ flowchart LR
 | `audio_in` | `AudioChunk` | embodiment | listen (`listen`) | yes, 50 |
 | `frames` | `Frame` | capture | dashboard (`dashboard`), perceive (`perceive`) | yes, 50 |
 | `frames_raw` | `RawFrame` | embodiment | capture (`capture`) | yes, 50 |
-| `health` | `Health` | agent, capture, listen, perceive | store (`store`) | no |
-| `notify` | `Notify` | agent, embodiment, listen | notify (`notify`), store (`store`) | no |
+| `health` | `Health` | agent, capture, light, listen, perceive | store (`store`) | no |
+| `light` | `LightCommand` | agent | light (`light`), store (`store`) | no |
+| `notify` | `Notify` | agent, embodiment, light, listen | notify (`notify`), store (`store`) | no |
 | `person` | `PersonState` | perceive | agent (`agent`), store (`store`) | no |
 | `say` | `Say` | agent | embodiment (`embodiment`), store (`store`) | no |
 | `session` | `GoalChanged`, `SessionState` | agent | listen (`listen-session`), perceive (`perceive-session`), store (`store`) | no |
@@ -148,6 +158,7 @@ against the files that implement them.
 | `agent` | `config/strategies.yaml` at startup | reads | `services/agent/agent/strategies.py` |
 | `agent` | Ollama `/api/generate` on the host | calls | `services/agent/agent/llm.py` |
 | `notify` | ntfy topic, or the log when `NTFY_URL` is empty | calls | `services/notify/notify/backends.py` |
+| `light` | Shelly Gen2+ smart plug on the local LAN, optional | calls | `services/light/light/backends.py` |
 | `store` | SQLite `data/night.db` | writes | `services/store/store/main.py` |
 | `dashboard` | Caregiver browser, HTTP Basic auth | both | `services/dashboard/dashboard/app.py` |
 | `dashboard` | `config/zones.yaml` | writes | `services/dashboard/dashboard/app.py` |

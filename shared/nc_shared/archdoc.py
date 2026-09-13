@@ -117,6 +117,12 @@ EXTERNAL_CONNECTIONS = (
         "services/notify/notify/backends.py",
     ),
     ExternalConnection(
+        "light",
+        "Shelly Gen2+ smart plug on the local LAN, optional",
+        "calls",
+        "services/light/light/backends.py",
+    ),
+    ExternalConnection(
         "store",
         "SQLite `data/night.db`",
         "writes",
@@ -349,6 +355,7 @@ def _main_diagram(facts: dict[str, ServiceFacts]) -> str:
             '  subgraph room["Room"]',
             '    browser["Night-screen browser<br/>camera, microphone, face, text"]',
             '    camera["Optional USB or RTSP camera"]',
+            '    plug["Hallway light<br/>Shelly smart plug"]',
             "  end",
             "",
             '  subgraph compose["docker compose"]',
@@ -394,6 +401,7 @@ def _main_diagram(facts: dict[str, ServiceFacts]) -> str:
             '  camera -.->|"frames"| s_capture',
             '  s_perceive -.->|"HTTP"| ollama',
             '  s_notify -.->|"ntfy"| phone',
+            '  s_light -.->|"local HTTP RPC"| plug',
             "  cg_browser <--> s_dashboard",
             '  zones -.->|"read at startup"| s_perceive',
             '  s_dashboard -.->|"writes"| zones',

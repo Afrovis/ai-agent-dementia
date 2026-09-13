@@ -173,6 +173,18 @@ class Ack(BaseEvent):
     notify_id: str
 
 
+class LightCommand(BaseEvent):
+    """Idempotent command for a configured room light. Produced by `agent`.
+
+    Commands carry the desired state rather than a toggle so Redis stream
+    redelivery cannot accidentally reverse the light.
+    """
+
+    light: Literal["hallway"]
+    state: Literal["on", "off"]
+    reason: str
+
+
 class AudioChunk(BaseEvent):
     """A chunk of raw PCM audio. Produced by `embodiment` (browser bridge)."""
 
@@ -200,6 +212,7 @@ EVENT_STREAMS: dict[type[BaseEvent], str] = {
     Show: "show",
     Notify: "notify",
     Ack: "ack",
+    LightCommand: "light",
     AudioChunk: "audio_in",
     Health: "health",
 }

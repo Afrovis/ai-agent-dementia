@@ -9,6 +9,7 @@ from nc_shared.events import (
     Frame,
     GoalChanged,
     Health,
+    LightCommand,
     Notify,
     PersonState,
     Say,
@@ -118,6 +119,20 @@ def test_goal_changed_roundtrip():
     assert copy.from_goal == "return_to_bed"
     assert copy.to_goal == "restroom"
     assert copy.reason == "mentioned toilet"
+
+
+def test_light_command_roundtrip():
+    event = LightCommand(
+        source="agent",
+        session_id="sess-1",
+        light="hallway",
+        state="on",
+        reason="restroom_goal_started",
+    )
+    copy = _roundtrip(event)
+    assert copy.light == "hallway"
+    assert copy.state == "on"
+    assert copy.reason == "restroom_goal_started"
 
 
 def test_say_roundtrip():

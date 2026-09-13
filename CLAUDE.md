@@ -18,7 +18,8 @@ another service directly.
 | `capture` | Motion-gates raw frames and publishes `Frame`. The only producer of `frames`. |
 | `perceive` | Person detection and pose classification on frames. |
 | `listen` | Voice activity detection and speech to text, publishes `Utterance`. |
-| `agent` | Session state machine. Emits `Say`, `Show`, `Notify`, `GoalChanged`. |
+| `agent` | Session state machine. Emits `Say`, `Show`, `Notify`, `GoalChanged`, `LightCommand`. |
+| `light` | Feature-flagged local Shelly smart-plug control for the restroom path. |
 | `embodiment` | Fullscreen HTTPS page: face, big text, photos, media bridge. |
 | `notify` | Caregiver alerts. ntfy by default. |
 | `store` | SQLite persistence and nightly summaries. |

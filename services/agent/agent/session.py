@@ -21,7 +21,8 @@ module docstring in `agent.rules` for why that is not redundant.
 
 Issue #13's goal tree (`agent.goals`) and what it can and cannot observe:
 
-- Entering `restroom`: `PersonState.zone == "bathroom_path"` while
+- Entering `restroom`: a confirmed `PersonState.zone` of `door` or
+  `bathroom_path` while
   `ENGAGED` with the root goal active. PLAN.md's second documented
   trigger ("perception sees the person heading to the bathroom door").
 - Leaving `restroom`: the person is later seen back at the bed
@@ -86,7 +87,14 @@ from datetime import datetime
 from agent.config import AgentConfig
 from agent.goals import COMFORT_GOAL, RESTROOM_GOAL, ROOT_GOAL, WAIT_FOR_CAREGIVER_GOAL
 from agent.rules import Phase, validate, validate_goal
-from agent.strategies import DEFAULT_STRATEGIES, ESCALATE_PHONE_ID, StrategyDef, StrategyEngine
+from agent.strategies import (
+    DEFAULT_STRATEGIES,
+    ESCALATE_PHONE_ID,
+    GUIDED_RETURN_ID,
+    PATH_LIGHT_ID,
+    StrategyDef,
+    StrategyEngine,
+)
 
 DEFAULT_GOAL = ROOT_GOAL
 
@@ -477,7 +485,8 @@ class Session:
         machine.
 
         `zone` is issue #13's addition to this signature: perception
-        seeing the person heading to the bathroom (`zone == "bathroom_path"`)
+        seeing the person approach the door or bathroom path
+        (`zone == "door"` or `zone == "bathroom_path"`)
         is one of PLAN.md's three documented goal-change triggers, and it
         arrives on every `PersonState`, not as a separate event.
 
@@ -510,7 +519,7 @@ class Session:
             if phase_transition is None:
                 phase_transition = self._run_strategy_engine(now, state=state, zone=zone)
             goal_change = self._update_goal_from_zone(zone, state, now)
-            return self._combine(phase_transition, goal_change)
+            return self._combine(phase_transition, goal_change, now)
 
         if self.phase == Phase.COOLDOWN:
             # No new *nudging* session during cooldown (HANDOFF.md section
@@ -540,7 +549,7 @@ class Session:
         value ever reaches `agent` at all, unlike `zone`, which is a bare,
         unconfirmed per-frame lookup.
 
-        - `bathroom_path`, confirmed, while the root goal is active:
+        - `door` or `bathroom_path`, confirmed, while the root goal is active:
           perception has seen the person heading to the bathroom,
           PLAN.md's second documented trigger. Switch to `restroom` and
           start its timeout clock.
@@ -552,7 +561,7 @@ class Session:
         """
         confirmed_zone = self._confirmed_zone(zone)
 
-        if confirmed_zone == "bathroom_path" and self.goal == DEFAULT_GOAL:
+        if confirmed_zone in ("door", "bathroom_path") and self.goal == DEFAULT_GOAL:
             change = self._apply_goal(RESTROOM_GOAL, reason="perceived_heading_to_bathroom")
             if change is not None:
                 self._restroom_since = now
@@ -567,16 +576,34 @@ class Session:
         return None
 
     def _combine(
-        self, phase_transition: Transition | None, goal_change: GoalChangeResult | None
+        self,
+        phase_transition: Transition | None,
+        goal_change: GoalChangeResult | None,
+        now: datetime,
     ) -> Transition | None:
         """Merge a possible phase-change `Transition` with a possible
         goal-only `GoalChangeResult` from the same update into the single
         `Transition` this file's public methods return, per the `Transition`
         docstring: a goal change is always publishable, with or without an
         accompanying phase change."""
+        goal_strategy: StrategyDef | None = None
+        if goal_change is not None and self.phase == Phase.ENGAGED:
+            if goal_change.to_goal == RESTROOM_GOAL:
+                goal_strategy = self._engine.select_for_goal(PATH_LIGHT_ID, now)
+            elif goal_change.from_goal == RESTROOM_GOAL and goal_change.to_goal == DEFAULT_GOAL:
+                goal_strategy = self._engine.select_for_goal(GUIDED_RETURN_ID, now)
+            if goal_strategy is not None:
+                self.strategy_index = self._engine.index_of(goal_strategy.id)
+
         if phase_transition is not None:
             if goal_change is not None and phase_transition.goal_change is None:
-                return replace(phase_transition, goal_change=goal_change)
+                return replace(
+                    phase_transition,
+                    goal=self.goal,
+                    strategy_index=self.strategy_index,
+                    goal_change=goal_change,
+                    strategy=goal_strategy or phase_transition.strategy,
+                )
             return phase_transition
         if goal_change is not None:
             return Transition(
@@ -587,6 +614,7 @@ class Session:
                 reason=goal_change.reason,
                 notify=None,
                 goal_change=goal_change,
+                strategy=goal_strategy,
             )
         return None
 
@@ -618,15 +646,7 @@ class Session:
             self._restroom_since = now
         elif change.from_goal == RESTROOM_GOAL:
             self._restroom_since = None
-        return Transition(
-            phase=self.phase,
-            session_id=self.session_id,
-            goal=self.goal,
-            strategy_index=self.strategy_index,
-            reason=reason,
-            notify=None,
-            goal_change=change,
-        )
+        return self._combine(None, change, now)
 
     def propose_strategy(self, strategy_id: str, now: datetime) -> Transition | None:
         """Apply a planner's next-strategy proposal through the engine.
@@ -874,4 +894,4 @@ class Session:
                 )
                 self._restroom_since = None
 
-        return self._combine(phase_transition, goal_change)
+        return self._combine(phase_transition, goal_change, now)

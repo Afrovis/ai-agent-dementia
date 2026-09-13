@@ -57,6 +57,7 @@ from nc_shared.bus import Bus
 from nc_shared.events import (
     GoalChanged,
     Health,
+    LightCommand,
     Notify,
     PersonState,
     Say,
@@ -73,6 +74,7 @@ from agent.rules import Phase, validate_say
 from agent.session import Session, Transition
 from agent.strategies import (
     ESCALATE_PHONE_ID,
+    PATH_LIGHT_ID,
     StrategyDef,
     load_strategies,
     render_template,
@@ -325,6 +327,47 @@ def _publish_transition(
             from_goal=goal_changed_event.from_goal,
             to_goal=goal_changed_event.to_goal,
         )
+
+        if (
+            goal_changed_event.to_goal == "restroom"
+            and transition.strategy is not None
+            and transition.strategy.id == PATH_LIGHT_ID
+        ):
+            light_event = LightCommand(
+                source=SERVICE_NAME,
+                session_id=transition.session_id,
+                light="hallway",
+                state="on",
+                reason="restroom_goal_started",
+            )
+            bus.publish(light_event)
+            _log("published LightCommand", event_type="LightCommand", state="on")
+        elif (
+            goal_changed_event.from_goal == "restroom"
+            and goal_changed_event.to_goal == "return_to_bed"
+        ):
+            light_event = LightCommand(
+                source=SERVICE_NAME,
+                session_id=transition.session_id,
+                light="hallway",
+                state="off",
+                reason="restroom_goal_ended",
+            )
+            bus.publish(light_event)
+            _log("published LightCommand", event_type="LightCommand", state="off")
+
+    # A phase resolution is a final idempotent backstop for a light that
+    # remained on through an escalation or an unusual goal transition.
+    if transition.phase in (Phase.COOLDOWN, Phase.IDLE) and transition.goal_change is None:
+        light_event = LightCommand(
+            source=SERVICE_NAME,
+            session_id=transition.session_id,
+            light="hallway",
+            state="off",
+            reason=f"session_{transition.phase.value.lower()}",
+        )
+        bus.publish(light_event)
+        _log("published LightCommand", event_type="LightCommand", state="off")
 
     if transition.notify is not None:
         notify_event = Notify(
