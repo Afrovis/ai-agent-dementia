@@ -89,7 +89,7 @@ All events are pydantic models in `shared/nc_shared/events.py`, serialised as JS
 | `session` | `GoalChanged` | `agent` | `from_goal`, `to_goal`, `reason` |
 | `say` | `Say` | `agent` | `text`, `strategy`, `interruptible: bool` |
 | `show` | `Show` | `agent` | `face: asleep, awake, speaking, listening`, `headline`, `body`, `photo_id or None`, `brightness: 0 to 1` |
-| `notify` | `Notify` | `agent`, any service on fault | `level: info, attention, critical`, `title`, `body`, `repeat_until_ack: bool` |
+| `notify` | `Notify` | `agent`; any service on fault (currently `embodiment` and `listen`) | `level: info, attention, critical`, `title`, `body`, `repeat_until_ack: bool` |
 | `ack` | `Ack` | `dashboard`, `notify` | `notify_id` |
 | `audio_in` | `AudioChunk` | `embodiment` (browser bridge) | `pcm16: bytes`, `sample_rate: 16000` |
 | `health` | `Health` | every service, every 30 s | `service`, `ok: bool`, `detail` |
@@ -138,6 +138,16 @@ bridge; the service never writes audio to disk. Model weights live under
 `data/models/faster-whisper`, and a transcription failure publishes one
 `attention` notification and unhealthy heartbeats until a later transcription
 succeeds.
+
+Issue #19 implements speech output in `embodiment`: every `Say` is synthesized
+locally with Piper's `en_US-lessac-medium` voice at 0.85 speed, cached under an
+opaque WAV id in the container's ephemeral storage, and played by the bedside
+browser over the same HTTPS origin.
+At service startup it expands and pre-renders every configured fixed strategy
+phrase, including all twelve possible greeting hours, so their first use does
+not wait for inference. LLM-composed phrases are cached after their first use.
+Generated audio never crosses Redis or enters retained `data/`; a synthesis
+failure preserves the text display and emits an `attention` notification.
 
 ## 7. Strategy catalogue
 

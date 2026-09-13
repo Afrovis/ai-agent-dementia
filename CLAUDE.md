@@ -138,6 +138,20 @@ docker compose run --rm --no-deps listen \
   sh -c "pip install -q pytest ruff && pytest -q && ruff check . && ruff format --check ."
 ```
 
+`embodiment` turns `Say` events into local Piper WAV files and serves them back
+to the bedside page under `/speech/<opaque-id>.wav`; speech bytes never enter
+Redis. The image downloads `en_US-lessac-medium` when it is built. Startup
+pre-renders the configured fixed strategy phrases into the ephemeral
+`PIPER_CACHE_DIR`, including all twelve possible hour variants of the greeting;
+generated speech is not retained under `data/`. To rebuild and exercise the
+real voice path:
+
+```sh
+docker compose build embodiment
+docker compose run --rm --no-deps embodiment \
+  sh -c "pip install -q pytest ruff && pytest -q && ruff check . && ruff format --check ."
+```
+
 `frames_raw` is what the browser bridge writes. `capture` reads it, applies
 the motion gate, and republishes onto `frames`, so watch that one to see
 what `perceive` will actually receive:

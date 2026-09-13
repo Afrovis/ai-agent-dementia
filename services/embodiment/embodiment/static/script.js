@@ -15,6 +15,7 @@
   const brightnessOverlayEl = document.getElementById("brightness-overlay");
 
   const FACE_STATES = ["asleep", "awake", "speaking", "listening"];
+  let currentSpeech = null;
 
   // A photo the caregiver never uploaded (or has since deleted) answers 404.
   // Fade the layer back out and hide it rather than leaving the browser's
@@ -58,6 +59,15 @@
     faceEl.classList.add("speaking");
     if (typeof msg.text === "string") {
       bodyEl.textContent = msg.text;
+    }
+    if (typeof msg.audio_url === "string") {
+      if (currentSpeech) {
+        currentSpeech.pause();
+      }
+      currentSpeech = new Audio(msg.audio_url);
+      currentSpeech.play().catch((err) => {
+        console.error("Piper speech playback failed", err);
+      });
     }
   }
 

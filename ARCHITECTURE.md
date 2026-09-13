@@ -64,6 +64,7 @@ flowchart LR
   s_embodiment --> q_frames_raw
   q_frames_raw --> s_capture
   s_agent --> q_notify
+  s_embodiment --> q_notify
   s_listen --> q_notify
   q_notify --> s_notify
   s_perceive --> q_person
@@ -121,7 +122,7 @@ flowchart LR
 | `frames` | `Frame` | capture | dashboard (`dashboard`), perceive (`perceive`) | yes, 50 |
 | `frames_raw` | `RawFrame` | embodiment | capture (`capture`) | yes, 50 |
 | `health` | `Health` | agent, capture, listen, perceive | store (`store`) | no |
-| `notify` | `Notify` | agent, listen | notify (`notify`), store (`store`) | no |
+| `notify` | `Notify` | agent, embodiment, listen | notify (`notify`), store (`store`) | no |
 | `person` | `PersonState` | perceive | agent (`agent`), store (`store`) | no |
 | `say` | `Say` | agent | embodiment (`embodiment`), store (`store`) | no |
 | `session` | `GoalChanged`, `SessionState` | agent | listen (`listen-session`), perceive (`perceive-session`), store (`store`) | no |
@@ -137,6 +138,8 @@ against the files that implement them.
 | --- | --- | --- | --- |
 | `embodiment` | Browser page, websockets `/ws` and `/media` | both | `services/embodiment/embodiment/app.py` |
 | `embodiment` | Photos under `data/photos` and demo photos | reads | `services/embodiment/embodiment/app.py` |
+| `embodiment` | Piper voice model and ephemeral generated WAV cache | reads/writes | `services/embodiment/embodiment/tts.py` |
+| `embodiment` | `config/strategies.yaml` and `config/person.yaml` for speech warming | reads | `services/embodiment/embodiment/tts.py` |
 | `capture` | USB or RTSP camera, optional | reads | `services/capture/capture/sources.py` |
 | `perceive` | Ollama `/api/generate` on the host | calls | `services/perceive/perceive/vision.py` |
 | `perceive` | `config/zones.yaml` at startup | reads | `services/perceive/perceive/zones.py` |

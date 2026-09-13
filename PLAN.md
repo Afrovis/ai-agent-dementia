@@ -204,7 +204,7 @@ Configured by the caregiver, injected into every prompt:
 
 - Wake-free. The mic is only active during `OBSERVING` and later states. This avoids constant listening.
 - STT with faster-whisper `small.en` on CPU is around real time on the M4, good enough for short utterances.
-- TTS with Piper, a warm, slow voice at 0.85 speed. Pre-render all fixed phrases at startup so the ambient and greeting strategies have zero latency.
+- TTS with Piper, a warm, slow voice at 0.85 speed. Pre-render all fixed phrases at startup so the ambient and greeting strategies have zero latency. Implemented in issue #19: `embodiment` serves locally cached WAVs to the bedside browser without putting audio on the event bus.
 - Barge-in: if the person speaks while the agent is speaking, stop TTS and listen.
 - The speakerphone's hardware echo cancellation is what makes barge-in feasible. Do not attempt software AEC in v1.
 

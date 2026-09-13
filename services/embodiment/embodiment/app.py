@@ -48,7 +48,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from nc_shared.events import AudioChunk, RawFrame, Say, Show
+from nc_shared.events import AudioChunk, Notify, RawFrame, Say, Show
 from nc_shared.replay import CAPPED_MAXLEN
 
 SERVICE_NAME = "embodiment"
@@ -152,19 +152,23 @@ def _show_to_message(event: Show) -> dict:
     }
 
 
-def _say_to_message(event: Say) -> dict:
-    return {
+def _say_to_message(event: Say, audio_id: str | None = None) -> dict:
+    message = {
         "type": "say",
         "text": event.text,
         "strategy": event.strategy,
         "interruptible": event.interruptible,
     }
+    if audio_id is not None:
+        message["audio_url"] = f"/speech/{audio_id}.wav"
+    return message
 
 
 async def broadcast_loop(
     bus,
     manager: ConnectionManager,
     *,
+    speech=None,
     consumer: str = CONSUMER,
     count: int = 10,
     block_ms: int = 1000,
@@ -194,7 +198,26 @@ async def broadcast_loop(
                 bus.read, stream, GROUP, consumer, count=count, block_ms=block_ms
             )
             for msg_id, event in messages:
-                await manager.broadcast(to_message(event))
+                if isinstance(event, Say) and speech is not None:
+                    try:
+                        audio_id = await asyncio.to_thread(speech.synthesize, event.text)
+                        message = _say_to_message(event, audio_id)
+                    except Exception:  # noqa: BLE001 - keep the calm visual fallback alive
+                        logger.exception("Piper could not synthesize a Say event")
+                        bus.publish(
+                            Notify(
+                                source=SERVICE_NAME,
+                                session_id=event.session_id,
+                                level="attention",
+                                title="Night Companion speech failed",
+                                body="The bedside display is showing text without voice.",
+                                repeat_until_ack=False,
+                            )
+                        )
+                        message = _say_to_message(event)
+                else:
+                    message = to_message(event)
+                await manager.broadcast(message)
                 bus.ack(stream, GROUP, msg_id)
 
 
@@ -276,7 +299,13 @@ async def handle_media_message(bus, message: dict, session_id: str | None = None
         logger.warning("ignoring malformed /media message of type %r", message_type)
 
 
-def create_app(bus, photo_dir: Path | str = DEFAULT_PHOTO_DIR) -> FastAPI:
+def create_app(
+    bus,
+    photo_dir: Path | str = DEFAULT_PHOTO_DIR,
+    *,
+    speech=None,
+    prerender_phrases: tuple[str, ...] = (),
+) -> FastAPI:
     """Build the FastAPI app, wiring `bus` into the websocket broadcast loop.
 
     `photo_dir` is where caregiver-uploaded photos referenced by a `Show`
@@ -287,7 +316,22 @@ def create_app(bus, photo_dir: Path | str = DEFAULT_PHOTO_DIR) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        task = asyncio.create_task(broadcast_loop(bus, manager))
+        if speech is not None and prerender_phrases:
+            try:
+                count = await asyncio.to_thread(speech.pre_render, prerender_phrases)
+                logger.info("pre-rendered %d Piper phrases", count)
+            except Exception:  # noqa: BLE001 - visual display remains the safe fallback
+                logger.exception("Piper startup phrase pre-render failed")
+                bus.publish(
+                    Notify(
+                        source=SERVICE_NAME,
+                        level="attention",
+                        title="Night Companion speech failed",
+                        body="The bedside display started without a ready voice.",
+                        repeat_until_ack=False,
+                    )
+                )
+        task = asyncio.create_task(broadcast_loop(bus, manager, speech=speech))
         try:
             yield
         finally:
@@ -316,6 +360,14 @@ def create_app(bus, photo_dir: Path | str = DEFAULT_PHOTO_DIR) -> FastAPI:
         if path is None:
             raise HTTPException(status_code=404, detail="photo not found")
         return FileResponse(path)
+
+    @app.get("/speech/{audio_id}.wav")
+    async def speech_audio(audio_id: str) -> FileResponse:
+        """Serve one locally synthesized WAV by its opaque cache digest."""
+        path = None if speech is None else speech.resolve(audio_id)
+        if path is None:
+            raise HTTPException(status_code=404, detail="speech audio not found")
+        return FileResponse(path, media_type="audio/wav")
 
     @app.websocket("/ws")
     async def ws_endpoint(websocket: WebSocket) -> None:

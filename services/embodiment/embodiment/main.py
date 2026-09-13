@@ -18,8 +18,16 @@ from pathlib import Path
 import redis
 import uvicorn
 from nc_shared.bus import Bus
+from nc_shared.events import Notify
 
 from embodiment.app import create_app
+from embodiment.tts import (
+    DEFAULT_CACHE_DIR,
+    DEFAULT_SPEED,
+    DEFAULT_VOICE_MODEL,
+    PiperSpeech,
+    load_prerender_phrases,
+)
 
 SERVICE_NAME = "embodiment"
 
@@ -54,8 +62,34 @@ def run() -> None:
     # would silently resolve no photos at all.
     photo_dir = os.environ.get("PHOTO_DIR") or "data/photos"
 
+    strategies_path = os.environ.get("STRATEGIES_PATH") or "/app/config/strategies.yaml"
+    person_path = os.environ.get("PERSON_PATH") or "/app/config/person.yaml"
+
     bus = Bus(redis.Redis.from_url(redis_url))
-    app = create_app(bus, photo_dir=photo_dir)
+    speech = None
+    try:
+        voice_model = os.environ.get("PIPER_VOICE_MODEL") or str(DEFAULT_VOICE_MODEL)
+        speech_cache = os.environ.get("PIPER_CACHE_DIR") or str(DEFAULT_CACHE_DIR)
+        speed = float(os.environ.get("PIPER_SPEED") or DEFAULT_SPEED)
+        speech = PiperSpeech.from_model(voice_model, speech_cache, speed=speed)
+    except Exception:  # noqa: BLE001 - keep the visual bedside fallback running
+        logger.exception("Piper voice unavailable; starting with text-only speech")
+        bus.publish(
+            Notify(
+                source=SERVICE_NAME,
+                level="attention",
+                title="Night Companion speech unavailable",
+                body="The bedside display started in text-only mode.",
+                repeat_until_ack=False,
+            )
+        )
+    phrases = load_prerender_phrases(strategies_path, person_path)
+    app = create_app(
+        bus,
+        photo_dir=photo_dir,
+        speech=speech,
+        prerender_phrases=phrases,
+    )
 
     ssl_kwargs = ssl_kwargs_for(cert_file, cert_key)
     if ssl_kwargs:

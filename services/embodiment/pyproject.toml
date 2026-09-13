@@ -12,6 +12,8 @@ dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
     "websockets>=12.0",
+    "piper-tts>=1.8,<2",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]

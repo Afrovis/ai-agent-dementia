@@ -63,6 +63,18 @@ EXTERNAL_CONNECTIONS = (
         "services/embodiment/embodiment/app.py",
     ),
     ExternalConnection(
+        "embodiment",
+        "Piper voice model and ephemeral generated WAV cache",
+        "reads/writes",
+        "services/embodiment/embodiment/tts.py",
+    ),
+    ExternalConnection(
+        "embodiment",
+        "`config/strategies.yaml` and `config/person.yaml` for speech warming",
+        "reads",
+        "services/embodiment/embodiment/tts.py",
+    ),
+    ExternalConnection(
         "capture",
         "USB or RTSP camera, optional",
         "reads",

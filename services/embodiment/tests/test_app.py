@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 from nc_shared.bus import FakeBus
@@ -18,6 +19,27 @@ from embodiment.app import (
     publish_frame,
     resolve_photo,
 )
+
+
+class FakeSpeech:
+    def __init__(self, directory: Path) -> None:
+        self.directory = directory
+        self.synthesized: list[str] = []
+        self.pre_rendered: tuple[str, ...] = ()
+
+    def synthesize(self, text: str) -> str:
+        self.synthesized.append(text)
+        audio_id = "a" * 64
+        (self.directory / f"{audio_id}.wav").write_bytes(b"RIFFfake-wave")
+        return audio_id
+
+    def pre_render(self, phrases) -> int:
+        self.pre_rendered = tuple(phrases)
+        return len(self.pre_rendered)
+
+    def resolve(self, audio_id: str) -> Path | None:
+        path = self.directory / f"{audio_id}.wav"
+        return path if path.is_file() else None
 
 
 def test_index_serves_face_page():
@@ -181,6 +203,58 @@ def test_websocket_delivers_say_event_published_after_connect():
 
     assert message["type"] == "say"
     assert message["text"] == "It is night."
+
+
+def test_websocket_synthesizes_say_and_delivers_same_origin_audio_url(tmp_path):
+    bus = FakeBus()
+    speech = FakeSpeech(tmp_path)
+    app = create_app(bus, speech=speech)
+
+    with TestClient(app) as client, client.websocket_connect("/ws") as websocket:
+        bus.publish(
+            Say(source="agent", text="Rest now.", strategy="soft_greeting", interruptible=True)
+        )
+        message = websocket.receive_json()
+
+    assert speech.synthesized == ["Rest now."]
+    assert message["audio_url"] == f"/speech/{'a' * 64}.wav"
+
+
+def test_speech_route_serves_cached_wav(tmp_path):
+    bus = FakeBus()
+    speech = FakeSpeech(tmp_path)
+    audio_id = speech.synthesize("Rest now.")
+    app = create_app(bus, speech=speech)
+
+    with TestClient(app) as client:
+        response = client.get(f"/speech/{audio_id}.wav")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "audio/wav"
+    assert response.content == b"RIFFfake-wave"
+
+
+def test_speech_route_rejects_unknown_audio_id(tmp_path):
+    app = create_app(FakeBus(), speech=FakeSpeech(tmp_path))
+
+    with TestClient(app) as client:
+        response = client.get(f"/speech/{'b' * 64}.wav")
+
+    assert response.status_code == 404
+
+
+def test_app_prerenders_fixed_phrases_during_startup(tmp_path):
+    speech = FakeSpeech(tmp_path)
+    app = create_app(
+        FakeBus(),
+        speech=speech,
+        prerender_phrases=("Hello Jean.", "Someone is coming to help."),
+    )
+
+    with TestClient(app):
+        pass
+
+    assert speech.pre_rendered == ("Hello Jean.", "Someone is coming to help.")
 
 
 def test_publish_frame_publishes_one_frame_event_with_decoded_jpeg():

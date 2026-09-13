@@ -137,6 +137,11 @@ services:
       CERT_FILE: ${CERT_FILE}
       CERT_KEY: ${CERT_KEY}
       PHOTO_DIR: ${PHOTO_DIR}
+      PIPER_VOICE_MODEL: ${PIPER_VOICE_MODEL:-/app/models/piper/en_US-lessac-medium.onnx}
+      PIPER_CACHE_DIR: ${PIPER_CACHE_DIR:-/tmp/night-companion-tts}
+      PIPER_SPEED: ${PIPER_SPEED:-0.85}
+      STRATEGIES_PATH: ${STRATEGIES_PATH}
+      PERSON_PATH: ${PERSON_PATH:-/app/config/person.yaml}
     ports:
       - "${EMBODIMENT_PORT}:${EMBODIMENT_PORT}"
     volumes:
