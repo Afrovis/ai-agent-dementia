@@ -84,7 +84,7 @@ All events are pydantic models in `shared/nc_shared/events.py`, serialised as JS
 | `frames_raw` | `RawFrame` | `embodiment` (browser bridge) | `jpeg: bytes`, `width`, `height`, `source_kind: browser or usb or rtsp`. Ungated, pre-motion-gate frames. Only the browser source goes over the bus; `capture`'s own USB/RTSP cameras are read in-process and never reach this stream. Never persisted. Short retention (`MAXLEN ~ 50`). |
 | `frames` | `Frame` | `capture` | `jpeg: bytes`, `width`, `height`, `source_kind: browser or usb or rtsp`. `capture` is the sole producer: it reads `frames_raw` (browser) or its camera directly (USB/RTSP), applies the motion gate, and republishes what it admits here. Short retention (`MAXLEN ~ 50`). |
 | `person` | `PersonState` | `perceive` | `state: in_bed, sitting_up, standing, walking, on_floor, absent`, `confidence`, `zone: bed, door, bathroom_path, other`, `scene_note: str or None` |
-| `speech_in` | `Utterance` | `listen` | `text`, `confidence`, `duration_s` |
+| `speech_in` | `SpeechStarted`, `Utterance` | `listen` | onset: no payload beyond base fields; utterance: `text`, `confidence`, `duration_s` |
 | `session` | `SessionState` | `agent` | `phase: IDLE, OBSERVING, ENGAGED, COOLDOWN, ESCALATED`, `goal`, `strategy_index` |
 | `session` | `GoalChanged` | `agent` | `from_goal`, `to_goal`, `reason` |
 | `say` | `Say` | `agent` | `text`, `strategy`, `interruptible: bool` |
@@ -148,6 +148,12 @@ phrase, including all twelve possible greeting hours, so their first use does
 not wait for inference. LLM-composed phrases are cached after their first use.
 Generated audio never crosses Redis or enters retained `data/`; a synthesis
 failure preserves the text display and emits an `attention` notification.
+
+Issue #20 implements barge-in: `listen` publishes a transcript-free
+`SpeechStarted` as soon as WebRTC VAD sees an onset, before the utterance is
+complete. `embodiment` forwards it to the browser, which immediately stops the
+current `Say` only when `interruptible=True` and switches the face to listening.
+The browser requests hardware/OS echo cancellation; there is no software AEC.
 
 ## 7. Strategy catalogue
 

@@ -37,7 +37,7 @@ flowchart LR
     q_say[("say<br/>Say")]
     q_session[("session<br/>GoalChanged, SessionState")]
     q_show[("show<br/>Show")]
-    q_speech_in[("speech_in<br/>Utterance")]
+    q_speech_in[("speech_in<br/>SpeechStarted, Utterance")]
   end
 
   subgraph host["Host (macOS)"]
@@ -78,6 +78,7 @@ flowchart LR
   q_show --> s_embodiment
   s_listen --> q_speech_in
   q_speech_in --> s_agent
+  q_speech_in --> s_embodiment
   browser <-->|"websockets /ws and /media"| s_embodiment
   camera -.->|"frames"| s_capture
   s_perceive -.->|"HTTP"| ollama
@@ -127,7 +128,7 @@ flowchart LR
 | `say` | `Say` | agent | embodiment (`embodiment`), store (`store`) | no |
 | `session` | `GoalChanged`, `SessionState` | agent | listen (`listen-session`), perceive (`perceive-session`), store (`store`) | no |
 | `show` | `Show` | agent | embodiment (`embodiment`), store (`store`) | no |
-| `speech_in` | `Utterance` | listen | agent (`agent`), store (`store`) | no |
+| `speech_in` | `SpeechStarted`, `Utterance` | listen | agent (`agent`), embodiment (`embodiment`), store (`store`) | no |
 
 ## Outside-world connections
 

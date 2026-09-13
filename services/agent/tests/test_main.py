@@ -9,7 +9,16 @@ from dataclasses import replace as dc_replace
 from datetime import datetime, timedelta
 
 from nc_shared.bus import FakeBus
-from nc_shared.events import GoalChanged, Notify, PersonState, Say, SessionState, Show, Utterance
+from nc_shared.events import (
+    GoalChanged,
+    Notify,
+    PersonState,
+    Say,
+    SessionState,
+    Show,
+    SpeechStarted,
+    Utterance,
+)
 
 from agent.config import AgentConfig
 from agent.main import (
@@ -98,6 +107,17 @@ def test_utterance_moves_observing_to_engaged_through_run_once():
     published = run_once(bus, session, now_fn=now_fn)
 
     assert any(event.phase == "ENGAGED" for event in published)
+    assert bus.pending(UTTERANCE_STREAM, UTTERANCE_GROUP) == []
+
+
+def test_speech_started_is_acked_without_advancing_the_session():
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    now_fn, _advance = make_clock(NIGHT)
+    bus.publish(SpeechStarted(source="listen", session_id="session-1"))
+
+    assert run_once(bus, session, now_fn=now_fn) == []
+    assert session.phase.value == "IDLE"
     assert bus.pending(UTTERANCE_STREAM, UTTERANCE_GROUP) == []
 
 

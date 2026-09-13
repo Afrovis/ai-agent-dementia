@@ -1,7 +1,7 @@
 """Entry point for the `agent` service (issue #12): the real session core.
 
-Reads `PersonState` from the `person` stream and `Utterance` from
-`speech_in`, both through Redis consumer groups, and drives an
+Reads `PersonState` from the `person` stream and complete `Utterance` events
+from `speech_in` (ignoring its early barge-in signal), and drives an
 `agent.session.Session` -- the deterministic phase state machine, see that
 module and `agent.rules` for what it does and does not decide.
 
@@ -391,7 +391,11 @@ def run_once(
     )
     for msg_id, event in utterance_messages:
         bus.ack(UTTERANCE_STREAM, UTTERANCE_GROUP, msg_id)
-        assert isinstance(event, Utterance)
+        # `listen` also puts the early, transcript-free `SpeechStarted`
+        # barge-in signal on this stream.  Embodiment consumes that signal;
+        # the session core acts only on complete transcribed utterances.
+        if not isinstance(event, Utterance):
+            continue
         now = now_fn()
         prior_turns = session.recent_utterances
         transition = session.on_utterance(now)

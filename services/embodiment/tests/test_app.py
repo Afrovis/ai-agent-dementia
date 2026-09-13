@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 from nc_shared.bus import FakeBus
-from nc_shared.events import AudioChunk, RawFrame, Say, Show
+from nc_shared.events import AudioChunk, RawFrame, Say, Show, SpeechStarted
 from nc_shared.replay import CAPPED_MAXLEN
 
 from embodiment.app import (
@@ -212,12 +212,39 @@ def test_websocket_synthesizes_say_and_delivers_same_origin_audio_url(tmp_path):
 
     with TestClient(app) as client, client.websocket_connect("/ws") as websocket:
         bus.publish(
-            Say(source="agent", text="Rest now.", strategy="soft_greeting", interruptible=True)
+            Say(
+                source="agent",
+                session_id="session-1",
+                text="Rest now.",
+                strategy="soft_greeting",
+                interruptible=True,
+            )
         )
         message = websocket.receive_json()
 
     assert speech.synthesized == ["Rest now."]
     assert message["audio_url"] == f"/speech/{'a' * 64}.wav"
+    assert message["session_id"] == "session-1"
+
+
+def test_websocket_delivers_early_speech_signal_for_barge_in():
+    bus = FakeBus()
+    app = create_app(bus)
+
+    with TestClient(app) as client, client.websocket_connect("/ws") as websocket:
+        bus.publish(SpeechStarted(source="listen", session_id="session-1"))
+        message = websocket.receive_json()
+
+    assert message == {"type": "speech_started", "session_id": "session-1"}
+
+
+def test_browser_stops_only_interruptible_speech_on_early_voice_signal():
+    script = (Path(__file__).parents[1] / "embodiment/static/script.js").read_text()
+
+    assert 'msg.type === "speech_started"' in script
+    assert "currentSpeechInterruptible" in script
+    assert "currentSpeech.pause()" in script
+    assert "echoCancellation: true" in script
 
 
 def test_speech_route_serves_cached_wav(tmp_path):

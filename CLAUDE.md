@@ -152,6 +152,12 @@ docker compose run --rm --no-deps embodiment \
   sh -c "pip install -q pytest ruff && pytest -q && ruff check . && ruff format --check ."
 ```
 
+Barge-in does not wait for Whisper. At the first WebRTC VAD speech frame,
+`listen` publishes `SpeechStarted` on `speech_in`; `embodiment` forwards it to
+the page, which stops the current audio only when its `Say.interruptible` flag
+is true. The page requests browser/OS echo cancellation from `getUserMedia`.
+There is intentionally no software AEC in v1.
+
 `frames_raw` is what the browser bridge writes. `capture` reads it, applies
 the motion gate, and republishes onto `frames`, so watch that one to see
 what `perceive` will actually receive:

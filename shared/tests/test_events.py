@@ -14,6 +14,7 @@ from nc_shared.events import (
     Say,
     SessionState,
     Show,
+    SpeechStarted,
     Utterance,
 )
 
@@ -84,6 +85,13 @@ def test_utterance_roundtrip():
     assert copy.text == "I need the toilet"
     assert copy.confidence == pytest.approx(0.92)
     assert copy.duration_s == pytest.approx(1.4)
+
+
+def test_speech_started_roundtrip():
+    event = SpeechStarted(source="listen", session_id="sess-1")
+    copy = _roundtrip(event)
+    assert copy.source == "listen"
+    assert copy.session_id == "sess-1"
 
 
 def test_session_state_roundtrip():

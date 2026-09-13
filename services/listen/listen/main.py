@@ -4,7 +4,9 @@
 browser media bridge and current ``SessionState`` events from ``agent``. Audio
 is discarded while the phase is ``IDLE``. During ``OBSERVING`` and every later
 session phase, WebRTC VAD forms bounded in-memory utterances and faster-whisper
-``small.en`` transcribes them locally into ``Utterance`` events.
+``small.en`` transcribes them locally into ``Utterance`` events. It also emits
+a payload-free ``SpeechStarted`` at VAD onset so interruptible bedside speech
+can stop before transcription finishes (issue #20).
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ from datetime import datetime
 
 import redis
 from nc_shared.bus import Bus
-from nc_shared.events import AudioChunk, Health, Notify, SessionState, Utterance
+from nc_shared.events import AudioChunk, Health, Notify, SessionState, SpeechStarted, Utterance
 
 from listen.config import ListenConfig
 from listen.transcribe import FasterWhisperTranscriber, Transcriber
@@ -95,7 +97,15 @@ def run_once(bus, state: ListenState, transcriber: Transcriber, *, count: int = 
         try:
             is_current_audio = state.active_since is None or event.ts >= state.active_since
             if state.active and is_current_audio and isinstance(event, AudioChunk):
-                for pcm16 in state.segmenter.accept(event.pcm16):
+                utterances = state.segmenter.accept(event.pcm16)
+                for _ in range(state.segmenter.take_speech_starts()):
+                    bus.publish(SpeechStarted(source=SERVICE_NAME, session_id=state.session_id))
+                    _log(
+                        "published SpeechStarted",
+                        event_type="SpeechStarted",
+                        session_id=state.session_id,
+                    )
+                for pcm16 in utterances:
                     transcript = transcriber.transcribe(pcm16, event.sample_rate)
                     text = transcript.text.strip()
                     if not text:
