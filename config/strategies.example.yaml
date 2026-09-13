@@ -17,9 +17,9 @@
 #
 # Deliberately absent, and not a bug:
 #
-#   6  familiar_voice   needs a caregiver-uploaded voice clip -- no
-#   7  music_or_story   ingestion path exists for either yet. Out of scope
-#                        for every current issue, not just this one.
+#   6  familiar_voice   caregiver voice-clip upload exists in the dashboard,
+#                        but playback/strategy selection is not implemented.
+#   7  music_or_story   track ingestion and playback are not implemented.
 #   9  escalate_gentle  needs in-home chime hardware PLAN.md marks v2.
 #
 # Every entry below only *overrides* fields on the matching built-in

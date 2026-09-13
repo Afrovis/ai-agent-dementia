@@ -23,7 +23,7 @@ another service directly.
 | `embodiment` | Fullscreen HTTPS page: face, big text, photos, media bridge. |
 | `notify` | Caregiver alerts. ntfy by default. |
 | `store` | SQLite persistence and nightly summaries. |
-| `dashboard` | Caregiver web UI. Still a stub, see gotchas. |
+| `dashboard` | Caregiver UI for live status, history, profile, strategies, media, and zones. |
 
 Event schemas and the bus wrapper live in `shared/nc_shared`. `events.py`
 holds the pydantic models and the two-way registry mapping each event class
@@ -193,16 +193,18 @@ Bus(redis.Redis.from_url('redis://bus:6379')).publish(
 
 ## Gotchas
 
-`dashboard` on port 8444 serves the Zones editor (issue #10): draw the bed,
-door, and bathroom-path zones on a live frame from the room and save them to
+`dashboard` on port 8444 serves the caregiver pages, including the Zones
+editor (issue #10): draw the bed, door, and bathroom-path zones on a live frame and save them to
 `config/zones.yaml`. Every route needs HTTP Basic auth against
 `DASHBOARD_PASSWORD`; with that unset (the default in a fresh `.env`) every
 route answers 503 naming the variable rather than serving anything, camera
 frame included. Set `DASHBOARD_PASSWORD` and restart the container to use
 it. `perceive` only reads `zones.yaml` at startup, so a save here needs
-`docker compose restart perceive` before it takes effect. The rest of the
-dashboard (Tonight, History, Person profile, Strategies, System) is still a
-placeholder, not part of M0.
+`docker compose restart perceive` before it takes effect. Profile and strategy
+saves atomically replace their YAML under `config/`; restart `agent` after
+either change and `embodiment` after a strategy change. Photos and consented
+family voice clips are validated and stored under `data/`, never Redis. The
+System page remains a placeholder.
 
 `capture` needs OpenCV only for `CAPTURE_SOURCE=usb` or `rtsp`. The browser
 MVP source is the default and needs none of it, so the container does not

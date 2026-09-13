@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "dashboard"
 version = "0.1.0"
-description = "Night Companion caregiver dashboard: Tonight, History, and Zones"
+description = "Night Companion caregiver dashboard"
 requires-python = ">=3.12"
 dependencies = [
     "redis>=5.0",
@@ -13,13 +13,13 @@ dependencies = [
     "uvicorn[standard]>=0.29",
     "pyyaml>=6.0",
     "python-multipart>=0.0.9",
+    "pillow>=10.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest",
     "httpx",
-    "pillow>=10.0",
     "ruff",
 ]
 

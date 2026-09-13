@@ -195,6 +195,10 @@ services:
       DASHBOARD_PORT: ${DASHBOARD_PORT}
       DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD}
       ZONES_PATH: ${ZONES_PATH}
+      PERSON_PATH: ${PERSON_PATH:-/app/config/person.yaml}
+      STRATEGIES_PATH: ${STRATEGIES_PATH}
+      PHOTO_DIR: ${PHOTO_DIR}
+      VOICE_CLIP_DIR: ${VOICE_CLIP_DIR:-/app/data/voice-clips}
       DB_PATH: ${DB_PATH}
       TZ: ${TZ}
     ports:

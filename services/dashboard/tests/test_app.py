@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import io
 import json
+import wave
 
 import pytest
 from fastapi.testclient import TestClient
@@ -45,6 +46,9 @@ VALID_ZONES = {
         ("GET", "/zones"),
         ("GET", "/zones/frame.jpg"),
         ("GET", "/zones/current"),
+        ("GET", "/profile"),
+        ("GET", "/strategies"),
+        ("GET", "/media"),
         ("GET", "/static/style.css"),
         ("GET", "/static/script.js"),
         ("POST", "/zones"),
@@ -311,3 +315,120 @@ def test_an_ascii_password_still_authenticates_normally():
 
     assert client.get("/zones", auth=("caregiver", "correct horse")).status_code == 200
     assert client.get("/zones", auth=("caregiver", "wrong horse")).status_code == 401
+
+
+def test_profile_page_saves_caregiver_fields(tmp_path):
+    person_path = tmp_path / "person.yaml"
+    app = create_app(FakeBus(), password="secret123", person_path=person_path)
+    form = {
+        "name": "Jean",
+        "preferred_address": "Jeannie",
+        "caregiver_name": "Tom",
+        "caregiver_relationship": "son",
+        "night_themes": "Looks for work",
+        "calming_things": "Garden photo",
+        "things_to_avoid": "Urgent language",
+        "physical_notes": "Uses a walker",
+        "restroom_location": "Outside the door",
+    }
+
+    with TestClient(app) as client:
+        response = client.post("/profile", data=form, auth=("c", "secret123"))
+
+    assert response.status_code == 200
+    assert "Profile saved" in response.text
+    assert "Jean" in person_path.read_text()
+
+
+def test_strategy_page_renders_infinite_escalation_dwell_as_until_acknowledged(tmp_path):
+    strategies_path = tmp_path / "strategies.yaml"
+    strategies_path.write_text(
+        """strategies:
+  - id: escalate_phone
+    order: 10
+    enabled: true
+    dwell_seconds: .inf
+    cooldown_seconds: 0
+    intrusiveness: 5
+    face: speaking
+    brightness: 0.7
+    headline: Someone is coming to help
+    body: ''
+    say: Someone is coming to help.
+"""
+    )
+    app = create_app(FakeBus(), password="secret123", strategies_path=strategies_path)
+
+    with TestClient(app) as client:
+        response = client.get("/strategies", auth=("c", "secret123"))
+
+    assert response.status_code == 200
+    assert "Until acknowledged" in response.text
+    hidden = 'type="hidden" name="escalate_phone__dwell_seconds" value="inf"'
+    assert hidden in response.text
+
+
+def test_media_page_uploads_validated_photo_and_voice_clip(tmp_path):
+    photo = io.BytesIO()
+    Image.new("RGB", (4, 4), "blue").save(photo, format="PNG")
+    voice = io.BytesIO()
+    with wave.open(voice, "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(16000)
+        audio.writeframes(b"\0\0" * 1600)
+    app = create_app(
+        FakeBus(),
+        password="secret123",
+        photo_dir=tmp_path / "photos",
+        voice_clip_dir=tmp_path / "voice",
+    )
+
+    with TestClient(app) as client:
+        photo_response = client.post(
+            "/media/photo",
+            files={"upload": ("Family.png", photo.getvalue(), "image/png")},
+            auth=("c", "secret123"),
+        )
+        voice_response = client.post(
+            "/media/voice",
+            files={"upload": ("Tom.wav", voice.getvalue(), "audio/wav")},
+            auth=("c", "secret123"),
+        )
+
+    assert photo_response.status_code == voice_response.status_code == 200
+    assert (tmp_path / "photos" / "family.png").exists()
+    assert (tmp_path / "voice" / "tom.wav").exists()
+
+
+def test_media_upload_rejects_spoofed_file_content(tmp_path):
+    app = create_app(FakeBus(), password="secret123", photo_dir=tmp_path)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/media/photo",
+            files={"upload": ("looks-safe.png", b"not an image", "image/png")},
+            auth=("c", "secret123"),
+        )
+
+    assert response.status_code == 400
+    assert not list(tmp_path.iterdir())
+
+
+def test_new_settings_routes_require_authentication(tmp_path):
+    app = create_app(
+        FakeBus(),
+        password="secret123",
+        person_path=tmp_path / "person.yaml",
+        strategies_path=tmp_path / "strategies.yaml",
+        photo_dir=tmp_path / "photos",
+        voice_clip_dir=tmp_path / "voice",
+    )
+
+    with TestClient(app) as client:
+        assert client.post("/profile", data={"name": "Jean"}).status_code == 401
+        assert client.post("/strategies", data={}).status_code == 401
+        photo = {"upload": ("photo.png", b"bad", "image/png")}
+        voice = {"upload": ("voice.wav", b"bad", "audio/wav")}
+        assert client.post("/media/photo", files=photo).status_code == 401
+        assert client.post("/media/voice", files=voice).status_code == 401

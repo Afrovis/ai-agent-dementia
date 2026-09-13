@@ -156,6 +156,15 @@ complete. `embodiment` forwards it to the browser, which immediately stops the
 current `Say` only when `interruptible=True` and switches the face to listening.
 The browser requests hardware/OS echo cancellation; there is no software AEC.
 
+Issues #22 and #23 implement the caregiver dashboard's Tonight, History,
+Profile, Strategies, Media, and Zones pages. Profile and strategy edits are
+validated and atomically written to `config/person.yaml` and
+`config/strategies.yaml`; the agent processes reload them at startup rather
+than watching files. Photo uploads are validated JPEG/PNG/WebP files under
+`PHOTO_DIR`. Family voice uploads are explicit, consent-labelled, validated
+PCM WAV files under `VOICE_CLIP_DIR`; they are not bus events and playback is
+not implemented yet. Upload bytes and profile text are never logged.
+
 ## 7. Strategy catalogue
 
 Implement in this order. Numbers match `PLAN.md` section 5.3.
@@ -167,7 +176,7 @@ Implement in this order. Numbers match `PLAN.md` section 5.3.
 | 3 | `orient_time_place` | room photo behind face | place and time template | 30 s | implemented, issue #14 |
 | 4 | `validate_and_redirect` | face listening | composed from utterance | 20 s | implemented, issues #14/#15/#16 -- local structured composition with the full person profile, deterministically validated, with the caregiver template as the failure fallback |
 | 5 | `guided_return` | brightness 0.7, bed direction text | step template | 30 s | implemented, issue #14 |
-| 6 | `familiar_voice` | family photo | plays uploaded clip | clip length + 15 s | not implemented -- needs a caregiver voice-clip upload path that does not exist yet |
+| 6 | `familiar_voice` | family photo | plays uploaded clip | clip length + 15 s | not implemented -- issue #23 provides the consented local WAV upload path; playback and selection still need implementation |
 | 7 | `music_or_story` | dim, photo | plays track | track length | not implemented -- needs a caregiver track-upload path that does not exist yet |
 | 8 | `path_light` | bathroom direction | one sentence | restroom goal | implemented, issue #21 -- goal-specific rather than part of the ordinary ladder; `light` controls a feature-flagged local Shelly plug |
 | 10 | `escalate_phone` | dim clock | "Someone is coming to help." | until `Ack` | implemented, issue #14 -- selected unconditionally on entering `ESCALATED` and stays selected; see `agent.strategies.StrategyEngine.force` |
