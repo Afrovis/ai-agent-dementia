@@ -1,5 +1,7 @@
 FROM python:3.12-slim
 
+ARG INSTALL_VIDEO_EVAL=false
+
 WORKDIR /app
 
 COPY shared/ /app/shared/
@@ -13,6 +15,14 @@ COPY services/perceive/ /app/services/perceive/
 # needs neither.
 RUN pip install --no-cache-dir -e /app/shared \
     && pip install --no-cache-dir -e "/app/services/perceive[mediapipe]"
+
+# The deployment image stays focused on `perceive`; evaluation installs the
+# offline CLI and capture's real MotionGate only when explicitly requested.
+COPY services/capture/ /app/services/capture/
+COPY tools/video_eval/ /app/tools/video_eval/
+RUN if [ "$INSTALL_VIDEO_EVAL" = "true" ]; then \
+        pip install --no-cache-dir -e /app/services/capture -e /app/tools/video_eval; \
+    fi
 
 WORKDIR /app/services/perceive
 
