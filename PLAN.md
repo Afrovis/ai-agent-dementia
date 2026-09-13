@@ -1,6 +1,25 @@
 # Night Companion: an embodied agent for night-time reorientation
 
-Status: design plan, v0.1 (2026-09-08)
+Status: implementation in progress, v0.1 (updated 2026-09-13)
+
+Progress through 2026-09-13:
+
+- M5 issues #48 and #49 are implemented on branches `issue-48-pin-mediapipe`
+  and `issue-49-video-eval-prepare-predict`.
+- The perceive MediaPipe extra is pinned to `>=0.10,<1.0`; the slim image
+  includes the OpenCV runtime libraries required to construct the backend.
+- `tools/video_eval` now provides idempotent `prepare` and offline `predict`
+  commands, including squash/letterbox bridge frames, provenance metadata,
+  private-root indexing, MotionGate replay, zones, StateTracker hysteresis,
+  and backend timing records.
+- The local bedroom sample produced 488 review frames and 488 frames in each
+  bridge variant. A real pinned-MediaPipe run completed in 9.3 seconds over
+  488 frames (466 backend calls, 22 gate drops); no images or derived data are
+  committed here.
+- Remaining M5 work: blur/sheets/labellers (#50), reconcile/score/replay (#51),
+  and the evidence-based bridge aspect-ratio decision and fix (#52). The
+  sample has no caregiver-authored zones or confirmed reference timeline yet,
+  so state accuracy and end-to-end replay remain pending.
 
 ## 1. Purpose
 
@@ -277,8 +296,9 @@ Before any real use:
 - Dry run.
 
 ### Milestone 5: Recorded-video evaluation (after the dry-run prep)
-- Fix the three defects found on 2026-09-13: `mediapipe>=0.10` now resolves to 1.0 which dropped `mediapipe.solutions`; the bridge canvas squashes 16:9 to 4:3; the running stack is a stale worktree build.
-- `tools/video_eval/` CLI: prepare, predict, blur, sheets, label-local, label-codex, reconcile, score, replay, as specified in `docs/VIDEO_EVAL.md`.
+- [x] Fix the MediaPipe dependency defect: pin `mediapipe>=0.10,<1.0` and install the slim-image runtime libraries needed by OpenCV.
+- [x] Build the first `tools/video_eval/` CLI stage: `prepare` and `predict`, as specified in `docs/VIDEO_EVAL.md`.
+- [ ] Build `blur`, `sheets`, `label-local`, `label-codex`, `reconcile`, `score`, and `replay` (#50 and #51).
 - Fill in perception bench tier 3 so confirmed clips score in `python -m perception_bench`.
 - Run the backend, squash vs letterbox, resolution, hysteresis and gate experiments on the RGB clips and decide the bridge fix and the pose backend with numbers.
 - Record the scenario set in section 8 of `docs/VIDEO_EVAL.md` in RGB; infrared clips are a later round.
