@@ -1,11 +1,12 @@
-"""FastAPI application for the caregiver dashboard (issues #10 and #22).
+"""FastAPI application for the caregiver dashboard (issues #10, #22, and #23).
 
 The dashboard's first real page is the Zones editor: PLAN.md section 6.2
 ("the bed zone, door zone, and bathroom-direction zone are drawn once in
 the dashboard on a daylight frame") and section 9 ("Zones (draw bed and
 door zones)"). Everything else on PLAN.md section 9's page list (Tonight,
 History, Person profile, Strategies, System) is extended by issue #22 with
-Tonight, retained per-night History, and caregiver acknowledgement.
+Tonight, retained per-night History, and caregiver acknowledgement. Issue #23
+adds profile and strategy editing plus local photo and family-voice uploads.
 
 Two things make this route more sensitive than the rest of the dashboard
 will be, so they are both non-negotiable here rather than left for later:
@@ -40,19 +41,32 @@ import asyncio
 import html
 import json
 import logging
+import math
 import re
 import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Form, HTTPException
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from nc_shared.events import Ack
 
 from dashboard.history import current_night_key, format_night_label, load_nights
 from dashboard.live import LiveSnapshot, LiveState, consume_live_once
+from dashboard.settings_store import (
+    MAX_PHOTO_BYTES,
+    MAX_VOICE_BYTES,
+    PROFILE_LIST_FIELDS,
+    list_media,
+    load_profile_document,
+    load_strategy_document,
+    save_photo,
+    save_profile_document,
+    save_strategy_document,
+    save_voice_clip,
+)
 from dashboard.zones_store import load_existing_zones, save_zones, validate_zones
 
 SERVICE_NAME = "dashboard"
@@ -63,6 +77,10 @@ CONSUMER = "dashboard-1"
 
 STATIC_DIR = Path(__file__).parent / "static"
 DEFAULT_DB_PATH = "data/night.db"
+DEFAULT_PERSON_PATH = "config/person.yaml"
+DEFAULT_STRATEGIES_PATH = "config/strategies.yaml"
+DEFAULT_PHOTO_DIR = "data/photos"
+DEFAULT_VOICE_CLIP_DIR = "data/voice-clips"
 NOTIFY_ID_RE = re.compile(r"^[0-9]+-[0-9]+$")
 
 logging.basicConfig(level=logging.INFO)
@@ -189,6 +207,9 @@ def _page(title: str, content: str, *, active: str) -> str:
         for name, label, path in (
             ("tonight", "Tonight", "/tonight"),
             ("history", "History", "/history"),
+            ("profile", "Profile", "/profile"),
+            ("strategies", "Strategies", "/strategies"),
+            ("media", "Media", "/media"),
             ("zones", "Zones", "/zones"),
         )
     )
@@ -280,6 +301,149 @@ def _render_live(snapshot: LiveSnapshot, night, timezone: str, *, ack_message: s
 <a href="/history">All nights</a></div>{_render_timeline(events, timezone)}</section>"""
 
 
+def _field(label: str, name: str, value: object, *, textarea: bool = False) -> str:
+    escaped = html.escape(str(value or ""), quote=True)
+    if textarea:
+        control = f'<textarea id="{name}" name="{name}" rows="4">{escaped}</textarea>'
+    else:
+        control = f'<input id="{name}" name="{name}" value="{escaped}" maxlength="500">'
+    return f'<label for="{name}"><span>{html.escape(label)}</span>{control}</label>'
+
+
+def _render_profile(profile: dict, message: str = "") -> str:
+    caregiver = profile.get("caregiver", {})
+    notice = f'<p class="success" role="status">{html.escape(message)}</p>' if message else ""
+    list_labels = {
+        "night_themes": "Recurring night-time themes (one per line)",
+        "calming_things": "What helps (one per line)",
+        "things_to_avoid": "Things to avoid (one per line)",
+        "physical_notes": "Physical notes (one per line)",
+    }
+    list_fields = "".join(
+        _field(list_labels[name], name, "\n".join(profile.get(name, [])), textarea=True)
+        for name in PROFILE_LIST_FIELDS
+    )
+    restroom_field = _field(
+        "Restroom location from the bed",
+        "restroom_location",
+        profile.get("restroom_location"),
+        textarea=True,
+    )
+    return f"""<h1>Person profile</h1>
+<p>These details stay on this device and shape every local model prompt and caregiver phrase.</p>
+{notice}<form class="settings-form" method="post" action="/profile">
+<div class="form-grid">{_field("Name", "name", profile.get("name"))}
+{_field("Preferred form of address", "preferred_address", profile.get("preferred_address"))}
+{_field("Caregiver name", "caregiver_name", caregiver.get("name"))}
+{_field("Caregiver relationship", "caregiver_relationship", caregiver.get("relationship"))}</div>
+{list_fields}{restroom_field}
+<button type="submit">Save profile</button></form>
+<p class="restart-note">The <strong>agent</strong> service reads this profile at startup;
+restart it after saving.</p>"""
+
+
+def _render_strategies(strategies: list[dict], message: str = "") -> str:
+    notice = f'<p class="success" role="status">{html.escape(message)}</p>' if message else ""
+    cards = []
+    for strategy in strategies:
+        strategy_id = str(strategy["id"])
+        prefix = f"{strategy_id}__"
+        checked = " checked" if strategy.get("enabled", True) else ""
+        face_options = []
+        for face in ("asleep", "awake", "speaking", "listening"):
+            selected = " selected" if strategy.get("face") == face else ""
+            face_options.append(f'<option value="{face}"{selected}>{face}</option>')
+        values = {
+            "order": strategy.get("order", ""),
+            "dwell_seconds": strategy.get("dwell_seconds", ""),
+            "cooldown_seconds": strategy.get("cooldown_seconds", ""),
+            "intrusiveness": strategy.get("intrusiveness", ""),
+            "brightness": strategy.get("brightness", ""),
+            "headline": strategy.get("headline", ""),
+            "body": strategy.get("body", ""),
+            "say": strategy.get("say", "") or "",
+            "photo_id": strategy.get("photo_id", "") or "",
+        }
+        numeric_fields = (
+            ("order", "Order", 'min="1" max="100" step="1" required'),
+            ("dwell_seconds", "Dwell seconds", 'min="8" step="1" required'),
+            ("cooldown_seconds", "Cooldown seconds", 'min="0" step="1" required'),
+            ("intrusiveness", "Intrusiveness", 'min="1" max="5" step="1" required'),
+            ("brightness", "Brightness", 'min="0" max="1" step="0.1" required'),
+        )
+        numeric_parts = []
+        for name, field_label, attrs in numeric_fields:
+            value = values[name]
+            if name == "dwell_seconds" and isinstance(value, float) and math.isinf(value):
+                numeric_parts.append(
+                    f'<input type="hidden" name="{prefix}{name}" value="inf">'
+                    "<label><span>Dwell</span><strong>Until acknowledged</strong></label>"
+                )
+                continue
+            numeric_parts.append(
+                f'<label><span>{html.escape(field_label)}</span><input type="number" '
+                f'name="{prefix}{name}" value="{html.escape(str(value), quote=True)}" '
+                f"{attrs}></label>"
+            )
+        numeric = "".join(numeric_parts)
+        text_fields = "".join(
+            _field(label, prefix + name, values[name], textarea=name in {"body", "say"})
+            for name, label in (
+                ("headline", "Headline"),
+                ("body", "Body"),
+                ("say", "Spoken sentence (blank for silence)"),
+                ("photo_id", "Photo ID"),
+            )
+        )
+        label = html.escape(strategy_id.replace("_", " ").title())
+        enabled = (
+            f'<label class="toggle"><input type="checkbox" name="{prefix}enabled"'
+            f"{checked}> Enabled</label>"
+        )
+        face_select = (
+            f'<label><span>Face</span><select name="{prefix}face">'
+            f"{''.join(face_options)}</select></label>"
+        )
+        cards.append(
+            f'<fieldset class="strategy-card"><legend>{label}</legend>{enabled}'
+            f'<div class="strategy-numbers">{numeric}{face_select}</div>'
+            f"{text_fields}</fieldset>"
+        )
+    return f"""<h1>Strategies</h1>
+<p>Lower order numbers run first. Spoken text is checked against the one-sentence
+safety rules before it can be saved.</p>
+{notice}<form class="settings-form" method="post" action="/strategies">{"".join(cards)}
+<button type="submit">Save strategies</button></form>
+<p class="restart-note">Restart <strong>agent</strong> and <strong>embodiment</strong>
+after saving so both reload the catalogue.</p>"""
+
+
+def _render_media(photos: list[dict], clips: list[dict], message: str = "") -> str:
+    notice = f'<p class="success" role="status">{html.escape(message)}</p>' if message else ""
+
+    def items(values: list[dict]) -> str:
+        if not values:
+            return '<p class="empty">Nothing uploaded yet.</p>'
+        return '<ul class="media-list">' + "".join(_media_item(item) for item in values) + "</ul>"
+
+    def _media_item(item: dict) -> str:
+        media_id = html.escape(str(item["id"]))
+        size_kb = int(item["bytes"]) // 1024
+        return f"<li><code>{media_id}</code><span>{size_kb} KB</span></li>"
+
+    return f"""<h1>Media</h1><p>Uploads remain on this device. Use a photo ID on the
+Strategies page.</p>{notice}
+<div class="media-grid"><section><h2>Photos</h2><p>JPEG, PNG, or WebP; up to 10 MB.</p>
+<form class="upload-form" method="post" action="/media/photo" enctype="multipart/form-data">
+<input type="file" name="upload" accept="image/jpeg,image/png,image/webp" required>
+<button type="submit">Upload photo</button></form>{items(photos)}</section>
+<section><h2>Family voice clips</h2><p>Uncompressed WAV, up to 3 minutes and 25 MB.
+Upload only with the speaker’s consent; Night Companion never clones voices.</p>
+<form class="upload-form" method="post" action="/media/voice" enctype="multipart/form-data">
+<input type="file" name="upload" accept="audio/wav" required>
+<button type="submit">Upload voice clip</button></form>{items(clips)}</section></div>"""
+
+
 def check_auth(password: str | None, credentials: HTTPBasicCredentials | None) -> None:
     """Raise the right `HTTPException` for `password`/`credentials`, or return.
 
@@ -320,6 +484,10 @@ def create_app(
     zones_path: str | Path | None = None,
     db_path: str | Path = DEFAULT_DB_PATH,
     timezone: str = "UTC",
+    person_path: str | Path = DEFAULT_PERSON_PATH,
+    strategies_path: str | Path = DEFAULT_STRATEGIES_PATH,
+    photo_dir: str | Path = DEFAULT_PHOTO_DIR,
+    voice_clip_dir: str | Path = DEFAULT_VOICE_CLIP_DIR,
 ) -> FastAPI:
     """Build the FastAPI app, wiring `bus` into the frame-consuming background task.
 
@@ -366,6 +534,10 @@ def create_app(
     app.state.zones_path = zones_path
     app.state.db_path = db_path
     app.state.timezone = timezone
+    app.state.person_path = Path(person_path)
+    app.state.strategies_path = Path(strategies_path)
+    app.state.photo_dir = Path(photo_dir)
+    app.state.voice_clip_dir = Path(voice_clip_dir)
 
     def auth_dependency(
         credentials: HTTPBasicCredentials | None = Depends(_security),
@@ -467,6 +639,100 @@ def create_app(
             f"{_render_timeline(night.events, app.state.timezone)}"
         )
         return HTMLResponse(_page(format_night_label(night.key), content, active="history"))
+
+    @app.get("/profile", response_class=HTMLResponse)
+    async def profile_page(_: None = Depends(auth_dependency)) -> HTMLResponse:
+        return HTMLResponse(
+            _page(
+                "Person profile",
+                _render_profile(load_profile_document(app.state.person_path)),
+                active="profile",
+            )
+        )
+
+    @app.post("/profile", response_class=HTMLResponse)
+    async def profile_save(request: Request, _: None = Depends(auth_dependency)) -> HTMLResponse:
+        form = await request.form()
+        try:
+            target = save_profile_document(app.state.person_path, form)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        _log("saved person profile", path=str(target))
+        return HTMLResponse(
+            _page(
+                "Person profile",
+                _render_profile(load_profile_document(target), "Profile saved."),
+                active="profile",
+            )
+        )
+
+    @app.get("/strategies", response_class=HTMLResponse)
+    async def strategies_page(_: None = Depends(auth_dependency)) -> HTMLResponse:
+        return HTMLResponse(
+            _page(
+                "Strategies",
+                _render_strategies(load_strategy_document(app.state.strategies_path)),
+                active="strategies",
+            )
+        )
+
+    @app.post("/strategies", response_class=HTMLResponse)
+    async def strategies_save(request: Request, _: None = Depends(auth_dependency)) -> HTMLResponse:
+        form = await request.form()
+        current = load_strategy_document(app.state.strategies_path)
+        if not current:
+            raise HTTPException(status_code=503, detail="strategy catalogue is unavailable")
+        try:
+            target = save_strategy_document(app.state.strategies_path, current, form)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        _log("saved strategy catalogue", path=str(target), strategy_count=len(current))
+        return HTMLResponse(
+            _page(
+                "Strategies",
+                _render_strategies(load_strategy_document(target), "Strategies saved."),
+                active="strategies",
+            )
+        )
+
+    def media_content(message: str = "") -> str:
+        photos = list_media(app.state.photo_dir, frozenset({".jpg", ".jpeg", ".png", ".webp"}))
+        clips = list_media(app.state.voice_clip_dir, frozenset({".wav"}))
+        return _render_media(photos, clips, message)
+
+    @app.get("/media", response_class=HTMLResponse)
+    async def media_page(_: None = Depends(auth_dependency)) -> HTMLResponse:
+        return HTMLResponse(_page("Media", media_content(), active="media"))
+
+    @app.post("/media/photo", response_class=HTMLResponse)
+    async def photo_upload(upload: UploadFile, _: None = Depends(auth_dependency)) -> HTMLResponse:
+        content = await upload.read(MAX_PHOTO_BYTES + 1)
+        try:
+            media_id, target = save_photo(app.state.photo_dir, upload.filename or "photo", content)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        _log("saved caregiver photo", photo_id=media_id, bytes=len(content), path=str(target))
+        return HTMLResponse(
+            _page("Media", media_content(f'Photo uploaded with ID "{media_id}".'), active="media")
+        )
+
+    @app.post("/media/voice", response_class=HTMLResponse)
+    async def voice_upload(upload: UploadFile, _: None = Depends(auth_dependency)) -> HTMLResponse:
+        content = await upload.read(MAX_VOICE_BYTES + 1)
+        try:
+            media_id, target = save_voice_clip(
+                app.state.voice_clip_dir, upload.filename or "voice-clip.wav", content
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        _log("saved family voice clip", clip_id=media_id, bytes=len(content), path=str(target))
+        return HTMLResponse(
+            _page(
+                "Media",
+                media_content(f'Voice clip uploaded with ID "{media_id}".'),
+                active="media",
+            )
+        )
 
     @app.get("/zones", response_class=HTMLResponse)
     async def zones_page(_: None = Depends(auth_dependency)) -> HTMLResponse:

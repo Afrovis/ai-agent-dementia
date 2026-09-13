@@ -1,7 +1,7 @@
-"""Entry point for the `dashboard` service (issues #10 and #22).
+"""Entry point for the `dashboard` service (issues #10, #22, and #23).
 
 Caregiver web dashboard (HANDOFF.md section 4). Tonight and History join the
-Zones editor in issue #22; profile, strategies, and system settings follow.
+Zones editor in issue #22; issue #23 adds profile, strategies, and media.
 
 `DashboardConfig.from_env` reads `DASHBOARD_PASSWORD` and `ZONES_PATH`.
 `DASHBOARD_PASSWORD` is required for the app to serve anything but 503s
@@ -42,6 +42,10 @@ class DashboardConfig:
     port: int = 8444
     password: str | None = None
     zones_path: str | None = None
+    person_path: str = "/app/config/person.yaml"
+    strategies_path: str = "/app/config/strategies.yaml"
+    photo_dir: str = "/app/data/photos"
+    voice_clip_dir: str = "/app/data/voice-clips"
     db_path: str = "/app/data/night.db"
     timezone: str = "UTC"
 
@@ -56,6 +60,10 @@ class DashboardConfig:
             # fail closed the same way a genuinely unset variable does.
             password=env.get("DASHBOARD_PASSWORD") or None,
             zones_path=env.get("ZONES_PATH") or None,
+            person_path=env.get("PERSON_PATH") or "/app/config/person.yaml",
+            strategies_path=env.get("STRATEGIES_PATH") or "/app/config/strategies.yaml",
+            photo_dir=env.get("PHOTO_DIR") or "/app/data/photos",
+            voice_clip_dir=env.get("VOICE_CLIP_DIR") or "/app/data/voice-clips",
             db_path=env.get("DB_PATH") or "/app/data/night.db",
             timezone=env.get("TZ") or "UTC",
         )
@@ -82,6 +90,10 @@ def run() -> None:
             zones_path=config.zones_path,
             db_path=config.db_path,
             timezone=config.timezone,
+            person_path=config.person_path,
+            strategies_path=config.strategies_path,
+            photo_dir=config.photo_dir,
+            voice_clip_dir=config.voice_clip_dir,
         )
     except ValueError as exc:
         # A password HTTP Basic cannot carry. Fail loudly with the reason

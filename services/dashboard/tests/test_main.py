@@ -12,6 +12,10 @@ def test_from_env_uses_defaults_when_nothing_is_set():
     assert config.port == 8444
     assert config.password is None
     assert config.zones_path is None
+    assert config.person_path == "/app/config/person.yaml"
+    assert config.strategies_path == "/app/config/strategies.yaml"
+    assert config.photo_dir == "/app/data/photos"
+    assert config.voice_clip_dir == "/app/data/voice-clips"
     assert config.db_path == "/app/data/night.db"
     assert config.timezone == "UTC"
 
@@ -22,6 +26,10 @@ def test_from_env_reads_configured_values():
             "DASHBOARD_PORT": "9000",
             "DASHBOARD_PASSWORD": "hunter2",
             "ZONES_PATH": "/app/config/zones.yaml",
+            "PERSON_PATH": "/app/config/person-custom.yaml",
+            "STRATEGIES_PATH": "/app/config/strategies-custom.yaml",
+            "PHOTO_DIR": "/app/data/family-photos",
+            "VOICE_CLIP_DIR": "/app/data/family-voice",
             "DB_PATH": "/app/data/custom.db",
             "TZ": "America/New_York",
         }
@@ -30,6 +38,10 @@ def test_from_env_reads_configured_values():
     assert config.port == 9000
     assert config.password == "hunter2"
     assert config.zones_path == "/app/config/zones.yaml"
+    assert config.person_path == "/app/config/person-custom.yaml"
+    assert config.strategies_path == "/app/config/strategies-custom.yaml"
+    assert config.photo_dir == "/app/data/family-photos"
+    assert config.voice_clip_dir == "/app/data/family-voice"
     assert config.db_path == "/app/data/custom.db"
     assert config.timezone == "America/New_York"
 
