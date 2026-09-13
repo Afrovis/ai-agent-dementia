@@ -68,6 +68,26 @@ def build_parser() -> argparse.ArgumentParser:
     codex.add_argument("--clip", required=True)
     codex.add_argument("--model")
     codex.add_argument("--force", action="store_true")
+
+    reconcile = commands.add_parser("reconcile", help="build or confirm reference labels")
+    reconcile.add_argument("--clip", required=True)
+    reconcile.add_argument("--walk-threshold", type=float, default=None)
+    reconcile.add_argument("--confirm", action="store_true")
+    reconcile.add_argument("--by", help="name recorded in a confirmed reference")
+    reconcile.add_argument("--force", action="store_true")
+
+    score = commands.add_parser("score", help="score predictions against a confirmed reference")
+    score.add_argument("--clip", required=True)
+    score.add_argument("--tag", help="one prediction tag (default: every tag)")
+    score.add_argument("--force", action="store_true")
+
+    replay = commands.add_parser("replay", help="replay bridge frames through Docker Compose")
+    replay.add_argument("--clip", required=True)
+    replay.add_argument("--tag", required=True, help="offline prediction tag to compare")
+    replay.add_argument("--variant", choices=("squash", "letterbox"), default="squash")
+    replay.add_argument("--speed", type=float, default=1.0)
+    replay.add_argument("--settle-seconds", type=float, default=5.0)
+    replay.add_argument("--force", action="store_true")
     return parser
 
 
@@ -128,10 +148,39 @@ def main(argv: list[str] | None = None) -> int:
             motion_threshold=args.motion_threshold,
             force=args.force,
         )
-    else:
+    elif args.command == "label-codex":
         from video_eval.label_codex import label_codex
 
         result = label_codex(args.clip, root=args.data_root, model=args.model, force=args.force)
+    elif args.command == "reconcile":
+        from video_eval.reconcile import WALK_THRESHOLD, reconcile_clip
+
+        result = reconcile_clip(
+            args.clip,
+            root=args.data_root,
+            force=args.force,
+            confirm=args.confirm,
+            confirmer=args.by,
+            walk_threshold=(
+                args.walk_threshold if args.walk_threshold is not None else WALK_THRESHOLD
+            ),
+        )
+    elif args.command == "score":
+        from video_eval.score import score_clip
+
+        result = score_clip(args.clip, root=args.data_root, tag=args.tag, force=args.force)
+    else:
+        from video_eval.replay import replay_clip
+
+        result = replay_clip(
+            args.clip,
+            root=args.data_root,
+            tag=args.tag,
+            variant=args.variant,
+            speed=args.speed,
+            settle_seconds=args.settle_seconds,
+            force=args.force,
+        )
     print(json.dumps(result, sort_keys=True))
     return 0
 

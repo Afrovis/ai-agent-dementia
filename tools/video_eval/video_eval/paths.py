@@ -55,3 +55,11 @@ class EvalPaths:
     @property
     def labels(self) -> Path:
         return self.clip / "labels"
+
+    @property
+    def reports(self) -> Path:
+        return self.clip / "reports"
+
+    @property
+    def e2e(self) -> Path:
+        return self.clip / "e2e"

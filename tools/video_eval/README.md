@@ -11,7 +11,7 @@ Install the tool with the real capture and perceive packages:
 python -m venv .venv-video-eval
 .venv-video-eval/bin/pip install \
   -e shared -e services/capture -e 'services/perceive[mediapipe,yolo]' \
-  -e 'tools/video_eval[dev]'
+  -e tests/perception_bench -e 'tools/video_eval[dev]'
 ```
 
 Prepare the squash and letterbox variants, then run offline prediction:
@@ -44,6 +44,27 @@ and allow the Codex labeller to run:
 .venv-video-eval/bin/python -m video_eval sheets \
   --clip 2026-09-13_sample --confirm-reviewed
 .venv-video-eval/bin/python -m video_eval label-codex --clip 2026-09-13_sample
+```
+
+Reconcile both labellers with the scenario card, inspect the draft and every
+local path in the disagreement report, then explicitly confirm it. Scoring
+refuses to use an unconfirmed draft:
+
+```sh
+.venv-video-eval/bin/python -m video_eval reconcile --clip 2026-09-13_sample
+.venv-video-eval/bin/python -m video_eval reconcile \
+  --clip 2026-09-13_sample --confirm --by "Recorder name"
+.venv-video-eval/bin/python -m video_eval score --clip 2026-09-13_sample
+```
+
+After choosing one offline prediction tag, run the same bridge frames through
+a freshly rebuilt live stack. This forces an always-active night window,
+disables scene-note vision, records the retained output streams, removes raw
+frame streams, and stops the stack even if replay fails:
+
+```sh
+.venv-video-eval/bin/python -m video_eval replay \
+  --clip 2026-09-13_sample --tag mediapipe-squash-0123abcd-g
 ```
 
 `label-local` defaults to adaptive sampling with `qwen3-vl:8b`; use `--fast`

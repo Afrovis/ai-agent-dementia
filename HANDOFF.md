@@ -197,6 +197,14 @@ visible. This is an evaluation-only override of rule 4 and must not be used for
 real care; follow `docs/DRY_RUN.md`, and return the flag to `false` before a
 supervised pilot.
 
+Issue #51 implements the private video-evaluation `reconcile`, `score`, and
+`replay` stages. Reference timelines are never scored before an explicit human
+confirmation stamp. Reports include exact and upright-collapsed frame metrics,
+detection and event metrics, and explicit measured/met/not-measurable PLAN.md
+gates. End-to-end replay rebuilds the checkout, uses an always-on night window,
+retains only non-frame bus outputs, and cleans capped frame streams and the
+ephemeral stack afterward.
+
 ## 7. Strategy catalogue
 
 Implement in this order. Numbers match `PLAN.md` section 5.3.
