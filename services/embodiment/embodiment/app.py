@@ -256,8 +256,13 @@ def publish_frame(bus, message: dict, session_id: str | None = None) -> RawFrame
     try:
         width = int(message["width"])
         height = int(message["height"])
+        source_width = int(message["source_width"])
+        source_height = int(message["source_height"])
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"malformed frame message: {exc}") from exc
+
+    if min(width, height, source_width, source_height) <= 0:
+        raise ValueError("malformed frame message: dimensions must be positive")
 
     event = RawFrame(
         source=SERVICE_NAME,
@@ -265,6 +270,8 @@ def publish_frame(bus, message: dict, session_id: str | None = None) -> RawFrame
         jpeg=jpeg,
         width=width,
         height=height,
+        source_width=source_width,
+        source_height=source_height,
         source_kind="browser",
     )
     bus.publish(event, maxlen=CAPPED_MAXLEN["frames_raw"])
@@ -402,7 +409,8 @@ def create_app(
         """Receive captured webcam frames and mic audio from the browser.
 
         The browser sends JSON text messages shaped as
-        `{"type": "frame", "jpeg_b64": ..., "width": ..., "height": ...}` or
+        `{"type": "frame", "jpeg_b64": ..., "width": ..., "height": ...,
+        "source_width": ..., "source_height": ...}` or
         `{"type": "audio", "pcm16_b64": ..., "sample_rate": 16000}`. Each is
         published onto the bus as a `RawFrame`/`AudioChunk` event; a malformed
         or unrecognised message is logged and skipped, not fatal to the

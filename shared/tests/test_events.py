@@ -33,12 +33,16 @@ def test_frame_roundtrip():
         jpeg=b"\xff\xd8\xff\xe0not-really-a-jpeg",
         width=640,
         height=480,
+        source_width=1920,
+        source_height=1080,
         source_kind="browser",
     )
     copy = _roundtrip(event)
     assert copy.jpeg == event.jpeg
     assert copy.width == 640
     assert copy.height == 480
+    assert copy.source_width == 1920
+    assert copy.source_height == 1080
     assert copy.source_kind == "browser"
     assert copy.session_id is None
     assert copy.ts == event.ts

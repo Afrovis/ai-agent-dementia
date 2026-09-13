@@ -81,8 +81,8 @@ All events are pydantic models in `shared/nc_shared/events.py`, serialised as JS
 
 | Stream | Event | Producer | Key fields |
 |---|---|---|---|
-| `frames_raw` | `RawFrame` | `embodiment` (browser bridge) | `jpeg: bytes`, `width`, `height`, `source_kind: browser or usb or rtsp`. Ungated, pre-motion-gate frames. Only the browser source goes over the bus; `capture`'s own USB/RTSP cameras are read in-process and never reach this stream. Never persisted. Short retention (`MAXLEN ~ 50`). |
-| `frames` | `Frame` | `capture` | `jpeg: bytes`, `width`, `height`, `source_kind: browser or usb or rtsp`. `capture` is the sole producer: it reads `frames_raw` (browser) or its camera directly (USB/RTSP), applies the motion gate, and republishes what it admits here. Short retention (`MAXLEN ~ 50`). |
+| `frames_raw` | `RawFrame` | `embodiment` (browser bridge) | `jpeg: bytes`, encoded `width`/`height`, intrinsic `source_width`/`source_height` (nullable for old replays), `source_kind: browser or usb or rtsp`. Ungated, pre-motion-gate frames. Only the browser source goes over the bus; `capture`'s own USB/RTSP cameras are read in-process and never reach this stream. Never persisted. Short retention (`MAXLEN ~ 50`). |
+| `frames` | `Frame` | `capture` | `jpeg: bytes`, encoded `width`/`height`, intrinsic `source_width`/`source_height` (nullable for old replays), `source_kind: browser or usb or rtsp`. `capture` is the sole producer: it reads `frames_raw` (browser) or its camera directly (USB/RTSP), applies the motion gate, and republishes what it admits here. Short retention (`MAXLEN ~ 50`). |
 | `person` | `PersonState` | `perceive` | `state: in_bed, sitting_up, standing, walking, on_floor, absent`, `confidence`, `zone: bed, door, bathroom_path, other`, `scene_note: str or None` |
 | `speech_in` | `SpeechStarted`, `Utterance` | `listen` | onset: no payload beyond base fields; utterance: `text`, `confidence`, `duration_s` |
 | `session` | `SessionState` | `agent` | `phase: IDLE, OBSERVING, ENGAGED, COOLDOWN, ESCALATED`, `goal`, `strategy_index` |
@@ -204,6 +204,12 @@ detection and event metrics, and explicit measured/met/not-measurable PLAN.md
 gates. End-to-end replay rebuilds the checkout, uses an always-on night window,
 retains only non-frame bus outputs, and cleans capped frame streams and the
 ephemeral stack afterward.
+
+Issue #52 resolves the browser bridge's aspect-ratio defect. The complete
+camera image is letterboxed into the 320 by 240 JPEG instead of being
+horizontally squashed, and frame events retain both encoded and intrinsic
+camera dimensions. The numerical detector comparison and its limitations are
+recorded in `docs/VIDEO_EVAL.md`.
 
 ## 7. Strategy catalogue
 

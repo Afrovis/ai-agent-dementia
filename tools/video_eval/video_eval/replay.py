@@ -24,7 +24,14 @@ RETAINED_STREAMS = frozenset({"person", "session", "say", "notify", "light"})
 
 
 def build_raw_replay(
-    frames: list[dict[str, Any]], root: Path, output: Path, *, variant: str, start: datetime
+    frames: list[dict[str, Any]],
+    root: Path,
+    output: Path,
+    *,
+    variant: str,
+    start: datetime,
+    source_width: int = 320,
+    source_height: int = 240,
 ) -> int:
     path_key = "bridge_path" if variant == "squash" else "bridge_letterbox_path"
     records: list[dict[str, Any]] = []
@@ -36,6 +43,8 @@ def build_raw_replay(
             "jpeg": base64.b64encode((root / frame[path_key]).read_bytes()).decode("ascii"),
             "width": 320,
             "height": 240,
+            "source_width": source_width,
+            "source_height": source_height,
             "source_kind": "browser",
             "source": "video_eval",
             "session_id": None,
@@ -204,6 +213,12 @@ def replay_clip(
         raise ValueError("end-to-end replay speed must be positive")
     started = time.monotonic()
     paths = EvalPaths.for_clip(clip_id, root)
+    try:
+        clip_card = yaml.safe_load((paths.clip / "clip.yaml").read_text(encoding="utf-8")) or {}
+        source_width = int(clip_card["video"]["width"])
+        source_height = int(clip_card["video"]["height"])
+    except (OSError, KeyError, TypeError, ValueError, yaml.YAMLError):
+        source_width, source_height = 320, 240
     reference_path = paths.labels / "reference.yaml"
     if not reference_path.exists():
         raise RuntimeError("confirmed reference.yaml is required for replay")
@@ -329,6 +344,8 @@ def replay_clip(
             input_path,
             variant=variant,
             start=replay_start,
+            source_width=source_width,
+            source_height=source_height,
         )
         _run(
             [

@@ -18,10 +18,23 @@ def test_build_raw_replay_uses_browser_frames_and_half_second_timestamps(tmp_pat
         )
     output = tmp_path / "raw.jsonl"
     start = datetime(2026, 1, 1, tzinfo=UTC)
-    assert build_raw_replay(frames, tmp_path, output, variant="squash", start=start) == 2
+    assert (
+        build_raw_replay(
+            frames,
+            tmp_path,
+            output,
+            variant="squash",
+            start=start,
+            source_width=1920,
+            source_height=1080,
+        )
+        == 2
+    )
     rows = read_jsonl(output)
     assert rows[0]["stream"] == "frames_raw"
     assert rows[0]["payload"]["source_kind"] == "browser"
+    assert rows[0]["payload"]["source_width"] == 1920
+    assert rows[0]["payload"]["source_height"] == 1080
     assert rows[1]["ts"] == "2026-01-01T00:00:00.500000+00:00"
 
 

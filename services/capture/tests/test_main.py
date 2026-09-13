@@ -36,7 +36,7 @@ class FakeSource:
 
 def test_run_once_publishes_frame_when_source_has_one_and_gate_admits():
     bus = FakeBus()
-    source = FakeSource([(_jpeg((10, 10, 10)), 32, 32, "browser")])
+    source = FakeSource([(_jpeg((10, 10, 10)), 32, 32, 1920, 1080, "browser")])
     gate = MotionGate()
 
     published = run_once(source, gate, bus, now_fn=lambda: 0.0)
@@ -47,6 +47,8 @@ def test_run_once_publishes_frame_when_source_has_one_and_gate_admits():
     event = Frame.model_validate_json(entries[0].data)
     assert event.width == 32
     assert event.height == 32
+    assert event.source_width == 1920
+    assert event.source_height == 1080
     assert event.source_kind == "browser"
 
 
@@ -62,7 +64,9 @@ def test_run_once_returns_false_when_source_has_nothing():
 def test_run_once_drops_frame_the_gate_rejects():
     bus = FakeBus()
     still = _jpeg((10, 10, 10))
-    source = FakeSource([(still, 1, 1, "browser"), (still, 1, 1, "browser")])
+    source = FakeSource(
+        [(still, 1, 1, 1920, 1080, "browser"), (still, 1, 1, 1920, 1080, "browser")]
+    )
     gate = MotionGate(active_fps=2.0)
     clock = iter([0.0, 0.1])  # second frame arrives faster than the 0.5s period
 
@@ -202,6 +206,8 @@ def test_frames_stream_carries_capture_as_the_producer():
             jpeg=_scene(40),
             width=320,
             height=240,
+            source_width=1920,
+            source_height=1080,
             source_kind="browser",
         ),
         maxlen=CAPPED_MAXLEN["frames_raw"],
@@ -214,3 +220,5 @@ def test_frames_stream_carries_capture_as_the_producer():
     assert not isinstance(event, RawFrame)
     assert event.source == "capture"
     assert event.source_kind == "browser"
+    assert event.source_width == 1920
+    assert event.source_height == 1080

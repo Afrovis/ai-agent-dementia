@@ -51,12 +51,13 @@ Privacy first. The videos are of a real person in their bedroom.
 - Report results as numbers, never as frames. If a report needs to point at
   a frame, use the frame index and the local path.
 
-Fidelity second. The system under test is what the bedside browser page
-actually produces: 320 by 240 JPEG at quality 0.6, 2 fps, drawn onto a 4:3
-canvas with no crop, so a 16:9 camera is squashed horizontally. The eval
-must feed `perceive` exactly that, not the pretty 4K source, or the numbers
-mean nothing. Higher-resolution frames are for the reference labellers and
-for humans only.
+Fidelity second. As of issue #52, the bedside browser produces a 320 by 240
+JPEG at quality 0.6 and 2 fps, fitting the complete camera image into that
+4:3 canvas with black letterbox bars. A 16:9 camera therefore occupies 320 by
+180 pixels at y=30 with its proportions intact. `bridge-letterbox/` is the
+current runtime-equivalent evaluation variant; `bridge/` retains the old
+horizontally squashed rendering for comparison. Higher-resolution frames are
+for the reference labellers and for humans only.
 
 Reproducibility third. Every prediction and report is tagged with the git
 commit of this repo, the backend name and its package version, and the
@@ -115,13 +116,11 @@ before trusting any numbers.
    use. Pin `mediapipe>=0.10,<1.0` now; migrate to the tasks API later.
    MediaPipe 1.0 also aborts on macOS in a headless process with a Metal
    initialisation failure, so host-side venvs need the same pin.
-2. **The bridge squashes 16:9 to 4:3.** `script.js` draws the video onto a
-   320 by 240 canvas with the five-argument `drawImage`, so a 16:9 camera
-   is compressed horizontally by a quarter and the message reports the
-   canvas size, not the camera size. Every torso and limb ratio that
-   `classify.py` uses is distorted. The eval replicates this so we measure
-   reality, and includes a letterbox variant so we can quantify the cost
-   and decide whether to fix the page.
+2. **Resolved in issue #52: the bridge squashed 16:9 to 4:3.** The old
+   five-argument `drawImage` compressed horizontal proportions by 25% and
+   reported only the canvas size. The selected behavior letterboxes the full
+   image and reports both the 320 by 240 encoded dimensions and the camera's
+   intrinsic dimensions. The eval retains both variants for comparison.
 3. **The running stack is stale.** The containers named `test-m0-*` were
    built on 2026-09-09 from `.claude/worktrees/test-m0`, and their
    `perceive` is a placeholder that logs "perceive is not implemented yet".
@@ -518,6 +517,25 @@ Run each on every confirmed clip and keep the results in `RESULTS.md`.
 6. **Vision scene notes**: with `PERCEIVE_VISION_ENABLED=true` during
    `replay`, compare `scene_note` text against the reference state for the
    frames where it fired. Qualitative only.
+
+### Aspect-ratio decision (issue #52, 2026-09-13)
+
+The first sample's 488 frames were run through YOLOv8n-pose 8.4.150 without
+the motion gate on both prepared variants at commit `f208d4a1`:
+
+| Variant | Detected frames | Detection rate | Mean confidence when detected |
+| --- | ---: | ---: | ---: |
+| Squash | 344/488 | 70.5% | 0.646 |
+| Letterbox | 310/488 | 63.5% | 0.741 |
+
+Letterboxing produced 34 fewer detections (6.97 percentage points) but raised
+mean confidence by 0.095 (14.7% relative). More importantly, it removes a
+deterministic 25% horizontal compression from every body ratio used by the
+classifier, retains the entire camera view, and makes normalised geometry
+portable across camera aspect ratios. The bridge therefore selects
+**letterbox**. This is a detector-only comparison because the sample still
+lacks a recorder-confirmed reference timeline; it is not presented as
+state-accuracy evidence. Re-run the normal scorer when that reference exists.
 
 ## 8. Recording protocol for new clips
 
