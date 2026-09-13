@@ -140,6 +140,12 @@ EXTERNAL_CONNECTIONS = (
         "writes",
         "services/dashboard/dashboard/app.py",
     ),
+    ExternalConnection(
+        "dashboard",
+        "SQLite `data/night.db` event history",
+        "reads",
+        "services/dashboard/dashboard/history.py",
+    ),
 )
 
 

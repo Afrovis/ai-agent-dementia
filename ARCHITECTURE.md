@@ -58,6 +58,8 @@ flowchart LR
     photos["data/photos and demo photos"]
   end
 
+  s_dashboard --> q_ack
+  q_ack --> s_dashboard
   q_ack --> s_notify
   s_embodiment --> q_audio_in
   q_audio_in --> s_listen
@@ -72,18 +74,23 @@ flowchart LR
   s_embodiment --> q_notify
   s_light --> q_notify
   s_listen --> q_notify
+  q_notify --> s_dashboard
   q_notify --> s_notify
   s_perceive --> q_person
   q_person --> s_agent
+  q_person --> s_dashboard
   s_agent --> q_say
+  q_say --> s_dashboard
   q_say --> s_embodiment
   s_agent --> q_session
+  q_session --> s_dashboard
   q_session --> s_listen
   q_session --> s_perceive
   s_agent --> q_show
   q_show --> s_embodiment
   s_listen --> q_speech_in
   q_speech_in --> s_agent
+  q_speech_in --> s_dashboard
   q_speech_in --> s_embodiment
   browser <-->|"websockets /ws and /media"| s_embodiment
   camera -.->|"frames"| s_capture
@@ -127,18 +134,18 @@ flowchart LR
 
 | Stream | Events | Published by | Read by (consumer group) | Capped |
 | --- | --- | --- | --- | --- |
-| `ack` | `Ack` | nobody yet | notify (`notify`), store (`store`) | no |
+| `ack` | `Ack` | dashboard | dashboard (`dashboard-live`), notify (`notify`), store (`store`) | no |
 | `audio_in` | `AudioChunk` | embodiment | listen (`listen`) | yes, 50 |
 | `frames` | `Frame` | capture | dashboard (`dashboard`), perceive (`perceive`) | yes, 50 |
 | `frames_raw` | `RawFrame` | embodiment | capture (`capture`) | yes, 50 |
-| `health` | `Health` | agent, capture, light, listen, perceive | store (`store`) | no |
+| `health` | `Health` | agent, capture, light, listen, perceive | dashboard (`dashboard-live`), store (`store`) | no |
 | `light` | `LightCommand` | agent | light (`light`), store (`store`) | no |
-| `notify` | `Notify` | agent, embodiment, light, listen | notify (`notify`), store (`store`) | no |
-| `person` | `PersonState` | perceive | agent (`agent`), store (`store`) | no |
-| `say` | `Say` | agent | embodiment (`embodiment`), store (`store`) | no |
-| `session` | `GoalChanged`, `SessionState` | agent | listen (`listen-session`), perceive (`perceive-session`), store (`store`) | no |
+| `notify` | `Notify` | agent, embodiment, light, listen | dashboard (`dashboard-live`), notify (`notify`), store (`store`) | no |
+| `person` | `PersonState` | perceive | agent (`agent`), dashboard (`dashboard-live`), store (`store`) | no |
+| `say` | `Say` | agent | dashboard (`dashboard-live`), embodiment (`embodiment`), store (`store`) | no |
+| `session` | `GoalChanged`, `SessionState` | agent | dashboard (`dashboard-live`), listen (`listen-session`), perceive (`perceive-session`), store (`store`) | no |
 | `show` | `Show` | agent | embodiment (`embodiment`), store (`store`) | no |
-| `speech_in` | `SpeechStarted`, `Utterance` | listen | agent (`agent`), embodiment (`embodiment`), store (`store`) | no |
+| `speech_in` | `SpeechStarted`, `Utterance` | listen | agent (`agent`), dashboard (`dashboard-live`), embodiment (`embodiment`), store (`store`) | no |
 
 ## Outside-world connections
 
@@ -162,3 +169,4 @@ against the files that implement them.
 | `store` | SQLite `data/night.db` | writes | `services/store/store/main.py` |
 | `dashboard` | Caregiver browser, HTTP Basic auth | both | `services/dashboard/dashboard/app.py` |
 | `dashboard` | `config/zones.yaml` | writes | `services/dashboard/dashboard/app.py` |
+| `dashboard` | SQLite `data/night.db` event history | reads | `services/dashboard/dashboard/history.py` |
