@@ -1,8 +1,8 @@
 """FastAPI application for the `embodiment` service (issue #3).
 
 Serves the fullscreen embodiment page (face plus big text) over HTTP/HTTPS
-and pushes `Show`/`Say` events to connected browsers over a WebSocket, so a
-change of face state or text appears live with no polling.
+and pushes `Show`/`Say`/`SpeechStarted` events to connected browsers over a
+WebSocket, so display changes and barge-in arrive live with no polling.
 
 The bus-reading side is deliberately split into small, injectable pieces so
 it can be tested with `nc_shared.bus.FakeBus` and no real Redis or network:
@@ -10,9 +10,9 @@ it can be tested with `nc_shared.bus.FakeBus` and no real Redis or network:
 - `ConnectionManager` tracks connected websockets and the last-known `Show`
   (so a client that connects mid-night still gets the current state).
 - `broadcast_loop(bus, manager, ...)` is a plain async function that reads
-  the `show` and `say` streams and forwards them to `manager.broadcast`. It
-  accepts `max_iterations` and/or a `stop_event` so tests can bound it
-  instead of looping forever.
+  `show`, `say`, and the barge-in signal on `speech_in`, then forwards browser
+  messages to `manager.broadcast`. It accepts `max_iterations` and/or a
+  `stop_event` so tests can bound it instead of looping forever.
 - `create_app(bus)` wires a `ConnectionManager` into the routes and starts
   `broadcast_loop` as a background task on startup.
 
@@ -48,7 +48,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from nc_shared.events import AudioChunk, Notify, RawFrame, Say, Show
+from nc_shared.events import AudioChunk, Notify, RawFrame, Say, Show, SpeechStarted
 from nc_shared.replay import CAPPED_MAXLEN
 
 SERVICE_NAME = "embodiment"
@@ -158,10 +158,15 @@ def _say_to_message(event: Say, audio_id: str | None = None) -> dict:
         "text": event.text,
         "strategy": event.strategy,
         "interruptible": event.interruptible,
+        "session_id": event.session_id,
     }
     if audio_id is not None:
         message["audio_url"] = f"/speech/{audio_id}.wav"
     return message
+
+
+def _speech_started_to_message(event: SpeechStarted) -> dict:
+    return {"type": "speech_started", "session_id": event.session_id}
 
 
 async def broadcast_loop(
@@ -171,11 +176,11 @@ async def broadcast_loop(
     speech=None,
     consumer: str = CONSUMER,
     count: int = 10,
-    block_ms: int = 1000,
+    block_ms: int = 100,
     max_iterations: int | None = None,
     stop_event: asyncio.Event | None = None,
 ) -> None:
-    """Read `show` and `say` events from `bus` and broadcast them via `manager`.
+    """Broadcast display, speech, and early voice-activity events to browsers.
 
     `bus` is synchronous (`nc_shared.bus.Bus` or `FakeBus`), so each blocking
     read happens in a worker thread via `asyncio.to_thread`. Runs until
@@ -184,6 +189,7 @@ async def broadcast_loop(
     """
     bus.ensure_group("show", GROUP)
     bus.ensure_group("say", GROUP)
+    bus.ensure_group("speech_in", GROUP)
 
     iterations = 0
     while True:
@@ -193,11 +199,21 @@ async def broadcast_loop(
             return
         iterations += 1
 
-        for stream, to_message in (("show", _show_to_message), ("say", _say_to_message)):
+        streams = (
+            ("show", _show_to_message),
+            ("say", _say_to_message),
+            ("speech_in", _speech_started_to_message),
+        )
+        for stream, to_message in streams:
             messages = await asyncio.to_thread(
                 bus.read, stream, GROUP, consumer, count=count, block_ms=block_ms
             )
             for msg_id, event in messages:
+                # Complete Utterance events share `speech_in` with the onset
+                # signal but are for the agent, not the bedside browser.
+                if stream == "speech_in" and not isinstance(event, SpeechStarted):
+                    bus.ack(stream, GROUP, msg_id)
+                    continue
                 if isinstance(event, Say) and speech is not None:
                     try:
                         audio_id = await asyncio.to_thread(speech.synthesize, event.text)

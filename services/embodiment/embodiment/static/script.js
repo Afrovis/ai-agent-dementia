@@ -16,6 +16,8 @@
 
   const FACE_STATES = ["asleep", "awake", "speaking", "listening"];
   let currentSpeech = null;
+  let currentSpeechInterruptible = false;
+  let currentSpeechSessionId = null;
 
   // A photo the caregiver never uploaded (or has since deleted) answers 404.
   // Fade the layer back out and hide it rather than leaving the browser's
@@ -64,11 +66,39 @@
       if (currentSpeech) {
         currentSpeech.pause();
       }
-      currentSpeech = new Audio(msg.audio_url);
-      currentSpeech.play().catch((err) => {
+      const speech = new Audio(msg.audio_url);
+      currentSpeech = speech;
+      currentSpeechInterruptible = msg.interruptible === true;
+      currentSpeechSessionId = msg.session_id || null;
+      speech.addEventListener("ended", () => {
+        // An older clip can finish after a newer Say replaced it. Do not let
+        // that stale callback erase the newer clip's barge-in state.
+        if (currentSpeech === speech) {
+          currentSpeech = null;
+          currentSpeechInterruptible = false;
+          currentSpeechSessionId = null;
+        }
+      });
+      speech.play().catch((err) => {
         console.error("Piper speech playback failed", err);
       });
     }
+  }
+
+  function applySpeechStarted(msg) {
+    if (!currentSpeech || !currentSpeechInterruptible) {
+      return;
+    }
+    if (msg.session_id && currentSpeechSessionId !== msg.session_id) {
+      return;
+    }
+    currentSpeech.pause();
+    currentSpeech.currentTime = 0;
+    currentSpeech = null;
+    currentSpeechInterruptible = false;
+    currentSpeechSessionId = null;
+    faceEl.classList.remove(...FACE_STATES);
+    faceEl.classList.add("listening");
   }
 
   function handleMessage(event) {
@@ -83,6 +113,8 @@
       applyShow(msg);
     } else if (msg.type === "say") {
       applySay(msg);
+    } else if (msg.type === "speech_started") {
+      applySpeechStarted(msg);
     }
   }
 
@@ -300,7 +332,12 @@
     }
     let stream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      // Browser/OS acoustic echo cancellation is the v1 barge-in boundary.
+      // VAD sees this capture; Night Companion intentionally adds no software AEC.
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: { echoCancellation: true },
+      });
     } catch (err) {
       setMediaStatus(`camera/mic permission denied: ${err.message}`);
       return;

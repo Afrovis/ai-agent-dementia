@@ -115,6 +115,15 @@ class Utterance(BaseEvent):
     duration_s: float
 
 
+class SpeechStarted(BaseEvent):
+    """Voice activity onset from the person. Produced by `listen`.
+
+    This deliberately carries no audio or transcript.  It exists so the
+    bedside browser can stop interruptible speech as soon as VAD fires,
+    without waiting for the utterance to end and Whisper to transcribe it.
+    """
+
+
 class SessionState(BaseEvent):
     """Current agent session phase. Produced by `agent`."""
 
@@ -183,6 +192,7 @@ EVENT_STREAMS: dict[type[BaseEvent], str] = {
     Frame: "frames",
     RawFrame: "frames_raw",
     PersonState: "person",
+    SpeechStarted: "speech_in",
     Utterance: "speech_in",
     SessionState: "session",
     GoalChanged: "session",

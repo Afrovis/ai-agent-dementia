@@ -50,6 +50,7 @@ class SpeechSegmenter:
         self._utterance = bytearray()
         self._speech_ms = 0
         self._silence_ms = 0
+        self._speech_starts = 0
 
     def accept(self, pcm16: bytes) -> list[bytes]:
         """Accept an arbitrary chunk and return zero or more complete utterances."""
@@ -64,6 +65,7 @@ class SpeechSegmenter:
                 if not is_speech:
                     self._pre_roll.append(frame)
                     continue
+                self._speech_starts += 1
                 self._utterance.extend(b"".join(self._pre_roll))
                 self._pre_roll.clear()
 
@@ -81,6 +83,12 @@ class SpeechSegmenter:
                     complete.append(utterance)
         return complete
 
+    def take_speech_starts(self) -> int:
+        """Return and clear the number of VAD onsets seen since the last call."""
+        starts = self._speech_starts
+        self._speech_starts = 0
+        return starts
+
     def reset(self) -> None:
         """Discard all buffered audio, including any partial utterance."""
         self._pending.clear()
@@ -88,6 +96,7 @@ class SpeechSegmenter:
         self._utterance.clear()
         self._speech_ms = 0
         self._silence_ms = 0
+        self._speech_starts = 0
 
     def _finish(self) -> bytes | None:
         utterance = bytes(self._utterance) if self._speech_ms >= self.min_speech_ms else None

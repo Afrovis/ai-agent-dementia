@@ -6,7 +6,7 @@ import struct
 from datetime import UTC, datetime, timedelta
 
 from nc_shared.bus import FakeBus
-from nc_shared.events import AudioChunk, Health, SessionState, Utterance
+from nc_shared.events import AudioChunk, Health, SessionState, SpeechStarted, Utterance
 
 from listen.main import ListenState, maybe_emit_health, run_once
 from listen.transcribe import Transcript
@@ -62,7 +62,20 @@ def publish_audio(bus: FakeBus, pcm16: bytes) -> None:
 
 def read_utterances(bus: FakeBus) -> list[Utterance]:
     bus.ensure_group("speech_in", "test")
-    return [event for _, event in bus.read("speech_in", "test", "test-1")]
+    return [
+        event
+        for _, event in bus.read("speech_in", "test", "test-1")
+        if isinstance(event, Utterance)
+    ]
+
+
+def read_speech_starts(bus: FakeBus) -> list[SpeechStarted]:
+    bus.ensure_group("speech_in", "activity-test")
+    return [
+        event
+        for _, event in bus.read("speech_in", "activity-test", "test-1")
+        if isinstance(event, SpeechStarted)
+    ]
 
 
 def test_segmenter_handles_arbitrary_chunks_and_ends_after_silence():
@@ -114,6 +127,24 @@ def test_observing_audio_publishes_session_attributed_utterance():
     assert utterances[0].duration_s == 0.12
     assert utterances[0].session_id == "session-1"
     assert transcriber.calls == [(audio, SAMPLE_RATE)]
+
+
+def test_voice_onset_is_published_before_utterance_is_complete():
+    bus = FakeBus()
+    state = make_state(end_silence_ms=60, min_speech_ms=60)
+    transcriber = FakeTranscriber()
+    publish_session(bus, "ENGAGED")
+    publish_audio(bus, pcm_frame(1000))
+
+    assert run_once(bus, state, transcriber) == 0
+    starts = read_speech_starts(bus)
+    assert len(starts) == 1
+    assert starts[0].session_id == "session-1"
+    assert transcriber.calls == []
+
+    publish_audio(bus, pcm_frame(1000))
+    run_once(bus, state, transcriber)
+    assert len(read_speech_starts(bus)) == 0
 
 
 def test_idle_transition_discards_partial_speech_before_next_session():

@@ -15,6 +15,7 @@ from nc_shared.events import (
     Say,
     SessionState,
     Show,
+    SpeechStarted,
     Utterance,
 )
 
@@ -33,5 +34,6 @@ __all__ = [
     "Say",
     "SessionState",
     "Show",
+    "SpeechStarted",
     "Utterance",
 ]
