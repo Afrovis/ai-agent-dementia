@@ -189,6 +189,14 @@ deletes all retained history on request. Manual deletion deliberately leaves
 the caregiver's profile, strategies, zones, photos, and voice clips intact;
 new live events continue to be stored immediately afterward.
 
+Issue #27's two-week volunteer evaluation is prepared by `DRY_RUN=true`. In
+that mode `notify` suppresses all outbound delivery even when `NTFY_URL` is
+configured, while `Notify` events continue through the bus into retained
+History for daily review. The dashboard System page makes the active mode
+visible. This is an evaluation-only override of rule 4 and must not be used for
+real care; follow `docs/DRY_RUN.md`, and return the flag to `false` before a
+supervised pilot.
+
 ## 7. Strategy catalogue
 
 Implement in this order. Numbers match `PLAN.md` section 5.3.

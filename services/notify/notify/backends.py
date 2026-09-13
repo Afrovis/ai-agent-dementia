@@ -99,3 +99,21 @@ class LoggingBackend:
         logger.info("notification (%s): %s - %s", level, title, body)
         self.sent.append((level, title, body))
         return True
+
+
+class DryRunBackend:
+    """A deliberate no-delivery backend for supervised volunteer trials.
+
+    Unlike ``LoggingBackend``, this backend does not write notification titles
+    or bodies to stdout. The original ``Notify`` event is still retained by the
+    store and visible in the authenticated dashboard timeline, which is the
+    review surface for issue #27.
+    """
+
+    def __init__(self) -> None:
+        self.suppressed_count = 0
+
+    def send(self, level: str, title: str, body: str) -> bool:
+        logger.info("dry run suppressed outbound notification: level=%s", level)
+        self.suppressed_count += 1
+        return True

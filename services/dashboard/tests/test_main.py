@@ -19,6 +19,7 @@ def test_from_env_uses_defaults_when_nothing_is_set():
     assert config.db_path == "/app/data/night.db"
     assert config.timezone == "UTC"
     assert config.data_retention_days == 90
+    assert config.dry_run is False
 
 
 def test_from_env_reads_configured_values():
@@ -34,6 +35,7 @@ def test_from_env_reads_configured_values():
             "DB_PATH": "/app/data/custom.db",
             "TZ": "America/New_York",
             "DATA_RETENTION_DAYS": "45",
+            "DRY_RUN": "yes",
         }
     )
 
@@ -47,6 +49,7 @@ def test_from_env_reads_configured_values():
     assert config.db_path == "/app/data/custom.db"
     assert config.timezone == "America/New_York"
     assert config.data_retention_days == 45
+    assert config.dry_run is True
 
 
 def test_from_env_treats_an_empty_string_password_as_unset():
@@ -57,3 +60,12 @@ def test_from_env_treats_an_empty_string_password_as_unset():
     config = DashboardConfig.from_env(env={"DASHBOARD_PASSWORD": ""})
 
     assert config.password is None
+
+
+def test_from_env_rejects_invalid_dry_run_value():
+    try:
+        DashboardConfig.from_env(env={"DRY_RUN": "treu"})
+    except ValueError as exc:
+        assert "DRY_RUN" in str(exc)
+    else:
+        raise AssertionError("invalid DRY_RUN value was accepted")

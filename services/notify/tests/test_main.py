@@ -8,13 +8,14 @@ is driven by an injected `clock` callable so tests can fast-forward
 from nc_shared.bus import FakeBus
 from nc_shared.events import Ack, Notify
 
-from notify.backends import LoggingBackend
+from notify.backends import DryRunBackend, LoggingBackend, NtfyBackend
 from notify.main import (
     ACK_STREAM,
     CRITICAL_REPEAT_INTERVAL_S,
     NOTIFY_STREAM,
     NotifyState,
     consume_once,
+    make_backend,
 )
 
 
@@ -146,3 +147,24 @@ def test_ack_helper_removes_outstanding_entry_directly():
     assert ack(state, notify_id) is True
     assert notify_id not in state.outstanding
     assert ack(state, notify_id) is False
+
+
+def test_dry_run_overrides_configured_ntfy_delivery():
+    backend = make_backend({"DRY_RUN": "true", "NTFY_URL": "https://ntfy.sh/must-not-be-contacted"})
+
+    assert isinstance(backend, DryRunBackend)
+
+
+def test_delivery_uses_ntfy_when_dry_run_is_off():
+    backend = make_backend({"DRY_RUN": "false", "NTFY_URL": "https://ntfy.sh/test"})
+
+    assert isinstance(backend, NtfyBackend)
+
+
+def test_invalid_dry_run_value_fails_before_delivery_backend_is_built():
+    try:
+        make_backend({"DRY_RUN": "treu", "NTFY_URL": "https://ntfy.sh/must-not-be-contacted"})
+    except ValueError as exc:
+        assert "DRY_RUN" in str(exc)
+    else:
+        raise AssertionError("invalid DRY_RUN value was accepted")

@@ -181,6 +181,7 @@ services:
     environment:
       REDIS_URL: ${REDIS_URL}
       NTFY_URL: ${NTFY_URL}
+      DRY_RUN: ${DRY_RUN:-false}
     volumes:
       - ./data:/app/data
       - ./config:/app/config:ro
@@ -205,6 +206,7 @@ services:
       DB_PATH: ${DB_PATH}
       TZ: ${TZ}
       DATA_RETENTION_DAYS: ${DATA_RETENTION_DAYS:-90}
+      DRY_RUN: ${DRY_RUN:-false}
     ports:
       - "${DASHBOARD_PORT}:${DASHBOARD_PORT}"
     volumes:

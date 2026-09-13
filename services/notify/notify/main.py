@@ -25,14 +25,14 @@ import json
 import logging
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
 import redis
 from nc_shared.bus import Bus
 from nc_shared.events import Notify
 
-from notify.backends import LoggingBackend, NotifyBackend, NtfyBackend
+from notify.backends import DryRunBackend, LoggingBackend, NotifyBackend, NtfyBackend
 
 SERVICE_NAME = "notify"
 GROUP = "notify"
@@ -46,6 +46,9 @@ CRITICAL_REPEAT_INTERVAL_S = 60.0
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(SERVICE_NAME)
+
+TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+FALSE_VALUES = frozenset({"0", "false", "no", "off", ""})
 
 
 def _log(message: str, **fields: object) -> None:
@@ -133,7 +136,7 @@ def ack(state: NotifyState, notify_id: str) -> bool:
     return state.ack(notify_id)
 
 
-def make_backend() -> NotifyBackend:
+def make_backend(env: Mapping[str, str] | None = None) -> NotifyBackend:
     """Build the configured backend from env vars.
 
     `NTFY_URL` is the full topic URL, e.g. `https://ntfy.sh/my-topic` or a
@@ -141,7 +144,15 @@ def make_backend() -> NotifyBackend:
     unset, falls back to `LoggingBackend` so local dev without a topic
     configured still runs (and logs) instead of crashing.
     """
-    ntfy_url = os.environ.get("NTFY_URL")
+    values = os.environ if env is None else env
+    dry_run_value = values.get("DRY_RUN", "false").strip().lower()
+    if dry_run_value not in TRUE_VALUES | FALSE_VALUES:
+        raise ValueError("DRY_RUN must be true or false")
+    dry_run = dry_run_value in TRUE_VALUES
+    if dry_run:
+        _log("dry run enabled, suppressing all outbound notifications")
+        return DryRunBackend()
+    ntfy_url = values.get("NTFY_URL")
     if ntfy_url:
         return NtfyBackend(ntfy_url)
     _log("NTFY_URL not set, using LoggingBackend")
@@ -151,8 +162,17 @@ def make_backend() -> NotifyBackend:
 def run() -> None:
     """Loop forever, consuming `Notify` events and delivering/repeating alerts."""
     redis_url = os.environ.get("REDIS_URL", "redis://bus:6379")
-    backend = make_backend()
-    _log("notify starting", redis_url=redis_url, backend=type(backend).__name__)
+    try:
+        backend = make_backend()
+    except ValueError as exc:
+        _log("refusing to start", error=str(exc))
+        raise SystemExit(1) from exc
+    _log(
+        "notify starting",
+        redis_url=redis_url,
+        backend=type(backend).__name__,
+        dry_run=isinstance(backend, DryRunBackend),
+    )
 
     bus = Bus(redis.Redis.from_url(redis_url))
     state = NotifyState()

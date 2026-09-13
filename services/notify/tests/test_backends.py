@@ -2,7 +2,7 @@
 
 import httpx
 
-from notify.backends import LoggingBackend, NtfyBackend
+from notify.backends import DryRunBackend, LoggingBackend, NtfyBackend
 
 
 class _FakePost:
@@ -67,3 +67,13 @@ def test_logging_backend_records_sends_without_network():
 
     assert ok is True
     assert backend.sent == [("info", "title", "body")]
+
+
+def test_dry_run_backend_records_only_suppressed_levels(caplog):
+    backend = DryRunBackend()
+
+    assert backend.send("critical", "Private title", "Private body") is True
+
+    assert backend.suppressed_count == 1
+    assert "Private title" not in caplog.text
+    assert "Private body" not in caplog.text

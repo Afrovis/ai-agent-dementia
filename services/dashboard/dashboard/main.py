@@ -29,6 +29,9 @@ SERVICE_NAME = "dashboard"
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(SERVICE_NAME)
 
+TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+FALSE_VALUES = frozenset({"0", "false", "no", "off", ""})
+
 
 def _log(message: str, **fields: object) -> None:
     """Log one structured JSON line to stdout (HANDOFF.md section 4)."""
@@ -50,11 +53,15 @@ class DashboardConfig:
     db_path: str = "/app/data/night.db"
     timezone: str = "UTC"
     data_retention_days: int = 90
+    dry_run: bool = False
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> DashboardConfig:
         """Build a `DashboardConfig` from environment variables, defaults otherwise."""
         env = os.environ if env is None else env
+        dry_run_value = env.get("DRY_RUN", "false").strip().lower()
+        if dry_run_value not in TRUE_VALUES | FALSE_VALUES:
+            raise ValueError("DRY_RUN must be true or false")
         return cls(
             port=int(env.get("DASHBOARD_PORT", "8444")),
             # `or None`, not `.get(..., None)`: compose passes an unset .env
@@ -69,12 +76,17 @@ class DashboardConfig:
             db_path=env.get("DB_PATH") or "/app/data/night.db",
             timezone=env.get("TZ") or "UTC",
             data_retention_days=int(env.get("DATA_RETENTION_DAYS") or "90"),
+            dry_run=dry_run_value in TRUE_VALUES,
         )
 
 
 def run() -> None:
     """Start the dashboard FastAPI app on `DASHBOARD_PORT`."""
-    config = DashboardConfig.from_env()
+    try:
+        config = DashboardConfig.from_env()
+    except ValueError as exc:
+        _log("refusing to start", error=str(exc))
+        raise SystemExit(1) from exc
     redis_url = os.environ.get("REDIS_URL", "redis://bus:6379")
 
     if config.password is None:
@@ -98,6 +110,7 @@ def run() -> None:
             photo_dir=config.photo_dir,
             voice_clip_dir=config.voice_clip_dir,
             data_retention_days=config.data_retention_days,
+            dry_run=config.dry_run,
         )
     except ValueError as exc:
         # A password HTTP Basic cannot carry. Fail loudly with the reason

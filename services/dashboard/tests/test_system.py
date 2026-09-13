@@ -59,6 +59,20 @@ def test_system_page_shows_configured_retention_and_count(tmp_path):
     assert "45 days" in response.text
     assert "1 event" in response.text
     assert "System" in response.text
+    assert "Live notification mode" in response.text
+
+
+def test_system_page_makes_dry_run_notification_suppression_visible(tmp_path):
+    db_path = tmp_path / "night.db"
+    _history_db(db_path)
+    app = create_app(FakeBus(), password="secret123", db_path=db_path, dry_run=True)
+
+    with TestClient(app) as client:
+        response = client.get("/system", auth=AUTH)
+
+    assert response.status_code == 200
+    assert "Dry run active" in response.text
+    assert "outbound caregiver notifications are suppressed" in response.text
 
 
 def test_export_downloads_no_cache_portable_json(tmp_path):

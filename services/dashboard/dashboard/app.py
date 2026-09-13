@@ -460,12 +460,26 @@ Upload only with the speaker’s consent; Night Companion never clones voices.</
 <button type="submit">Upload voice clip</button></form>{items(clips)}</section></div>"""
 
 
-def _render_system(db_path: str | Path, retention_days: int, message: str = "") -> str:
+def _render_system(
+    db_path: str | Path,
+    retention_days: int,
+    dry_run: bool = False,
+    message: str = "",
+) -> str:
     stats = history_stats(db_path)
     notice = f'<p class="success" role="status">{html.escape(message)}</p>' if message else ""
     event_label = "event" if stats.event_count == 1 else "events"
+    mode = (
+        '<section class="system-card dry-run-card" role="status"><h2>Dry run active</h2>'
+        "<p>All outbound caregiver notifications are suppressed. Alerts remain in "
+        "Tonight and History for daily review. Do not use this mode for care.</p></section>"
+        if dry_run
+        else '<section class="system-card"><h2>Live notification mode</h2>'
+        "<p>Outbound caregiver notifications are enabled when a delivery backend is "
+        "configured.</p></section>"
+    )
     return f"""<h1>System</h1><p>Manage the personal event history stored on this device.</p>
-{notice}<section class="system-card"><h2>Retention</h2>
+{notice}{mode}<section class="system-card"><h2>Retention</h2>
 <p>Night Companion automatically deletes event history after
 <strong>{retention_days} days</strong>.</p>
 <p class="data-count">Currently retained: <strong>{stats.event_count} {event_label}</strong>.</p>
@@ -528,6 +542,7 @@ def create_app(
     photo_dir: str | Path = DEFAULT_PHOTO_DIR,
     voice_clip_dir: str | Path = DEFAULT_VOICE_CLIP_DIR,
     data_retention_days: int = 90,
+    dry_run: bool = False,
 ) -> FastAPI:
     """Build the FastAPI app, wiring `bus` into the frame-consuming background task.
 
@@ -581,6 +596,7 @@ def create_app(
     app.state.photo_dir = Path(photo_dir)
     app.state.voice_clip_dir = Path(voice_clip_dir)
     app.state.data_retention_days = data_retention_days
+    app.state.dry_run = dry_run
 
     def auth_dependency(
         credentials: HTTPBasicCredentials | None = Depends(_security),
@@ -782,7 +798,11 @@ def create_app(
         return HTMLResponse(
             _page(
                 "System",
-                _render_system(app.state.db_path, app.state.data_retention_days),
+                _render_system(
+                    app.state.db_path,
+                    app.state.data_retention_days,
+                    app.state.dry_run,
+                ),
                 active="system",
             )
         )
@@ -823,6 +843,7 @@ def create_app(
                 _render_system(
                     app.state.db_path,
                     app.state.data_retention_days,
+                    app.state.dry_run,
                     f"Deleted {deleted} retained {event_label}.",
                 ),
                 active="system",

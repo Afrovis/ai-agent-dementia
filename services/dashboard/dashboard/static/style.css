@@ -160,6 +160,7 @@ textarea { resize: vertical; }
 }
 .button-link { background: var(--amber); color: #21170c; }
 .danger-zone { border-color: #713f3f; }
+.dry-run-card { border-color: var(--amber); }
 .danger-button { background: var(--error); color: white; }
 
 .strategy-card {
