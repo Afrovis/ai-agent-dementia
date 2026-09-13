@@ -90,7 +90,8 @@ footer {
 }
 
 .settings-form,
-.media-grid section {
+.media-grid section,
+.system-card {
   margin-top: 20px;
   padding: 18px;
   border: 1px solid var(--border);
@@ -143,6 +144,23 @@ textarea { resize: vertical; }
   cursor: pointer;
   font-weight: 700;
 }
+
+.system-card h2 { margin-top: 0; }
+.data-count { color: var(--muted); }
+.button-link,
+.danger-button {
+  display: inline-block;
+  padding: 10px 15px;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: none;
+}
+.button-link { background: var(--amber); color: #21170c; }
+.danger-zone { border-color: #713f3f; }
+.danger-button { background: var(--error); color: white; }
 
 .strategy-card {
   margin: 0 0 18px;

@@ -181,6 +181,14 @@ durations, the last spoken strategy before each non-escalated resolution,
 health faults, and escalation count. A SQLite delivery marker prevents
 duplicate summaries across restarts.
 
+Issue #26 applies `DATA_RETENTION_DAYS` (90 by default) to persisted events and
+morning-summary delivery markers. The store prunes expired rows at startup and
+hourly. The authenticated dashboard System page shows the effective period and
+retained row count, downloads a no-cache JSON history export, and securely
+deletes all retained history on request. Manual deletion deliberately leaves
+the caregiver's profile, strategies, zones, photos, and voice clips intact;
+new live events continue to be stored immediately afterward.
+
 ## 7. Strategy catalogue
 
 Implement in this order. Numbers match `PLAN.md` section 5.3.

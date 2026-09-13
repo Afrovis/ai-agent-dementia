@@ -6,13 +6,16 @@ pattern).
 """
 
 import json
+from datetime import UTC, datetime, timedelta
 
+import pytest
 from nc_shared.bus import FakeBus
 from nc_shared.events import Health, Notify, PersonState
 from sqlmodel import Session, select
 
 from store.main import consume_once, make_engine
-from store.models import EventRow
+from store.models import EventRow, MorningSummaryRow
+from store.retention import RetentionConfig, prune_expired_history
 
 
 def test_consume_once_persists_a_published_event(tmp_path):
@@ -90,3 +93,39 @@ def test_consume_once_is_idempotent_on_repeated_calls_with_no_new_events(tmp_pat
 
     assert first == 1
     assert second == 0
+
+
+def test_retention_defaults_to_ninety_days_and_validates_env():
+    assert RetentionConfig.from_env({}).days == 90
+    assert RetentionConfig.from_env({"DATA_RETENTION_DAYS": "30"}).days == 30
+
+    for value in ("0", "-1", "forever"):
+        with pytest.raises(ValueError, match="DATA_RETENTION_DAYS"):
+            RetentionConfig.from_env({"DATA_RETENTION_DAYS": value})
+
+
+def test_prune_expired_history_removes_only_rows_older_than_cutoff(tmp_path):
+    now = datetime(2026, 9, 13, 12, tzinfo=UTC)
+    engine = make_engine(str(tmp_path / "night.db"))
+    with Session(engine) as session:
+        for age_days in (91, 90, 89):
+            session.add(
+                EventRow(
+                    stream="health",
+                    event_type="Health",
+                    ts=now - timedelta(days=age_days),
+                    payload_json="{}",
+                )
+            )
+        session.add(MorningSummaryRow(night_key="old", created_at=now - timedelta(days=91)))
+        session.add(MorningSummaryRow(night_key="kept", created_at=now - timedelta(days=5)))
+        session.commit()
+
+    assert prune_expired_history(engine, 90, now=now) == 1
+
+    with Session(engine) as session:
+        events = session.exec(select(EventRow).order_by(EventRow.ts)).all()
+        markers = session.exec(select(MorningSummaryRow)).all()
+    assert len(events) == 2
+    assert events[0].ts == (now - timedelta(days=90)).replace(tzinfo=None)
+    assert [marker.night_key for marker in markers] == ["kept"]

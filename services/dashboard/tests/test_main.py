@@ -18,6 +18,7 @@ def test_from_env_uses_defaults_when_nothing_is_set():
     assert config.voice_clip_dir == "/app/data/voice-clips"
     assert config.db_path == "/app/data/night.db"
     assert config.timezone == "UTC"
+    assert config.data_retention_days == 90
 
 
 def test_from_env_reads_configured_values():
@@ -32,6 +33,7 @@ def test_from_env_reads_configured_values():
             "VOICE_CLIP_DIR": "/app/data/family-voice",
             "DB_PATH": "/app/data/custom.db",
             "TZ": "America/New_York",
+            "DATA_RETENTION_DAYS": "45",
         }
     )
 
@@ -44,6 +46,7 @@ def test_from_env_reads_configured_values():
     assert config.voice_clip_dir == "/app/data/family-voice"
     assert config.db_path == "/app/data/custom.db"
     assert config.timezone == "America/New_York"
+    assert config.data_retention_days == 45
 
 
 def test_from_env_treats_an_empty_string_password_as_unset():

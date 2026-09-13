@@ -20,6 +20,7 @@ services:
       DB_PATH: ${DB_PATH}
       TZ: ${TZ}
       MORNING_SUMMARY_TIME: ${MORNING_SUMMARY_TIME:-08:00}
+      DATA_RETENTION_DAYS: ${DATA_RETENTION_DAYS:-90}
     volumes:
       - ./data:/app/data
       - ./config:/app/config:ro
@@ -203,6 +204,7 @@ services:
       VOICE_CLIP_DIR: ${VOICE_CLIP_DIR:-/app/data/voice-clips}
       DB_PATH: ${DB_PATH}
       TZ: ${TZ}
+      DATA_RETENTION_DAYS: ${DATA_RETENTION_DAYS:-90}
     ports:
       - "${DASHBOARD_PORT}:${DASHBOARD_PORT}"
     volumes:

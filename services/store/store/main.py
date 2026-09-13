@@ -13,6 +13,7 @@ automatically unless it targets `frames`, `audio_in`, or `frames_raw`.
 Issue #24 also schedules a once-per-night caregiver summary from that event
 history. The summary itself is an informational `Notify` event and therefore
 follows the same delivery and persistence path as every other notification.
+Issue #26 expires that history after 90 days by default.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from nc_shared.events import EVENT_STREAMS
 from sqlmodel import Session, SQLModel, create_engine
 
 from store.models import EventRow
+from store.retention import RetentionConfig, prune_expired_history
 from store.summary import SummaryConfig, maybe_publish_morning_summary
 
 SERVICE_NAME = "store"
@@ -37,6 +39,7 @@ logger = logging.getLogger(SERVICE_NAME)
 
 CAPPED_STREAMS = {"frames", "audio_in", "frames_raw"}
 PERSISTED_STREAMS = sorted(set(EVENT_STREAMS.values()) - CAPPED_STREAMS)
+RETENTION_SWEEP_SECONDS = 60 * 60
 
 
 def make_engine(db_path: str):
@@ -78,19 +81,29 @@ def run() -> None:
     redis_url = os.environ.get("REDIS_URL", "redis://bus:6379")
     db_path = os.environ.get("DB_PATH", "data/night.db")
     summary_config = SummaryConfig.from_env()
+    retention_config = RetentionConfig.from_env()
     logger.info(
-        "store starting: redis_url=%s db_path=%s morning_summary_time=%s timezone=%s",
+        "store starting: redis_url=%s db_path=%s morning_summary_time=%s timezone=%s "
+        "retention_days=%s",
         redis_url,
         db_path,
         summary_config.send_at.strftime("%H:%M"),
         summary_config.timezone.key,
+        retention_config.days,
     )
 
     bus = Bus(redis.Redis.from_url(redis_url))
     engine = make_engine(db_path)
+    last_retention_sweep = 0.0
 
     while True:
         written = consume_once(bus, engine)
+        monotonic_now = time.monotonic()
+        if monotonic_now - last_retention_sweep >= RETENTION_SWEEP_SECONDS:
+            deleted = prune_expired_history(engine, retention_config.days)
+            last_retention_sweep = monotonic_now
+            if deleted:
+                logger.info("expired event history deleted: rows=%s", deleted)
         summary = maybe_publish_morning_summary(bus, engine, summary_config)
         if summary is not None:
             logger.info(

@@ -1,4 +1,4 @@
-"""FastAPI application for the caregiver dashboard (issues #10, #22, and #23).
+"""FastAPI application for the caregiver dashboard (issues #10, #22, #23, and #26).
 
 The dashboard's first real page is the Zones editor: PLAN.md section 6.2
 ("the bed zone, door zone, and bathroom-direction zone are drawn once in
@@ -7,6 +7,7 @@ door zones)"). Everything else on PLAN.md section 9's page list (Tonight,
 History, Person profile, Strategies, System) is extended by issue #22 with
 Tonight, retained per-night History, and caregiver acknowledgement. Issue #23
 adds profile and strategy editing plus local photo and family-voice uploads.
+Issue #26 adds authenticated event-history export and deletion on System.
 
 Two things make this route more sensitive than the rest of the dashboard
 will be, so they are both non-negotiable here rather than left for later:
@@ -46,13 +47,21 @@ import re
 import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from nc_shared.events import Ack
 
+from dashboard.data_management import delete_history, export_history, history_stats
 from dashboard.history import current_night_key, format_night_label, load_nights
 from dashboard.live import LiveSnapshot, LiveState, consume_live_once
 from dashboard.settings_store import (
@@ -211,6 +220,7 @@ def _page(title: str, content: str, *, active: str) -> str:
             ("strategies", "Strategies", "/strategies"),
             ("media", "Media", "/media"),
             ("zones", "Zones", "/zones"),
+            ("system", "System", "/system"),
         )
     )
     return f"""<!doctype html>
@@ -450,6 +460,29 @@ Upload only with the speaker’s consent; Night Companion never clones voices.</
 <button type="submit">Upload voice clip</button></form>{items(clips)}</section></div>"""
 
 
+def _render_system(db_path: str | Path, retention_days: int, message: str = "") -> str:
+    stats = history_stats(db_path)
+    notice = f'<p class="success" role="status">{html.escape(message)}</p>' if message else ""
+    event_label = "event" if stats.event_count == 1 else "events"
+    return f"""<h1>System</h1><p>Manage the personal event history stored on this device.</p>
+{notice}<section class="system-card"><h2>Retention</h2>
+<p>Night Companion automatically deletes event history after
+<strong>{retention_days} days</strong>.</p>
+<p class="data-count">Currently retained: <strong>{stats.event_count} {event_label}</strong>.</p>
+</section><section class="system-card"><h2>Export history</h2>
+<p>Download all currently retained events, including transcripts and the exact text sent
+by any cloud fallback. The JSON file contains no camera frames or audio.</p>
+<a class="button-link" href="/system/export">Download JSON export</a></section>
+<section class="system-card danger-zone"><h2>Delete history</h2>
+<p>Permanently delete all event history and morning-summary records. Profile settings,
+zones, photos, and voice clips are not changed. New live events will continue to be stored.</p>
+<form method="post" action="/system/delete"
+onsubmit="return confirm('Permanently delete all retained history?');">
+<input type="hidden" name="confirmation" value="delete-retained-history">
+<button class="danger-button" type="submit">Delete all retained history</button></form>
+</section>"""
+
+
 def check_auth(password: str | None, credentials: HTTPBasicCredentials | None) -> None:
     """Raise the right `HTTPException` for `password`/`credentials`, or return.
 
@@ -494,6 +527,7 @@ def create_app(
     strategies_path: str | Path = DEFAULT_STRATEGIES_PATH,
     photo_dir: str | Path = DEFAULT_PHOTO_DIR,
     voice_clip_dir: str | Path = DEFAULT_VOICE_CLIP_DIR,
+    data_retention_days: int = 90,
 ) -> FastAPI:
     """Build the FastAPI app, wiring `bus` into the frame-consuming background task.
 
@@ -516,6 +550,8 @@ def create_app(
             "DASHBOARD_PASSWORD must contain only ASCII characters; "
             "HTTP Basic authentication cannot carry anything else"
         )
+    if data_retention_days < 1:
+        raise ValueError("DATA_RETENTION_DAYS must be at least 1")
 
     latest_frame = LatestFrame()
     live_state = LiveState()
@@ -544,6 +580,7 @@ def create_app(
     app.state.strategies_path = Path(strategies_path)
     app.state.photo_dir = Path(photo_dir)
     app.state.voice_clip_dir = Path(voice_clip_dir)
+    app.state.data_retention_days = data_retention_days
 
     def auth_dependency(
         credentials: HTTPBasicCredentials | None = Depends(_security),
@@ -737,6 +774,58 @@ def create_app(
                 "Media",
                 media_content(f'Voice clip uploaded with ID "{media_id}".'),
                 active="media",
+            )
+        )
+
+    @app.get("/system", response_class=HTMLResponse)
+    async def system_page(_: None = Depends(auth_dependency)) -> HTMLResponse:
+        return HTMLResponse(
+            _page(
+                "System",
+                _render_system(app.state.db_path, app.state.data_retention_days),
+                active="system",
+            )
+        )
+
+    @app.get("/system/export")
+    async def system_export(_: None = Depends(auth_dependency)) -> Response:
+        try:
+            export = export_history(app.state.db_path)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        filename = f"night-companion-history-{datetime.now().date().isoformat()}.json"
+        _log("exported retained history", event_count=export.event_count)
+        return StreamingResponse(
+            export.chunks,
+            media_type="application/json",
+            headers={
+                "Cache-Control": "no-store",
+                "Content-Disposition": f'attachment; filename="{filename}"',
+            },
+        )
+
+    @app.post("/system/delete", response_class=HTMLResponse)
+    async def system_delete(
+        confirmation: str = Form(...),
+        _: None = Depends(auth_dependency),
+    ) -> HTMLResponse:
+        if confirmation != "delete-retained-history":
+            raise HTTPException(status_code=400, detail="delete confirmation is invalid")
+        try:
+            deleted = delete_history(app.state.db_path)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        _log("deleted retained history", event_count=deleted)
+        event_label = "event" if deleted == 1 else "events"
+        return HTMLResponse(
+            _page(
+                "System",
+                _render_system(
+                    app.state.db_path,
+                    app.state.data_retention_days,
+                    f"Deleted {deleted} retained {event_label}.",
+                ),
+                active="system",
             )
         )
 

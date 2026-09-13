@@ -1,7 +1,8 @@
-"""Entry point for the `dashboard` service (issues #10, #22, and #23).
+"""Entry point for the `dashboard` service (issues #10, #22, #23, and #26).
 
 Caregiver web dashboard (HANDOFF.md section 4). Tonight and History join the
 Zones editor in issue #22; issue #23 adds profile, strategies, and media.
+Issue #26 adds event-history retention, export, and deletion controls.
 
 `DashboardConfig.from_env` reads `DASHBOARD_PASSWORD` and `ZONES_PATH`.
 `DASHBOARD_PASSWORD` is required for the app to serve anything but 503s
@@ -48,6 +49,7 @@ class DashboardConfig:
     voice_clip_dir: str = "/app/data/voice-clips"
     db_path: str = "/app/data/night.db"
     timezone: str = "UTC"
+    data_retention_days: int = 90
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> DashboardConfig:
@@ -66,6 +68,7 @@ class DashboardConfig:
             voice_clip_dir=env.get("VOICE_CLIP_DIR") or "/app/data/voice-clips",
             db_path=env.get("DB_PATH") or "/app/data/night.db",
             timezone=env.get("TZ") or "UTC",
+            data_retention_days=int(env.get("DATA_RETENTION_DAYS") or "90"),
         )
 
 
@@ -94,6 +97,7 @@ def run() -> None:
             strategies_path=config.strategies_path,
             photo_dir=config.photo_dir,
             voice_clip_dir=config.voice_clip_dir,
+            data_retention_days=config.data_retention_days,
         )
     except ValueError as exc:
         # A password HTTP Basic cannot carry. Fail loudly with the reason
