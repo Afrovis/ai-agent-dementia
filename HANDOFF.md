@@ -226,15 +226,15 @@ Board: https://github.com/users/Afrovis/projects/2. Repo: https://github.com/Afr
 | M2 Sessions | 12 to 17 | full session runs end to end on replayed fixtures with a real local LLM, dialogue bench passes |
 | M3 Voice | 18 to 21 | a person can say "I need the toilet" and the goal switches, light turns on, agent guides back |
 | M4 Caregiver | 22 to 27 | caregiver can configure everything in the dashboard, morning summary arrives, two-week dry run completed |
-| M5 Video eval | 11, 29 to 33 (29 to 33 still to be filed, titles below) | every confirmed clip under `../data-ai-agent-dementia/` scores through `tools/video_eval` and perception bench tier 3, the three defects are fixed, and the pose backend and bridge aspect decisions are made with numbers |
+| M5 Video eval | 11, 48 to 52 | every confirmed clip under `../data-ai-agent-dementia/` scores through `tools/video_eval` and perception bench tier 3, the three defects are fixed, and the pose backend and bridge aspect decisions are made with numbers |
 
-Issues to file for M5, in order, each scoped by the matching section of `docs/VIDEO_EVAL.md`:
+M5 issues, in order, each scoped by the matching section of `docs/VIDEO_EVAL.md`:
 
-- 29 `perceive: pin mediapipe below 1.0` (defect 1; one-line fix plus a test that imports the backend).
-- 30 `video_eval: prepare and predict` (A1, A2, A9: frame extraction in bridge and review formats, offline run of the real backend, tracker and motion gate, zones per placement).
-- 31 `video_eval: blur, sheets and labellers` (A3, A4: fail-closed head blur with verification, contact sheets, Ollama and Codex labellers).
-- 32 `video_eval: reconcile, score, replay` (A5 to A7: reference timeline with human confirmation, per-frame and event metrics against the PLAN.md gates, end-to-end replay report).
-- 33 `embodiment: decide and fix the bridge aspect ratio` (defect 2, after the squash vs letterbox experiment; also send the true camera dimensions).
+- 48 `perceive: pin mediapipe below 1.0` (defect 1; implemented with a backend API regression test).
+- 49 `video_eval: prepare and predict` (A1, A2, A9: frame extraction in bridge and review formats, offline run of the real backend, tracker and motion gate, zones per placement).
+- 50 `video_eval: blur, sheets and labellers` (A3, A4: fail-closed head blur with verification, contact sheets, Ollama and Codex labellers).
+- 51 `video_eval: reconcile, score, replay` (A5 to A7: reference timeline with human confirmation, per-frame and event metrics against the PLAN.md gates, end-to-end replay report).
+- 52 `embodiment: decide and fix the bridge aspect ratio` (defect 2, after the squash vs letterbox experiment; also send the true camera dimensions).
 - Issue 11 closes when tier 3 (A8) scores the confirmed clips.
 
 Dependency notes:
@@ -242,7 +242,7 @@ Dependency notes:
 - Issue 2 (events and bus) blocks every other issue. Do it first.
 - Issue 28 (browser media bridge) depends on issue 3 (embodiment page with HTTPS).
 - Issue 8 (pose classification) needs real IR fixtures. If none exist yet, build the pipeline against webcam fixtures with a lamp on and mark the IR evaluation as a follow-up.
-- Issue 30 blocks 31 and 32. Issue 29 must land before any `predict` number is trusted, because a fresh `perceive` build is currently broken. Issue 33 waits for the squash vs letterbox numbers from 32.
+- Issue 49 blocks 50 and 51. Issue 48 must land before any `predict` number is trusted, because a fresh `perceive` build is otherwise broken. Issue 52 waits for the squash vs letterbox numbers from 51.
 - Issue 15 (local LLM calls) should be built against the `FakeLLM` in `shared/` first, then Ollama.
 
 ## 9. Local development
@@ -286,8 +286,8 @@ Run tests for one service: `cd services/agent && pytest`.
 
 | Question | Default until decided | Decider |
 |---|---|---|
-| Pose model: MediaPipe Pose vs YOLOv8-pose | MediaPipe, both backends built behind `PERCEIVE_POSE_BACKEND` in issue 8; the comparison now runs on the owner's RGB bedroom recordings through `tools/video_eval` (M5). A five-frame smoke test on 2026-09-13 had YOLO finding people in bed that MediaPipe missed at bridge resolution, so expect the default to be revisited | whoever does issue 32, with bench numbers |
-| Bridge frame format: 320 by 240 squashed vs letterboxed, and resolution | keep the current squash until issue 32 measures it; do not change `script.js` constants without numbers | issue 33 |
+| Pose model: MediaPipe Pose vs YOLOv8-pose | MediaPipe, both backends built behind `PERCEIVE_POSE_BACKEND` in issue 8; the comparison now runs on the owner's RGB bedroom recordings through `tools/video_eval` (M5). A five-frame smoke test on 2026-09-13 had YOLO finding people in bed that MediaPipe missed at bridge resolution, so expect the default to be revisited | whoever does issue 51, with bench numbers |
+| Bridge frame format: 320 by 240 squashed vs letterboxed, and resolution | keep the current squash until issue 51 measures it; do not change `script.js` constants without numbers | issue 52 |
 | Local text model | `llama3.1:8b`, compare 3 on the dialogue bench in issue 17 | issue 17 |
 | Smart plug for path light in v1 | manual night light, plug behind a feature flag | project owner |
 | Morning summary contents | count, durations, what helped, faults | project owner after a caregiver interview |

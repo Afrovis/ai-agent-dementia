@@ -1,14 +1,18 @@
-"""Tests for `perceive.backends`, using `ScriptedBackend` only.
+"""Tests for `perceive.backends`, without loading real model weights.
 
-No model weights, no camera, no GPU: mediapipe and ultralytics are never
-imported here, matching HANDOFF.md's testing convention and issue #8's
-requirement that the service imports and its tests run with neither
+No model weights, no camera, no GPU: real mediapipe and ultralytics packages
+are never imported here, matching HANDOFF.md's testing convention and issue
+#8's requirement that the service imports and its tests run with neither
 installed.
 """
+
+import sys
+from types import SimpleNamespace
 
 from perceive.backends import (
     LANDMARK_NAMES,
     Landmark,
+    MediaPipeBackend,
     PoseResult,
     ScriptedBackend,
     build_backend,
@@ -61,6 +65,27 @@ def test_build_backend_rejects_unknown_kind():
         assert "unknown" in str(exc)
     else:
         raise AssertionError("expected ValueError")
+
+
+def test_mediapipe_backend_uses_pinned_solutions_api(monkeypatch):
+    calls: list[dict[str, object]] = []
+
+    class FakePose:
+        def __init__(self, **kwargs: object) -> None:
+            calls.append(kwargs)
+
+    fake_mediapipe = SimpleNamespace(solutions=SimpleNamespace(pose=SimpleNamespace(Pose=FakePose)))
+    monkeypatch.setitem(sys.modules, "mediapipe", fake_mediapipe)
+
+    MediaPipeBackend(min_detection_confidence=0.65)
+
+    assert calls == [
+        {
+            "static_image_mode": True,
+            "model_complexity": 1,
+            "min_detection_confidence": 0.65,
+        }
+    ]
 
 
 def test_pose_result_carries_every_canonical_landmark():
