@@ -22,9 +22,14 @@ Prepare the squash and letterbox variants, then run offline prediction:
 .venv-video-eval/bin/python -m video_eval prepare \
   --video ../data-ai-agent-dementia/incoming/sample.mov --clip 2026-09-13_sample \
   --variant letterbox
+.venv-video-eval/bin/python -m video_eval zones --clip 2026-09-13_sample
 .venv-video-eval/bin/python -m video_eval predict \
   --clip 2026-09-13_sample --backend mediapipe
 ```
+
+`zones` prints the path of a prepared bridge frame. Use that frame as the
+reference for manually writing the clip's normalised `zones.yaml`; see
+[`config/zones.example.yaml`](../../config/zones.example.yaml) for the format.
 
 `prepare` requires `ffmpeg` and `ffprobe`. Commands skip matching completed
 outputs unless `--force` is supplied. Every output records the current git SHA,

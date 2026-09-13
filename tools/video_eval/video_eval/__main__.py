@@ -35,6 +35,10 @@ def build_parser() -> argparse.ArgumentParser:
     predict.add_argument("--confirm-frames", type=int)
     predict.add_argument("--min-confidence", type=float)
     predict.add_argument("--walk-threshold", type=float)
+
+    zones = commands.add_parser("zones", help="print a bridge frame path for drawing zones")
+    zones.add_argument("--clip", required=True)
+    zones.add_argument("--variant", choices=("squash", "letterbox"), default="squash")
     return parser
 
 
@@ -48,7 +52,7 @@ def main(argv: list[str] | None = None) -> int:
             variant=args.variant,
             force=args.force,
         )
-    else:
+    elif args.command == "predict":
         # Keep `prepare` usable in a lightweight host environment with only
         # Pillow/PyYAML/ffmpeg. The real capture/perceive packages are needed
         # only by `predict`, so importing them eagerly would be needless coupling.
@@ -65,6 +69,11 @@ def main(argv: list[str] | None = None) -> int:
             min_confidence=args.min_confidence,
             walk_threshold=args.walk_threshold,
         )
+    else:
+        from video_eval.zones import zone_reference_frame
+
+        print(zone_reference_frame(args.clip, root=args.data_root, variant=args.variant))
+        return 0
     print(json.dumps(result, sort_keys=True))
     return 0
 
