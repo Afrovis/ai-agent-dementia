@@ -4,6 +4,13 @@ ARG INSTALL_VIDEO_EVAL=false
 
 WORKDIR /app
 
+# MediaPipe's OpenCV dependency links against these at import time. Without
+# them the Python package installs successfully in slim but the backend still
+# crashes before its first frame with a missing `libGL.so.1`.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY shared/ /app/shared/
 COPY services/perceive/ /app/services/perceive/
 
