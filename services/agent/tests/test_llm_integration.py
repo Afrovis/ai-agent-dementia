@@ -60,7 +60,7 @@ def test_interpretation_goal_and_planner_are_advisory_and_rule_checked():
     assert llm.calls[0][1]["profile"]["night_themes"] == ["looking for work"]
     assert llm.calls[1][1]["profile"] == profile.prompt_data()
     planner_state = llm.calls[1][1]["session_state"]
-    assert planner_state["current_strategy"] == "ambient_orient"
+    assert planner_state["current_strategy"] == "path_light"
     assert planner_state["strategy_order"][0] == "ambient_orient"
     assert "drink_water" in planner_state["allowed_goals"]
 

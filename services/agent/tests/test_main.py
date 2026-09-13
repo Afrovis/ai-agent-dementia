@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from nc_shared.bus import FakeBus
 from nc_shared.events import (
     GoalChanged,
+    LightCommand,
     Notify,
     PersonState,
     Say,
@@ -44,6 +45,7 @@ def make_bus() -> FakeBus:
     bus.ensure_group("notify", "test")
     bus.ensure_group("show", "test")
     bus.ensure_group("say", "test")
+    bus.ensure_group("light", "test")
     return bus
 
 
@@ -226,6 +228,77 @@ def test_goal_changed_reaches_the_bus_with_correct_fields():
     assert goal_changed[0].from_goal == "return_to_bed"
     assert goal_changed[0].to_goal == "restroom"
     assert goal_changed[0].session_id == session.session_id
+
+    light_events = bus.read("light", "test", "c1", count=10)
+    commands = [event for _id, event in light_events if isinstance(event, LightCommand)]
+    assert [(event.state, event.reason) for event in commands] == [("on", "restroom_goal_started")]
+
+
+def test_return_from_restroom_turns_light_off_and_selects_guided_return():
+    bus = make_bus()
+    session = Session(config=AgentConfig(observe_seconds=1.0, zone_confirm_readings=1))
+    now_fn, advance = make_clock(NIGHT)
+
+    bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    advance(2)
+    run_once(bus, session, now_fn=now_fn)
+
+    bus.publish(PersonState(source="perceive", state="walking", confidence=0.9, zone="door"))
+    advance(1)
+    run_once(bus, session, now_fn=now_fn)
+    bus.publish(PersonState(source="perceive", state="walking", confidence=0.9, zone="bed"))
+    advance(9)
+    run_once(bus, session, now_fn=now_fn)
+
+    commands = [event for _id, event in bus.read("light", "test", "c1", count=10)]
+    assert [event.state for event in commands] == ["on", "off"]
+    shows = [event for _id, event in bus.read("show", "test", "c1", count=20)]
+    assert shows[-1].headline == "Let's head back to bed"
+
+
+def test_disabled_path_light_strategy_does_not_emit_hardware_command():
+    bus = make_bus()
+    strategies = [
+        dc_replace(strategy, enabled=False) if strategy.id == "path_light" else strategy
+        for strategy in DEFAULT_STRATEGIES
+    ]
+    session = Session(
+        config=AgentConfig(observe_seconds=1.0, zone_confirm_readings=1),
+        strategies=strategies,
+    )
+    now_fn, advance = make_clock(NIGHT)
+
+    bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    advance(2)
+    run_once(bus, session, now_fn=now_fn)
+    bus.publish(PersonState(source="perceive", state="walking", confidence=0.9, zone="door"))
+    advance(1)
+    run_once(bus, session, now_fn=now_fn)
+
+    assert session.goal == "restroom"
+    assert bus.read("light", "test", "c1", count=10) == []
+
+
+def test_escalation_during_restroom_trip_keeps_path_light_on():
+    bus = make_bus()
+    session = Session(config=AgentConfig(observe_seconds=1.0, zone_confirm_readings=1))
+    now_fn, advance = make_clock(NIGHT)
+
+    bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    advance(2)
+    run_once(bus, session, now_fn=now_fn)
+    bus.publish(PersonState(source="perceive", state="walking", confidence=0.9, zone="door"))
+    advance(1)
+    run_once(bus, session, now_fn=now_fn)
+    bus.publish(PersonState(source="perceive", state="on_floor", confidence=0.9, zone="other"))
+    advance(1)
+    run_once(bus, session, now_fn=now_fn)
+
+    commands = [event for _id, event in bus.read("light", "test", "c1", count=10)]
+    assert [event.state for event in commands] == ["on"]
 
 
 def test_session_state_goal_reflects_the_live_goal():

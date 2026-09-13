@@ -8,11 +8,12 @@
 # crashing `agent` -- logged as a warning, never fatal, exactly like
 # `perceive`'s `zones.yaml`.
 #
-# HANDOFF.md section 7 / PLAN.md section 5.3 list ten strategies. Only six
-# are implemented, and only those six may appear below:
+# HANDOFF.md section 7 / PLAN.md section 5.3 list ten strategies. Seven are
+# implemented, and only those seven may appear below:
 #
 #   1  ambient_orient          2  soft_greeting        3  orient_time_place
-#   4  validate_and_redirect   5  guided_return        10 escalate_phone
+#   4  validate_and_redirect   5  guided_return        8  path_light
+#   10 escalate_phone
 #
 # Deliberately absent, and not a bug:
 #
@@ -20,8 +21,6 @@
 #   7  music_or_story   ingestion path exists for either yet. Out of scope
 #                        for every current issue, not just this one.
 #   9  escalate_gentle  needs in-home chime hardware PLAN.md marks v2.
-#   8  path_light       needs a smart-plug integration -- scoped to issue
-#                        #21, a separate piece of work, not this file.
 #
 # Every entry below only *overrides* fields on the matching built-in
 # strategy (matched by `id`); an id this file lists that `agent` does not
@@ -156,6 +155,22 @@ strategies:
     headline: "Let's head back to bed"
     body: "Your bed is behind you."
     say: "Let's go back to bed now{name_vocative}."
+
+  # Goal-specific: `agent` selects this immediately for a confirmed door
+  # approach or interpreted restroom need; it is never part of the ordinary
+  # return-to-bed ladder. The `light` service independently turns the
+  # configured smart plug on for the goal and off when the goal resolves.
+  - id: path_light
+    order: 8
+    enabled: true
+    dwell_seconds: 900
+    cooldown_seconds: 0
+    intrusiveness: 2
+    face: speaking
+    brightness: 0.6
+    headline: "The restroom path is lit"
+    body: "{restroom_direction}."
+    say: "{restroom_direction}{name_vocative}."
 
   # `agent` never selects this rung by working down the ladder -- it is
   # reached only by an actual escalation, which also alerts the caregiver.

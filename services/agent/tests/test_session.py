@@ -292,7 +292,23 @@ def test_bathroom_path_zone_switches_goal_to_restroom():
     assert transition.goal_change is not None
     assert transition.goal_change.from_goal == "return_to_bed"
     assert transition.goal_change.to_goal == "restroom"
+    assert transition.strategy is not None
+    assert transition.strategy.id == "path_light"
     assert session.goal == "restroom"
+
+
+def test_door_zone_switches_goal_to_restroom():
+    session = make_session()
+    t = NIGHT
+    enter_engaged(session, t)
+    t += timedelta(seconds=30)
+
+    transition, _t = feed_zone(session, "walking", "door", t)
+    assert transition is not None
+    assert transition.goal == "restroom"
+    assert transition.goal_change is not None
+    assert transition.strategy is not None
+    assert transition.strategy.id == "path_light"
 
 
 def test_a_single_bathroom_path_reading_does_not_switch_the_goal():
@@ -346,6 +362,8 @@ def test_restroom_returns_to_parent_goal_when_person_comes_back():
     assert transition.goal_change is not None
     assert transition.goal_change.from_goal == "restroom"
     assert transition.goal_change.to_goal == "return_to_bed"
+    assert transition.strategy is not None
+    assert transition.strategy.id == "guided_return"
     assert session.goal == "return_to_bed"
 
 

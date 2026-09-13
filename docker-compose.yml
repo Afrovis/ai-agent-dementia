@@ -123,6 +123,25 @@ services:
       - ./data:/app/data
       - ./config:/app/config:ro
 
+  light:
+    build:
+      context: .
+      dockerfile: services/light/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - bus
+    env_file: .env
+    environment:
+      REDIS_URL: ${REDIS_URL}
+      LIGHT_ENABLED: ${LIGHT_ENABLED:-false}
+      LIGHT_BACKEND: ${LIGHT_BACKEND:-shelly}
+      LIGHT_DEVICE_URL: ${LIGHT_DEVICE_URL:-}
+      LIGHT_SWITCH_ID: ${LIGHT_SWITCH_ID:-0}
+      LIGHT_TIMEOUT_SECONDS: ${LIGHT_TIMEOUT_SECONDS:-3}
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config:ro
+
   embodiment:
     build:
       context: .

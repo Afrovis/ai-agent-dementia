@@ -1,13 +1,14 @@
 """The strategy catalogue and selection engine for `agent` (issue #14).
 
 HANDOFF.md section 7 and PLAN.md section 5.3 list ten strategies. This
-module implements strategies 1 to 5 and 10, exactly the set issue #14
-scopes in:
+module implements strategies 1 to 5, 8, and 10:
 
 - `ambient_orient` (1), `soft_greeting` (2), `orient_time_place` (3),
   `validate_and_redirect` (4), `guided_return` (5): the ordinary,
   escalating-intrusiveness ladder HANDOFF.md's phase summary means by
   "run strategies in configured order" while `ENGAGED`.
+- `path_light` (8): selected specifically when the `restroom` goal starts,
+  and excluded from the ordinary return-to-bed ladder.
 - `escalate_phone` (10): the terminal strategy selected on `ESCALATED`,
   see `StrategyEngine.force` and its docstring for why it is forced rather
   than chosen through the ordinary ladder.
@@ -19,9 +20,6 @@ Deliberately absent, and not faked:
   Out of scope for every current issue, not just this one.
 - `escalate_gentle` (9) needs in-home chime hardware PLAN.md marks v2.
   Out of scope for every current issue.
-- `path_light` (8) needs a smart-plug integration and is scoped to issue
-  #21, not this one. Its catalogue row exists in HANDOFF.md/PLAN.md; it
-  has no `StrategyDef` here on purpose.
 
 ## Where the LLM does and does not sit
 
@@ -83,6 +81,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(SERVICE_NAME)
 
 ESCALATE_PHONE_ID = "escalate_phone"
+PATH_LIGHT_ID = "path_light"
+GUIDED_RETURN_ID = "guided_return"
 
 MAX_PROGRESS_DWELL_MULTIPLIER = 3.0
 """How far "progress" may stretch one strategy's dwell before the ladder
@@ -130,6 +130,12 @@ class StrategyDef:
     body_template: str
     say_template: str | None = None
     photo_id: str | None = None
+    goal_only: bool = False
+    """Exclude this strategy from the ordinary ladder.
+
+    Goal-only strategies are selected through `select_for_goal`, which
+    still enforces caregiver enablement and cooldown through the rule layer.
+    """
     terminal: bool = False
     """Whether this strategy may only ever be selected through
     `StrategyEngine.force`, never by the ordinary ladder.
@@ -236,7 +242,7 @@ DEFAULT_STRATEGIES: tuple[StrategyDef, ...] = (
         say_template="It's alright{name_vocative}, let's rest now and talk more in the morning.",
     ),
     StrategyDef(
-        id="guided_return",
+        id=GUIDED_RETURN_ID,
         order=5,
         enabled=True,
         intrusiveness=3,
@@ -247,6 +253,23 @@ DEFAULT_STRATEGIES: tuple[StrategyDef, ...] = (
         headline_template="Let's head back to bed",
         body_template="Your bed is behind you.",
         say_template="Let's go back to bed now{name_vocative}.",
+    ),
+    StrategyDef(
+        id=PATH_LIGHT_ID,
+        order=8,
+        enabled=True,
+        intrusiveness=2,
+        # The physical light remains on for the whole restroom goal. This
+        # dwell only controls the screen/speech strategy if session updates
+        # continue before the person returns.
+        dwell_seconds=900.0,
+        cooldown_seconds=0.0,
+        face="speaking",
+        brightness=0.6,
+        headline_template="The restroom path is lit",
+        body_template="{restroom_direction}.",
+        say_template="{restroom_direction}{name_vocative}.",
+        goal_only=True,
     ),
     StrategyDef(
         id=ESCALATE_PHONE_ID,
@@ -331,6 +354,9 @@ def render_template(template: str, profile: PersonProfile, **extra: str) -> str:
         "caregiver_name": profile.caregiver_name,
         "caregiver_relationship": profile.caregiver_relationship,
         "restroom_location": profile.restroom_location,
+        "restroom_direction": (
+            profile.restroom_location or "The restroom is just outside the bedroom"
+        ).rstrip(".!?"),
         "name_vocative": name_vocative,
     }
     fields.update(extra)
@@ -583,7 +609,7 @@ class StrategyEngine:
             # catalogue: `escalate_phone` is enabled with a zero cooldown,
             # so it would otherwise always be "available" and the
             # exhaustion branch of `maybe_advance` would be dead code.
-            if self._by_id[sid].terminal:
+            if self._by_id[sid].terminal or self._by_id[sid].goal_only:
                 continue
             if self._is_available(sid, now):
                 return sid
@@ -626,6 +652,24 @@ class StrategyEngine:
         self._started_at = now
         self._selected_at = now
         return self._by_id.get(strategy_id)
+
+    def select_for_goal(self, strategy_id: str, now: datetime) -> StrategyDef | None:
+        """Select a deterministic goal-specific strategy when available.
+
+        Unlike `force`, this obeys caregiver enablement and cooldown. Unlike
+        `propose_next`, it may jump outside the ordinary ladder because the
+        active goal, not an LLM proposal, determines the strategy.
+        """
+        strategy = self._by_id.get(strategy_id)
+        if strategy is None or strategy.terminal or not self._is_available(strategy_id, now):
+            return None
+        current = self.current()
+        if current is not None and current.id != strategy_id:
+            self._cooldown_until[current.id] = now + timedelta(seconds=current.cooldown_seconds)
+        self.current_id = strategy_id
+        self._started_at = now
+        self._selected_at = now
+        return strategy
 
     def propose_next(self, strategy_id: str, now: datetime) -> StrategyDef | None:
         """Accept one planner suggestion only when it is the deterministic
@@ -684,6 +728,12 @@ class StrategyEngine:
         """
         current = self.current()
         if current is None or self._started_at is None:
+            return current, False, False
+        # A goal-specific strategy is bounded by the goal lifecycle, not by
+        # the ordinary ladder. In particular, `path_light` must not exhaust
+        # and escalate on the same tick that the restroom timeout safely
+        # returns the session to `return_to_bed`.
+        if current.goal_only:
             return current, False, False
 
         elapsed = (now - self._started_at).total_seconds()

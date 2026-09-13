@@ -13,6 +13,7 @@ from agent.strategies import (
     DEFAULT_PROFILE,
     DEFAULT_STRATEGIES,
     ESCALATE_PHONE_ID,
+    PATH_LIGHT_ID,
     PersonProfile,
     StrategyEngine,
     load_strategies,
@@ -402,6 +403,18 @@ def test_the_ladder_never_selects_the_terminal_strategy():
         "validate_and_redirect",
         "guided_return",
     ]
+
+
+def test_path_light_is_goal_only_and_selectable_for_restroom():
+    engine = StrategyEngine(list(DEFAULT_STRATEGIES))
+    selected = engine.select_for_goal(PATH_LIGHT_ID, NOW)
+    assert selected is not None
+    assert selected.id == PATH_LIGHT_ID
+    assert selected.goal_only is True
+    current, changed, exhausted = engine.maybe_advance(NOW + timedelta(hours=1))
+    assert current == selected
+    assert changed is False
+    assert exhausted is False
 
 
 def test_running_out_of_ordinary_strategies_reports_exhausted():
