@@ -22,6 +22,7 @@ def test_shipped_example_contains_every_profile_field():
         things_to_avoid=("Do not mention the hospital", "Avoid loud or urgent language"),
         physical_notes=("Uses a walker", "Is unsteady at night"),
         restroom_location=("The restroom is through the bedroom door and immediately to the left"),
+        enable_cloud_fallback=False,
     )
 
 
@@ -32,6 +33,15 @@ def test_load_profile_uses_env_path_and_accepts_string_caregiver(tmp_path):
     assert profile.name == "Jo"
     assert profile.caregiver_name == "Sam"
     assert profile.calming_things == ("Soft music",)
+
+
+def test_cloud_fallback_requires_an_explicit_boolean_opt_in(tmp_path):
+    path = tmp_path / "person.yaml"
+    path.write_text("name: Jo\nenable_cloud_fallback: true\n", encoding="utf-8")
+    assert load_profile(path).enable_cloud_fallback is True
+
+    path.write_text('name: Jo\nenable_cloud_fallback: "true"\n', encoding="utf-8")
+    assert load_profile(path) == DEFAULT_PROFILE
 
 
 def test_load_profile_uses_example_beside_missing_primary(tmp_path):

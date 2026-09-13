@@ -39,10 +39,13 @@ class PersonProfile:
     things_to_avoid: tuple[str, ...] = ()
     physical_notes: tuple[str, ...] = ()
     restroom_location: str = ""
+    enable_cloud_fallback: bool = False
 
     def prompt_data(self) -> dict[str, object]:
         """Return a JSON-safe copy; prompts never receive the live object."""
         data = asdict(self)
+        # This is an execution switch, not personal context the model needs.
+        data.pop("enable_cloud_fallback")
         for field in ("night_themes", "calming_things", "things_to_avoid", "physical_notes"):
             data[field] = list(data[field])
         return data
@@ -65,6 +68,14 @@ def _clean_text_list(value: object, *, field: str) -> tuple[str, ...]:
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
         raise TypeError(f"{field} must be a list of strings")
     return tuple(item.strip() for item in value if item.strip())
+
+
+def _clean_bool(value: object, *, field: str) -> bool:
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise TypeError(f"{field} must be a boolean")
+    return value
 
 
 def _parse_profile(raw: object) -> PersonProfile:
@@ -100,6 +111,9 @@ def _parse_profile(raw: object) -> PersonProfile:
         things_to_avoid=_clean_text_list(values.get("things_to_avoid"), field="things_to_avoid"),
         physical_notes=_clean_text_list(values.get("physical_notes"), field="physical_notes"),
         restroom_location=_clean_text(values.get("restroom_location"), field="restroom_location"),
+        enable_cloud_fallback=_clean_bool(
+            values.get("enable_cloud_fallback"), field="enable_cloud_fallback"
+        ),
     )
 
 

@@ -329,6 +329,12 @@ def _render_profile(profile: dict, message: str = "") -> str:
         profile.get("restroom_location"),
         textarea=True,
     )
+    cloud_checked = " checked" if profile.get("enable_cloud_fallback") else ""
+    cloud_field = f"""<label class="toggle cloud-consent"><input type="checkbox"
+name="enable_cloud_fallback"{cloud_checked}> Enable text-only Claude fallback</label>
+<p class="field-help">When enabled, repeated unclear interpretations or a low-confidence
+plan may send the structured transcript and profile context shown in History to Anthropic.
+Images and audio are never sent.</p>"""
     return f"""<h1>Person profile</h1>
 <p>These details stay on this device and shape every local model prompt and caregiver phrase.</p>
 {notice}<form class="settings-form" method="post" action="/profile">
@@ -336,7 +342,7 @@ def _render_profile(profile: dict, message: str = "") -> str:
 {_field("Preferred form of address", "preferred_address", profile.get("preferred_address"))}
 {_field("Caregiver name", "caregiver_name", caregiver.get("name"))}
 {_field("Caregiver relationship", "caregiver_relationship", caregiver.get("relationship"))}</div>
-{list_fields}{restroom_field}
+{list_fields}{restroom_field}{cloud_field}
 <button type="submit">Save profile</button></form>
 <p class="restart-note">The <strong>agent</strong> service reads this profile at startup;
 restart it after saving.</p>"""

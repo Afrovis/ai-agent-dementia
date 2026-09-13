@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 
 from nc_shared.bus import FakeBus
 from nc_shared.events import (
+    CloudCall,
     GoalChanged,
     LightCommand,
     Notify,
@@ -27,6 +28,7 @@ from agent.main import (
     PERSON_STREAM,
     UTTERANCE_GROUP,
     UTTERANCE_STREAM,
+    _publish_cloud_call,
     maybe_emit_health,
     maybe_emit_session_heartbeat,
     run_once,
@@ -46,7 +48,29 @@ def make_bus() -> FakeBus:
     bus.ensure_group("show", "test")
     bus.ensure_group("say", "test")
     bus.ensure_group("light", "test")
+    bus.ensure_group("cloud", "test")
     return bus
+
+
+def test_cloud_call_audit_uses_the_live_session_and_exact_payload():
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    session.session_id = "session-1"
+    payload = {"task": "classify", "input": {"utterance": "Where am I?"}}
+
+    _publish_cloud_call(bus, session, "interpret", "claude-opus-5", payload)
+
+    events = [event for _id, event in bus.read("cloud", "test", "c1", count=10)]
+    assert events == [
+        CloudCall(
+            source="agent",
+            session_id="session-1",
+            task="interpret",
+            model="claude-opus-5",
+            payload=payload,
+            ts=events[0].ts,
+        )
+    ]
 
 
 def make_clock(start: datetime):

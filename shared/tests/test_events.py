@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from nc_shared.events import (
     Ack,
     AudioChunk,
+    CloudCall,
     Frame,
     GoalChanged,
     Health,
@@ -119,6 +120,25 @@ def test_goal_changed_roundtrip():
     assert copy.from_goal == "return_to_bed"
     assert copy.to_goal == "restroom"
     assert copy.reason == "mentioned toilet"
+
+
+def test_cloud_call_is_text_only_and_roundtrips_exact_payload():
+    event = CloudCall(
+        source="agent",
+        session_id="sess-1",
+        task="interpret",
+        model="claude-opus-5",
+        payload={"task": "classify", "input": {"utterance": "I need help"}},
+    )
+    assert _roundtrip(event).payload == event.payload
+
+    with pytest.raises(ValidationError):
+        CloudCall(
+            source="agent",
+            task="plan",
+            model="claude-opus-5",
+            payload={"audio": b"not allowed"},
+        )
 
 
 def test_light_command_roundtrip():

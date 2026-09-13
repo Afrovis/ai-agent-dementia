@@ -330,6 +330,7 @@ def test_profile_page_saves_caregiver_fields(tmp_path):
         "things_to_avoid": "Urgent language",
         "physical_notes": "Uses a walker",
         "restroom_location": "Outside the door",
+        "enable_cloud_fallback": "on",
     }
 
     with TestClient(app) as client:
@@ -338,6 +339,8 @@ def test_profile_page_saves_caregiver_fields(tmp_path):
     assert response.status_code == 200
     assert "Profile saved" in response.text
     assert "Jean" in person_path.read_text()
+    assert "enable_cloud_fallback: true" in person_path.read_text()
+    assert "Images and audio are never sent" in response.text
 
 
 def test_strategy_page_renders_infinite_escalation_dwell_as_until_acknowledged(tmp_path):

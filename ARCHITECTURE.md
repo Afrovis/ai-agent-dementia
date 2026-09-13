@@ -32,6 +32,7 @@ flowchart LR
     s_store["store"]
     q_ack[("ack<br/>Ack")]
     q_audio_in[("audio_in<br/>AudioChunk")]
+    q_cloud[("cloud<br/>CloudCall")]
     q_frames[("frames<br/>Frame")]
     q_frames_raw[("frames_raw<br/>RawFrame")]
     q_light[("light<br/>LightCommand")]
@@ -45,6 +46,10 @@ flowchart LR
 
   subgraph host["Host (macOS)"]
     ollama["Ollama<br/>vision and text models"]
+  end
+
+  subgraph cloud_provider["Cloud (opt-in)"]
+    anthropic["Anthropic<br/>Claude text model"]
   end
 
   subgraph caregiver["Caregiver"]
@@ -63,6 +68,7 @@ flowchart LR
   q_ack --> s_notify
   s_embodiment --> q_audio_in
   q_audio_in --> s_listen
+  s_agent --> q_cloud
   s_capture --> q_frames
   q_frames --> s_dashboard
   q_frames --> s_perceive
@@ -96,6 +102,7 @@ flowchart LR
   browser <-->|"websockets /ws and /media"| s_embodiment
   camera -.->|"frames"| s_capture
   s_perceive -.->|"HTTP"| ollama
+  s_agent -.->|"text-only fallback"| anthropic
   s_notify -.->|"ntfy"| phone
   s_light -.->|"local HTTP RPC"| plug
   cg_browser <--> s_dashboard
@@ -121,6 +128,7 @@ flowchart LR
   s_perceive["perceive"] --> q_health
   q_health --> s_store
   q_p_ack[("ack")] --> s_store
+  q_p_cloud[("cloud")] --> s_store
   q_p_light[("light")] --> s_store
   q_p_notify[("notify")] --> s_store
   q_p_person[("person")] --> s_store
@@ -137,6 +145,7 @@ flowchart LR
 | --- | --- | --- | --- | --- |
 | `ack` | `Ack` | dashboard | dashboard (`dashboard-live`), notify (`notify`), store (`store`) | no |
 | `audio_in` | `AudioChunk` | embodiment | listen (`listen`) | yes, 50 |
+| `cloud` | `CloudCall` | agent | store (`store`) | no |
 | `frames` | `Frame` | capture | dashboard (`dashboard`), perceive (`perceive`) | yes, 50 |
 | `frames_raw` | `RawFrame` | embodiment | capture (`capture`) | yes, 50 |
 | `health` | `Health` | agent, capture, light, listen, perceive | dashboard (`dashboard-live`), store (`store`) | no |
@@ -165,6 +174,7 @@ against the files that implement them.
 | `listen` | faster-whisper model cache; downloads `small.en` on first use | reads/writes | `services/listen/listen/transcribe.py` |
 | `agent` | `config/strategies.yaml` at startup | reads | `services/agent/agent/strategies.py` |
 | `agent` | Ollama `/api/generate` on the host | calls | `services/agent/agent/llm.py` |
+| `agent` | Anthropic Messages API, text-only and opt-in | calls | `services/agent/agent/llm.py` |
 | `notify` | ntfy topic, or the log when `NTFY_URL` is empty | calls | `services/notify/notify/backends.py` |
 | `light` | Shelly Gen2+ smart plug on the local LAN, optional | calls | `services/light/light/backends.py` |
 | `store` | SQLite `data/night.db` | reads/writes | `services/store/store/main.py` |

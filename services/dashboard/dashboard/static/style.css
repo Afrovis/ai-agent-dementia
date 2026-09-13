@@ -152,8 +152,9 @@ textarea { resize: vertical; }
 }
 
 .strategy-card legend { color: var(--amber); font-weight: 700; }
-.strategy-card .toggle { display: flex; gap: 8px; align-items: center; }
-.strategy-card .toggle input { width: auto; }
+.settings-form .toggle { display: flex; gap: 8px; align-items: center; }
+.settings-form .toggle input { width: auto; }
+.field-help { margin-top: -8px; color: var(--muted); font-size: 13px; }
 .restart-note { color: var(--muted); }
 .media-grid section h2 { margin-top: 0; }
 .media-list { padding: 0; list-style: none; }

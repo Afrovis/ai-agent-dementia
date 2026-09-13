@@ -72,6 +72,7 @@ def test_profile_round_trip_uses_agent_compatible_shape(tmp_path):
             "things_to_avoid": "Urgent language",
             "physical_notes": "Uses a walker",
             "restroom_location": "Outside the door on the left",
+            "enable_cloud_fallback": "on",
         },
     )
 
@@ -80,6 +81,7 @@ def test_profile_round_trip_uses_agent_compatible_shape(tmp_path):
         "Looks for work",
         "Worries about children",
     ]
+    assert load_profile_document(path)["enable_cloud_fallback"] is True
     assert not list(tmp_path.glob(".*.tmp"))
 
 

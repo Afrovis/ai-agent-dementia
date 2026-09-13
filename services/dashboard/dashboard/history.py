@@ -9,7 +9,14 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-TIMELINE_EVENT_TYPES = ("SessionState", "GoalChanged", "Say", "Utterance", "Notify")
+TIMELINE_EVENT_TYPES = (
+    "SessionState",
+    "GoalChanged",
+    "Say",
+    "Utterance",
+    "Notify",
+    "CloudCall",
+)
 
 
 @dataclass(frozen=True)
@@ -126,6 +133,16 @@ def _to_timeline_event(
         old = str(payload.get("from_goal", "")).replace("_", " ")
         new = str(payload.get("to_goal", "")).replace("_", " ")
         return TimelineEvent(ts, session_id, "goal", "Goal changed", f"{old} → {new}")
+    if event_type == "CloudCall":
+        task = str(payload.get("task", "request")).replace("_", " ")
+        sent = payload.get("payload", {})
+        return TimelineEvent(
+            ts,
+            session_id,
+            "cloud",
+            f"Cloud {task} request",
+            json.dumps(sent, ensure_ascii=False, sort_keys=True),
+        )
     title = str(payload.get("title", "Alert"))
     return TimelineEvent(ts, session_id, "alert", title, str(payload.get("body", "")))
 

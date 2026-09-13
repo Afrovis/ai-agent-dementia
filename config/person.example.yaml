@@ -27,3 +27,8 @@ physical_notes:
   - Is unsteady at night
 
 restroom_location: The restroom is through the bedroom door and immediately to the left
+
+# Explicit opt-in. When true, only structured text may be sent to Claude after
+# two unclear local interpretations or a local planner confidence below 0.4.
+# Every request is retained in the caregiver History timeline.
+enable_cloud_fallback: false

@@ -2,7 +2,7 @@
 
 Read this before touching any issue. It contains everything not in the code yet: the fixed decisions, the conventions, the contracts between services, and the rules that must never be broken. `PLAN.md` is the design rationale. This file is the execution brief.
 
-Last updated: 2026-09-12. If you change a decision below, update this file in the same PR.
+Last updated: 2026-09-13. If you change a decision below, update this file in the same PR.
 
 ## 1. What this project is, in three sentences
 
@@ -87,6 +87,7 @@ All events are pydantic models in `shared/nc_shared/events.py`, serialised as JS
 | `speech_in` | `SpeechStarted`, `Utterance` | `listen` | onset: no payload beyond base fields; utterance: `text`, `confidence`, `duration_s` |
 | `session` | `SessionState` | `agent` | `phase: IDLE, OBSERVING, ENGAGED, COOLDOWN, ESCALATED`, `goal`, `strategy_index` |
 | `session` | `GoalChanged` | `agent` | `from_goal`, `to_goal`, `reason` |
+| `cloud` | `CloudCall` | `agent` | `task: interpret or plan`, `model`, `payload: JSON text data only` |
 | `say` | `Say` | `agent` | `text`, `strategy`, `interruptible: bool` |
 | `show` | `Show` | `agent` | `face: asleep, awake, speaking, listening`, `headline`, `body`, `photo_id or None`, `brightness: 0 to 1` |
 | `notify` | `Notify` | `agent`; any service on fault (currently `embodiment` and `listen`) | `level: info, attention, critical`, `title`, `body`, `repeat_until_ack: bool` |
@@ -123,6 +124,14 @@ LLM calls, all with structured JSON output validated by pydantic:
 `plan` output is advisory. `rules.validate()` rejects any transition not in the table above and any strategy that is disabled or on cooldown (issue #14: `rules.validate_strategy()`, called by `agent.strategies.StrategyEngine` for every candidate it considers).
 
 Cloud fallback: only for `interpret` and `plan`, only when `enable_cloud_fallback` is true for the person, only after two consecutive `unclear` intents or `confidence < 0.4`. Log a `CloudCall` row with the exact payload.
+
+Issue #25 implements that fallback through the official Anthropic Python SDK
+using `claude-opus-5`. It is disabled by default in `person.yaml`; when enabled,
+two consecutive local `unclear` interpretations or a local planner confidence
+below `0.4` retry that one operation in Claude. Composition always stays local.
+The exact structured text data sent is published as a text-only `CloudCall`
+before each request, persisted by `store`, and displayed in History. Missing or
+failed cloud access preserves the local result and never bypasses the rule layer.
 
 Issue #17's dialogue regression suite lives in `tests/dialogue_bench/`: 50
 synthetic scenarios score overall/per-class intent accuracy and every composed

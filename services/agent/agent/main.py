@@ -37,6 +37,12 @@ caregiver, fail quiet to the person"):
   to that `Transition`.
 - `Health`, matching `perceive`/`capture`.
 
+Issue #25 wraps the local client with an opt-in Claude fallback. Only a
+second consecutive local `unclear` interpretation or a local planner result
+below 0.4 confidence may leave the device; composition is always local. Every
+outbound structured-text payload is published as `CloudCall` before the SDK
+request so `store` retains it and the caregiver History page shows it.
+
 `AGENT_FAKE=true` dispatches to `agent.fake.run` instead -- the M0 demo
 fixture (HANDOFF.md section 8, CLAUDE.md) that cycles all `Show` states
 with no perception, LLM, or session machine in the loop. Default is the
@@ -55,6 +61,7 @@ from datetime import datetime
 import redis
 from nc_shared.bus import Bus
 from nc_shared.events import (
+    CloudCall,
     GoalChanged,
     Health,
     LightCommand,
@@ -68,7 +75,7 @@ from nc_shared.events import (
 
 from agent.config import AgentConfig
 from agent.goals import GOALS
-from agent.llm import LLMClient, OllamaLLM
+from agent.llm import ClaudeLLM, FallbackLLM, LLMClient, OllamaLLM
 from agent.profile import DEFAULT_PROFILE, PersonProfile, load_profile
 from agent.rules import Phase, validate_say
 from agent.session import Session, Transition
@@ -198,6 +205,26 @@ def _session_state_for_llm(session: Session) -> dict[str, object]:
         "recent_utterances": list(session.recent_utterances),
         "scene_note": session.last_scene_note,
     }
+
+
+def _publish_cloud_call(
+    bus,
+    session: Session,
+    task: str,
+    model: str,
+    payload: dict[str, object],
+) -> None:
+    """Persist the exact text-only payload before an opted-in cloud request."""
+    bus.publish(
+        CloudCall(
+            source=SERVICE_NAME,
+            session_id=session.session_id,
+            task=task,
+            model=model,
+            payload=payload,
+        )
+    )
+    _log("published CloudCall", event_type="CloudCall", task=task, model=model)
 
 
 def _maybe_publish_say(
@@ -593,7 +620,7 @@ def run() -> None:
     `AGENT_COOLDOWN_SECONDS`, `AGENT_IN_BED_STABLE_SECONDS`,
     `AGENT_FLOOR_LIMIT_SECONDS`, `AGENT_ABSENT_LIMIT_SECONDS`,
     `AGENT_SAY_MIN_GAP_SECONDS`, `STRATEGIES_PATH`, `PERSON_PATH`,
-    `REDIS_URL`, and `TZ`
+    `REDIS_URL`, `ANTHROPIC_API_KEY`, and `TZ`
     from the environment (defaults documented in `.env.example`; `TZ`
     matters because `AGENT_NIGHT_START`/`AGENT_NIGHT_END` are local time
     and containers default to UTC otherwise). A short sleep between
@@ -615,11 +642,26 @@ def run() -> None:
     bus.ensure_group(PERSON_STREAM, PERSON_GROUP)
     bus.ensure_group(UTTERANCE_STREAM, UTTERANCE_GROUP)
     session = Session(config=config, strategies=strategies)
-    llm = OllamaLLM(
+    local_llm = OllamaLLM(
         ollama_url=os.environ.get("OLLAMA_URL", "http://host.docker.internal:11434"),
         model=config.llm_model,
         timeout_seconds=config.llm_timeout_seconds,
     )
+    cloud_llm = None
+    if profile.enable_cloud_fallback:
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+        if not api_key:
+            _log(
+                "cloud fallback enabled but ANTHROPIC_API_KEY is missing; using local model only",
+                level=logging.WARNING,
+            )
+        else:
+
+            def record_cloud_call(task: str, model: str, payload: dict[str, object]) -> None:
+                _publish_cloud_call(bus, session, task, model, payload)
+
+            cloud_llm = ClaudeLLM(api_key=api_key, on_call=record_cloud_call)
+    llm = FallbackLLM(local_llm, cloud_llm)
 
     last_health_at: float | None = None
     last_heartbeat_at: datetime | None = None

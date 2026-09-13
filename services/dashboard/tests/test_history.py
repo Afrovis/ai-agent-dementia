@@ -91,3 +91,27 @@ def test_current_night_key_uses_the_same_noon_boundary():
     assert current_night_key("UTC", before_noon) == "2026-09-12"
     assert current_night_key("UTC", after_noon) == "2026-09-13"
     assert format_night_label("2026-09-12") == "Night of September 12, 2026"
+
+
+def test_cloud_call_shows_the_exact_sent_payload_in_history(tmp_path):
+    path = tmp_path / "night.db"
+    sent = {
+        "task": "Classify intent",
+        "input": {"utterance": "Where am I?", "profile": {"name": "Jean"}},
+    }
+    _database(
+        path,
+        [
+            (
+                "cloud",
+                "CloudCall",
+                "session-1",
+                "2026-09-12T22:00:00+00:00",
+                json.dumps({"task": "interpret", "model": "claude-opus-5", "payload": sent}),
+            )
+        ],
+    )
+
+    event = load_nights(path)[0].events[0]
+    assert event.summary == "Cloud interpret request"
+    assert json.loads(event.detail) == sent

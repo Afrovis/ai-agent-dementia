@@ -100,6 +100,7 @@ def load_profile_document(path: str | Path) -> dict:
     elif not isinstance(caregiver, Mapping):
         caregiver = {}
     result = {field: str(person.get(field) or "").strip() for field in PROFILE_TEXT_FIELDS}
+    result["enable_cloud_fallback"] = person.get("enable_cloud_fallback") is True
     result["caregiver"] = {
         field: str(caregiver.get(field) or "").strip() for field in CAREGIVER_FIELDS
     }
@@ -137,6 +138,7 @@ def save_profile_document(path: str | Path, values: Mapping[str, object]) -> Pat
             raise ValueError(f"{field.replace('_', ' ')} has too much text")
         payload[field] = lines
     payload["restroom_location"] = text("restroom_location")
+    payload["enable_cloud_fallback"] = "enable_cloud_fallback" in values
     return _atomic_yaml(Path(path), payload)
 
 

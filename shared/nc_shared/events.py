@@ -18,7 +18,7 @@ import base64
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, BeforeValidator, Field, PlainSerializer
+from pydantic import BaseModel, BeforeValidator, Field, JsonValue, PlainSerializer
 
 
 def _utcnow() -> datetime:
@@ -140,6 +140,19 @@ class GoalChanged(BaseEvent):
     reason: str
 
 
+class CloudCall(BaseEvent):
+    """Audit record for an opted-in, text-only cloud LLM request.
+
+    ``payload`` is the exact structured user data sent to Claude. ``JsonValue``
+    deliberately excludes bytes, which makes image/audio data invalid at the
+    event-contract boundary rather than relying on caller discipline alone.
+    """
+
+    task: Literal["interpret", "plan"]
+    model: str
+    payload: dict[str, JsonValue]
+
+
 class Say(BaseEvent):
     """Text-to-speech instruction. Produced by `agent`."""
 
@@ -208,6 +221,7 @@ EVENT_STREAMS: dict[type[BaseEvent], str] = {
     Utterance: "speech_in",
     SessionState: "session",
     GoalChanged: "session",
+    CloudCall: "cloud",
     Say: "say",
     Show: "show",
     Notify: "notify",
