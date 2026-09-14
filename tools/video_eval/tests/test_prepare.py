@@ -29,6 +29,19 @@ def test_produce_bridge_frames_matches_squash_and_letterbox_formats(tmp_path):
         assert min(image.getpixel((160, 120))) > 240
 
 
+def test_produce_bridge_frames_letterbox640_pads_to_640x480(tmp_path):
+    review = tmp_path / "f_000000.jpg"
+    _image(review)
+
+    letterbox640 = tmp_path / "letterbox640"
+    produce_bridge_frames([review], letterbox640, "letterbox640")
+
+    with Image.open(letterbox640 / review.name) as image:
+        assert image.size == (640, 480)
+        assert max(image.getpixel((320, 0))) < 10
+        assert min(image.getpixel((320, 240))) > 240
+
+
 def test_prepare_writes_card_manifest_meta_index_and_skips_matching_run(tmp_path):
     source = tmp_path / "source.mov"
     source.write_bytes(b"not decoded by injected extractor")
@@ -105,6 +118,28 @@ def test_second_variant_is_added_to_existing_manifest(tmp_path):
     row = read_jsonl(data_root / "clips" / "clip" / "frames.jsonl")[0]
     assert "bridge_path" in row
     assert "bridge_letterbox_path" in row
+
+
+def test_letterbox640_variant_is_added_to_existing_manifest(tmp_path):
+    source = tmp_path / "source.mov"
+    source.write_bytes(b"video")
+    data_root = tmp_path / "private"
+
+    def fake_extract(_video: Path, destination: Path) -> None:
+        destination.mkdir(parents=True)
+        _image(destination / "f_000000.jpg")
+
+    kwargs = {
+        "root": data_root,
+        "probe_fn": lambda _: {"duration_s": 0.5},
+        "extract_fn": fake_extract,
+    }
+    prepare_video(source, "clip", **kwargs)
+    prepare_video(source, "clip", variant="letterbox640", **kwargs)
+
+    row = read_jsonl(data_root / "clips" / "clip" / "frames.jsonl")[0]
+    assert "bridge_path" in row
+    assert "bridge_letterbox_640_path" in row
 
 
 def test_prepare_refuses_to_replace_a_raw_clip_without_force(tmp_path):

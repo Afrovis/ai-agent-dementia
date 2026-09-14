@@ -15,7 +15,7 @@ import yaml
 from PIL import Image, ImageOps
 
 from video_eval.common import matching_meta, update_index, write_jsonl, write_meta
-from video_eval.paths import EvalPaths
+from video_eval.paths import BRIDGE_VARIANTS, EvalPaths, bridge_size
 
 FPS = 2.0
 REVIEW_WIDTH = 640
@@ -81,11 +81,11 @@ def extract_review_frames(video: Path, destination: Path) -> None:
 
 def _bridge_image(image: Image.Image, variant: str) -> Image.Image:
     if variant == "squash":
-        return image.resize(BRIDGE_SIZE, Image.Resampling.BILINEAR)
-    if variant == "letterbox":
+        return image.resize(bridge_size(variant), Image.Resampling.BILINEAR)
+    if variant.startswith("letterbox"):
         return ImageOps.pad(
             image,
-            BRIDGE_SIZE,
+            bridge_size(variant),
             method=Image.Resampling.BILINEAR,
             color="black",
             centering=(0.5, 0.5),
@@ -155,7 +155,7 @@ def prepare_video(
     if force and paths.review.exists():
         shutil.rmtree(paths.review)
     if force:
-        for existing_variant in ("squash", "letterbox"):
+        for existing_variant in BRIDGE_VARIANTS:
             existing_bridge = paths.bridge(existing_variant)
             if existing_bridge.exists():
                 shutil.rmtree(existing_bridge)
@@ -175,12 +175,10 @@ def prepare_video(
             "t_s": frame_index / FPS,
             "review_path": str(review.relative_to(paths.root)),
         }
-        squash_path = paths.bridge("squash") / review.name
-        letterbox_path = paths.bridge("letterbox") / review.name
-        if squash_path.exists():
-            record["bridge_path"] = str(squash_path.relative_to(paths.root))
-        if letterbox_path.exists():
-            record["bridge_letterbox_path"] = str(letterbox_path.relative_to(paths.root))
+        for existing_variant, spec in BRIDGE_VARIANTS.items():
+            variant_path = paths.bridge(existing_variant) / review.name
+            if variant_path.exists():
+                record[spec.manifest_key] = str(variant_path.relative_to(paths.root))
         records.append(record)
     write_jsonl(paths.frames, records)
     write_meta(meta_path, command="prepare", parameters=parameters, started_at=started)

@@ -22,12 +22,20 @@ from video_eval.common import (
     write_jsonl,
     write_meta,
 )
-from video_eval.paths import EvalPaths
+from video_eval.paths import EvalPaths, manifest_key
 
 
 def prediction_tag(backend: str, variant: str, gated: bool, sha: str) -> str:
     suffix = "-g" if gated else ""
     return f"{backend}-{variant}-{sha[:8]}{suffix}"
+
+
+def backend_label(backend_name: str, yolo_model: str | None, mediapipe_video_mode: bool) -> str:
+    if mediapipe_video_mode:
+        return f"{backend_name}_video"
+    if yolo_model is not None and Path(yolo_model).stem != "yolov8n-pose":
+        return f"{backend_name}_{Path(yolo_model).stem}"
+    return backend_name
 
 
 def predict_clip(
@@ -41,13 +49,18 @@ def predict_clip(
     confirm_frames: int | None = None,
     min_confidence: float | None = None,
     walk_threshold: float | None = None,
-    backend_factory: Callable[[str], PoseBackend] = build_backend,
+    yolo_model: str | None = None,
+    presence_confidence: float | None = None,
+    mediapipe_video_mode: bool = False,
+    backend_factory: Callable[[str], PoseBackend] | None = None,
 ) -> dict[str, Any]:
     started = time.monotonic()
     paths = EvalPaths.for_clip(clip_id, root)
     frames = read_jsonl(paths.frames)
     sha = git_sha()
-    tag = prediction_tag(backend_name, variant, not no_gate, sha)
+    tag = prediction_tag(
+        backend_label(backend_name, yolo_model, mediapipe_video_mode), variant, not no_gate, sha
+    )
     output = paths.predictions / f"{tag}.jsonl"
     meta_path = paths.predictions / f"{tag}.meta.json"
     parameters = {
@@ -58,6 +71,9 @@ def predict_clip(
         "min_confidence": min_confidence,
         "variant": variant,
         "walk_threshold": walk_threshold,
+        "yolo_model": yolo_model,
+        "presence_confidence": presence_confidence,
+        "mediapipe_video_mode": mediapipe_video_mode,
     }
     if not force and output.exists() and matching_meta(meta_path, parameters):
         return {"status": "skipped", "frames": len(read_jsonl(output)), "tag": tag}
@@ -69,12 +85,19 @@ def predict_clip(
         perceive_config = replace(perceive_config, min_confidence=min_confidence)
     if walk_threshold is not None:
         perceive_config = replace(perceive_config, walk_threshold=walk_threshold)
+    if presence_confidence is not None:
+        perceive_config = replace(perceive_config, presence_confidence=presence_confidence)
     tracker = build_tracker(perceive_config)
     zones_path = paths.clip / "zones.yaml"
     zones = load_zones(zones_path)
     gate = build_gate(CaptureConfig.from_env())
-    backend = backend_factory(backend_name)
-    path_key = "bridge_path" if variant == "squash" else "bridge_letterbox_path"
+    if backend_factory is not None:
+        backend = backend_factory(backend_name)
+    else:
+        backend = build_backend(
+            backend_name, model_path=yolo_model, static_image_mode=not mediapipe_video_mode
+        )
+    path_key = manifest_key(variant)
     records: list[dict[str, Any]] = []
     try:
         for frame in frames:

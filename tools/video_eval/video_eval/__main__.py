@@ -7,6 +7,7 @@ import json
 import sys
 from pathlib import Path
 
+from video_eval.paths import BRIDGE_VARIANTS
 from video_eval.prepare import prepare_video
 
 
@@ -23,22 +24,25 @@ def build_parser() -> argparse.ArgumentParser:
     prepare = commands.add_parser("prepare", help="extract review and bridge frames")
     prepare.add_argument("--video", required=True, type=Path)
     prepare.add_argument("--clip", required=True)
-    prepare.add_argument("--variant", choices=("squash", "letterbox"), default="squash")
+    prepare.add_argument("--variant", choices=tuple(BRIDGE_VARIANTS), default="squash")
     prepare.add_argument("--force", action="store_true")
 
     predict = commands.add_parser("predict", help="run capture/perception offline")
     predict.add_argument("--clip", required=True)
     predict.add_argument("--backend", choices=("mediapipe", "yolo"), default="mediapipe")
-    predict.add_argument("--variant", choices=("squash", "letterbox"), default="squash")
+    predict.add_argument("--variant", choices=tuple(BRIDGE_VARIANTS), default="squash")
     predict.add_argument("--no-gate", action="store_true")
     predict.add_argument("--force", action="store_true")
     predict.add_argument("--confirm-frames", type=int)
     predict.add_argument("--min-confidence", type=float)
     predict.add_argument("--walk-threshold", type=float)
+    predict.add_argument("--yolo-model")
+    predict.add_argument("--presence-confidence", type=float)
+    predict.add_argument("--mediapipe-video-mode", action="store_true")
 
     zones = commands.add_parser("zones", help="print a bridge frame path for drawing zones")
     zones.add_argument("--clip", required=True)
-    zones.add_argument("--variant", choices=("squash", "letterbox"), default="squash")
+    zones.add_argument("--variant", choices=tuple(BRIDGE_VARIANTS), default="squash")
 
     blur = commands.add_parser("blur", help="fail-closed head blur of review frames")
     blur.add_argument("--clip", required=True)
@@ -84,7 +88,7 @@ def build_parser() -> argparse.ArgumentParser:
     replay = commands.add_parser("replay", help="replay bridge frames through Docker Compose")
     replay.add_argument("--clip", required=True)
     replay.add_argument("--tag", required=True, help="offline prediction tag to compare")
-    replay.add_argument("--variant", choices=("squash", "letterbox"), default="squash")
+    replay.add_argument("--variant", choices=tuple(BRIDGE_VARIANTS), default="squash")
     replay.add_argument("--speed", type=float, default=1.0)
     replay.add_argument("--settle-seconds", type=float, default=5.0)
     replay.add_argument("--force", action="store_true")
@@ -117,6 +121,9 @@ def main(argv: list[str] | None = None) -> int:
             confirm_frames=args.confirm_frames,
             min_confidence=args.min_confidence,
             walk_threshold=args.walk_threshold,
+            yolo_model=args.yolo_model,
+            presence_confidence=args.presence_confidence,
+            mediapipe_video_mode=args.mediapipe_video_mode,
         )
     elif args.command == "zones":
         from video_eval.zones import zone_reference_frame

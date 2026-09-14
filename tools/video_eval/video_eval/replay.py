@@ -17,7 +17,7 @@ from typing import Any
 import yaml
 
 from video_eval.common import matching_meta, read_jsonl, update_index, write_jsonl, write_meta
-from video_eval.paths import EvalPaths
+from video_eval.paths import EvalPaths, manifest_key
 from video_eval.reconcile import validate_timeline
 
 RETAINED_STREAMS = frozenset({"person", "session", "say", "notify", "light"})
@@ -33,7 +33,7 @@ def build_raw_replay(
     source_width: int = 320,
     source_height: int = 240,
 ) -> int:
-    path_key = "bridge_path" if variant == "squash" else "bridge_letterbox_path"
+    path_key = manifest_key(variant)
     records: list[dict[str, Any]] = []
     for frame in frames:
         if path_key not in frame:

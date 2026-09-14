@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from video_eval.common import read_jsonl
-from video_eval.paths import EvalPaths
+from video_eval.paths import EvalPaths, manifest_key
 
 
 def zone_reference_frame(
@@ -19,7 +19,7 @@ def zone_reference_frame(
     if not paths.frames.is_file():
         raise RuntimeError(f"no frame manifest for {clip_id}; run prepare first")
 
-    path_key = "bridge_path" if variant == "squash" else "bridge_letterbox_path"
+    path_key = manifest_key(variant)
     for frame in read_jsonl(paths.frames):
         relative_path = frame.get(path_key)
         if relative_path:

@@ -8,6 +8,42 @@ from pathlib import Path
 
 
 @dataclass(frozen=True)
+class BridgeVariant:
+    """One shape the browser-bridge frame can be prepared and served in."""
+
+    directory: str
+    manifest_key: str
+    size: tuple[int, int]
+
+
+BRIDGE_VARIANTS: dict[str, BridgeVariant] = {
+    "squash": BridgeVariant(directory="bridge", manifest_key="bridge_path", size=(320, 240)),
+    "letterbox": BridgeVariant(
+        directory="bridge-letterbox", manifest_key="bridge_letterbox_path", size=(320, 240)
+    ),
+    "letterbox640": BridgeVariant(
+        directory="bridge-letterbox-640",
+        manifest_key="bridge_letterbox_640_path",
+        size=(640, 480),
+    ),
+}
+
+
+def manifest_key(variant: str) -> str:
+    try:
+        return BRIDGE_VARIANTS[variant].manifest_key
+    except KeyError as exc:
+        raise ValueError(f"unknown bridge variant: {variant}") from exc
+
+
+def bridge_size(variant: str) -> tuple[int, int]:
+    try:
+        return BRIDGE_VARIANTS[variant].size
+    except KeyError as exc:
+        raise ValueError(f"unknown bridge variant: {variant}") from exc
+
+
+@dataclass(frozen=True)
 class EvalPaths:
     """Resolved paths for one private clip under ``VIDEO_EVAL_DATA``."""
 
@@ -30,11 +66,10 @@ class EvalPaths:
         return self.clip / "review"
 
     def bridge(self, variant: str) -> Path:
-        if variant == "squash":
-            return self.clip / "bridge"
-        if variant == "letterbox":
-            return self.clip / "bridge-letterbox"
-        raise ValueError(f"unknown bridge variant: {variant}")
+        try:
+            return self.clip / BRIDGE_VARIANTS[variant].directory
+        except KeyError as exc:
+            raise ValueError(f"unknown bridge variant: {variant}") from exc
 
     @property
     def frames(self) -> Path:

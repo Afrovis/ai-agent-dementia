@@ -5,7 +5,7 @@ from perceive.backends import LANDMARK_NAMES, Landmark, PoseResult
 from PIL import Image
 
 from video_eval.common import read_jsonl, write_jsonl
-from video_eval.predict import predict_clip, prediction_tag
+from video_eval.predict import backend_label, predict_clip, prediction_tag
 
 
 class FakeBackend:
@@ -26,7 +26,7 @@ class FakeBackend:
         self.closed = True
 
 
-def _prepared_clip(root: Path, frame_count: int = 70) -> None:
+def _prepared_clip(root: Path, frame_count: int = 70, bridge_key: str = "bridge_path") -> None:
     clip = root / "clips" / "clip"
     bridge = clip / "bridge"
     bridge.mkdir(parents=True)
@@ -36,7 +36,7 @@ def _prepared_clip(root: Path, frame_count: int = 70) -> None:
         {
             "frame_index": index,
             "t_s": index / 2,
-            "bridge_path": str(image_path.relative_to(root)),
+            bridge_key: str(image_path.relative_to(root)),
             "review_path": "unused",
         }
         for index in range(frame_count)
@@ -50,6 +50,38 @@ def _prepared_clip(root: Path, frame_count: int = 70) -> None:
 def test_prediction_tag_records_backend_variant_sha_and_gate():
     assert prediction_tag("yolo", "letterbox", True, "1234567890") == ("yolo-letterbox-12345678-g")
     assert prediction_tag("yolo", "squash", False, "1234567890") == "yolo-squash-12345678"
+
+
+def test_backend_label_defaults_to_plain_backend_name():
+    assert backend_label("yolo", None, False) == "yolo"
+    assert backend_label("yolo", "yolov8n-pose.pt", False) == "yolo"
+
+
+def test_backend_label_includes_yolo_model_stem_when_not_default():
+    assert backend_label("yolo", "yolov8s-pose.pt", False) == "yolo_yolov8s-pose"
+
+
+def test_backend_label_marks_mediapipe_video_mode():
+    assert backend_label("mediapipe", None, True) == "mediapipe_video"
+
+
+def test_predict_reads_letterbox640_manifest_key(tmp_path):
+    _prepared_clip(tmp_path, frame_count=2, bridge_key="bridge_letterbox_640_path")
+    backend = FakeBackend()
+
+    result = predict_clip(
+        "clip",
+        root=tmp_path,
+        backend_name="fake",
+        variant="letterbox640",
+        no_gate=True,
+        confirm_frames=1,
+        backend_factory=lambda _: backend,
+    )
+
+    records = read_jsonl(tmp_path / "clips" / "clip" / "predictions" / f"{result['tag']}.jsonl")
+    assert backend.calls == 2
+    assert len(records) == 2
 
 
 def test_predict_runs_backend_tracker_and_motion_gate_offline(tmp_path, monkeypatch):
