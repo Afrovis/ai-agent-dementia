@@ -2,7 +2,8 @@
 
 Issue #7: "Sources: browser webcam via the media bridge (MVP), USB camera,
 RTSP camera with IR night vision (v1)." Every source implements the same
-tiny interface -- `read() -> (jpeg, width, height, source_kind) | None` --
+tiny interface -- `read() -> (jpeg, width, height, source_width,
+source_height, source_kind) | None` --
 so `capture.main.run_once` does not care which one it is talking to; the
 motion gate and publish step downstream are identical either way.
 
@@ -21,8 +22,8 @@ from typing import Literal, Protocol
 RAW_FRAME_STREAM = "frames_raw"
 RAW_FRAME_GROUP = "capture"
 
-FrameTuple = tuple[bytes, int, int, str]
-"""`(jpeg, width, height, source_kind)`, the shape every source yields."""
+FrameTuple = tuple[bytes, int, int, int, int, str]
+"""Encoded bytes/dimensions, intrinsic source dimensions, and source kind."""
 
 
 class FrameSource(Protocol):
@@ -73,7 +74,14 @@ class BrowserBusSource:
             return None
         msg_id, event = self._buffer.pop(0)
         self._bus.ack(RAW_FRAME_STREAM, RAW_FRAME_GROUP, msg_id)
-        return (event.jpeg, event.width, event.height, event.source_kind)
+        return (
+            event.jpeg,
+            event.width,
+            event.height,
+            event.source_width or event.width,
+            event.source_height or event.height,
+            event.source_kind,
+        )
 
 
 class OpenCvSource:
@@ -118,7 +126,7 @@ class OpenCvSource:
         ok, encoded = self._cv2.imencode(".jpg", frame)
         if not ok:
             return None
-        return (encoded.tobytes(), width, height, self._source_kind)
+        return (encoded.tobytes(), width, height, width, height, self._source_kind)
 
     def close(self) -> None:
         """Release the underlying `cv2.VideoCapture`."""

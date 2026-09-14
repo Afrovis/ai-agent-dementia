@@ -204,6 +204,20 @@
     });
   }
 
+  // Fit the whole camera image inside the fixed 4:3 transport canvas without
+  // changing its proportions. A 16:9 stream becomes 320x180 at (0, 30).
+  function letterboxRect(sourceWidth, sourceHeight, targetWidth, targetHeight) {
+    const scale = Math.min(targetWidth / sourceWidth, targetHeight / sourceHeight);
+    const width = Math.round(sourceWidth * scale);
+    const height = Math.round(sourceHeight * scale);
+    return {
+      x: Math.floor((targetWidth - width) / 2),
+      y: Math.floor((targetHeight - height) / 2),
+      width,
+      height,
+    };
+  }
+
   // Downmixes and resamples a `Float32Array` of native-rate audio samples
   // (one or more channels) to mono PCM16 at `AUDIO_SAMPLE_RATE`.
   function floatSamplesToPcm16(channelData, nativeSampleRate) {
@@ -274,7 +288,26 @@
       if (video.readyState < video.HAVE_CURRENT_DATA) {
         return;
       }
-      ctx.drawImage(video, 0, 0, FRAME_WIDTH, FRAME_HEIGHT);
+      const sourceWidth = video.videoWidth;
+      const sourceHeight = video.videoHeight;
+      if (sourceWidth <= 0 || sourceHeight <= 0) {
+        return;
+      }
+      const destination = letterboxRect(
+        sourceWidth,
+        sourceHeight,
+        FRAME_WIDTH,
+        FRAME_HEIGHT
+      );
+      ctx.fillStyle = "black";
+      ctx.fillRect(0, 0, FRAME_WIDTH, FRAME_HEIGHT);
+      ctx.drawImage(
+        video,
+        destination.x,
+        destination.y,
+        destination.width,
+        destination.height
+      );
       canvas.toBlob(
         (blob) => {
           if (!blob) {
@@ -286,6 +319,8 @@
               jpeg_b64: jpegB64,
               width: FRAME_WIDTH,
               height: FRAME_HEIGHT,
+              source_width: sourceWidth,
+              source_height: sourceHeight,
             });
           });
         },

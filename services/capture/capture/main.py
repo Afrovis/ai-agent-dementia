@@ -101,7 +101,7 @@ def run_once(
     frame = source.read()
     if frame is None:
         return False
-    jpeg, width, height, source_kind = frame
+    jpeg, width, height, source_width, source_height, source_kind = frame
 
     now = now_fn()
     if not gate.admit(jpeg, now):
@@ -124,6 +124,8 @@ def run_once(
         jpeg=jpeg,
         width=width,
         height=height,
+        source_width=source_width,
+        source_height=source_height,
         source_kind=source_kind,
     )
     bus.publish(event, maxlen=CAPPED_MAXLEN["frames"])
@@ -132,6 +134,8 @@ def run_once(
         event_type="Frame",
         width=width,
         height=height,
+        source_width=source_width,
+        source_height=source_height,
         jpeg_bytes=len(jpeg),
         fps=round(gate.current_fps, 3),
         source_kind=source_kind,

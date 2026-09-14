@@ -70,12 +70,15 @@ class Landmark:
 class PoseResult:
     """One detected person's pose, normalised and backend-agnostic.
 
-    `landmarks` maps every name in `LANDMARK_NAMES` to a `Landmark` (a
-    backend that cannot see a point still reports it, with low
-    `visibility`, rather than omitting the key -- `perceive.classify`
-    relies on the set being complete). `bbox` is `(x_min, y_min, x_max,
-    y_max)`, normalised. `confidence` is the backend's overall
-    person-detection score, independent of any single landmark.
+    `landmarks` maps names in `LANDMARK_NAMES` to a `Landmark`. A backend
+    that has a position for a point but little confidence in it reports it
+    with low `visibility`; a backend with no position at all for a point
+    (ultralytics zeroes the coordinates of keypoints under 0.5 confidence)
+    omits the key, and `perceive.classify` falls back to `bbox` for
+    anything it cannot measure from the landmarks present. `bbox` is
+    `(x_min, y_min, x_max, y_max)`, normalised. `confidence` is the
+    backend's overall person-detection score, independent of any single
+    landmark.
     """
 
     landmarks: dict[str, Landmark]
@@ -111,10 +114,14 @@ class MediaPipeBackend:
     """Wraps `mediapipe.solutions.pose.Pose`. The default backend (HANDOFF.md
     section 12: "MediaPipe, evaluate both in issue 8").
 
-    `static_image_mode=True` because `perceive` hands it independent JPEGs
-    from the bus, not a continuous video stream mediapipe itself can track
-    frame-to-frame -- letting it assume temporal continuity it does not
-    have would silently degrade accuracy.
+    `static_image_mode=True` by default because `perceive` hands it
+    independent JPEGs from the bus, not a continuous video stream mediapipe
+    itself can track frame-to-frame -- letting it assume temporal
+    continuity it does not have would silently degrade accuracy. At 2 fps
+    the frames are nearly continuous, though, and video mode carries a
+    detection across frames the single-image detector drops, so
+    `PERCEIVE_MEDIAPIPE_VIDEO_MODE` exposes the other setting for the
+    perception bench to measure.
     """
 
     _LANDMARK_INDEX: dict[str, int] = {
@@ -130,7 +137,9 @@ class MediaPipeBackend:
     }
     """MediaPipe Pose's 33-point index for the 9 points in `LANDMARK_NAMES`."""
 
-    def __init__(self, min_detection_confidence: float = 0.5) -> None:
+    def __init__(
+        self, min_detection_confidence: float = 0.5, *, static_image_mode: bool = True
+    ) -> None:
         try:
             import mediapipe as mp
         except ImportError as exc:
@@ -140,7 +149,7 @@ class MediaPipeBackend:
             ) from exc
 
         self._pose = mp.solutions.pose.Pose(
-            static_image_mode=True,
+            static_image_mode=static_image_mode,
             model_complexity=1,
             min_detection_confidence=min_detection_confidence,
         )
@@ -242,6 +251,13 @@ class YoloPoseBackend:
         landmarks: dict[str, Landmark] = {}
         for name, index in self._KEYPOINT_INDEX.items():
             x, y = points[index]
+            if x == 0.0 and y == 0.0:
+                # ultralytics zeroes the coordinates of any keypoint whose
+                # confidence is under 0.5. The top-left corner is not a
+                # position: fed to the geometry it made a lying person's
+                # hidden hips read as an upright torso and stretched every
+                # body extent to the frame edge (2026-09-13 bedroom clips).
+                continue
             landmarks[name] = Landmark(x=float(x), y=float(y), visibility=float(point_conf[index]))
 
         x_min, y_min, x_max, y_max = result.boxes.xyxyn[best].tolist()
@@ -286,10 +302,14 @@ class ScriptedBackend:
         return result
 
 
-def build_backend(kind: str, *, model_path: str | None = None) -> PoseBackend:
+def build_backend(
+    kind: str, *, model_path: str | None = None, static_image_mode: bool = True
+) -> PoseBackend:
     """Return the configured `PoseBackend` for `kind` (`mediapipe`, `yolo`, `scripted`).
 
-    `model_path` is only used by `yolo`. `scripted` builds an empty
+    `model_path` is only used by `yolo` (`PERCEIVE_YOLO_MODEL`);
+    `static_image_mode` only by `mediapipe` (`PERCEIVE_MEDIAPIPE_VIDEO_MODE`
+    inverted). `scripted` builds an empty
     `ScriptedBackend` (always reports "no person") -- a legitimate config
     for smoke-testing the rest of the pipeline with `docker compose up`
     and no model weights installed, but production nights should use
@@ -299,7 +319,7 @@ def build_backend(kind: str, *, model_path: str | None = None) -> PoseBackend:
     error worth failing loudly on at startup (HANDOFF.md rule 4).
     """
     if kind == "mediapipe":
-        return MediaPipeBackend()
+        return MediaPipeBackend(static_image_mode=static_image_mode)
     if kind == "yolo":
         return YoloPoseBackend(model_path=model_path or "yolov8n-pose.pt")
     if kind == "scripted":

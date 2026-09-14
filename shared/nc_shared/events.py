@@ -73,11 +73,19 @@ class BaseEvent(BaseModel):
 
 class Frame(BaseEvent):
     """A single camera frame, gated by `capture`'s motion gate. Produced by
-    `capture`. Never stored on disk."""
+    `capture`. Never stored on disk.
+
+    ``width``/``height`` describe the encoded JPEG. ``source_width`` and
+    ``source_height`` preserve the camera stream's intrinsic dimensions when
+    the encoded frame has been resized or letterboxed by the browser bridge.
+    They are optional so recordings made before issue #52 still replay.
+    """
 
     jpeg: BytesAsBase64
     width: int
     height: int
+    source_width: int | None = None
+    source_height: int | None = None
     source_kind: Literal["browser", "usb", "rtsp"]
 
 
@@ -95,6 +103,8 @@ class RawFrame(BaseEvent):
     jpeg: BytesAsBase64
     width: int
     height: int
+    source_width: int | None = None
+    source_height: int | None = None
     source_kind: Literal["browser", "usb", "rtsp"]
 
 

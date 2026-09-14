@@ -22,7 +22,10 @@ dependencies = [
 # camera, mic, Ollama, or Redis". Install the extra matching whichever
 # PERCEIVE_POSE_BACKEND is configured.
 mediapipe = [
-    "mediapipe>=0.10",
+    # MediaPipe 1.x removed the `mediapipe.solutions` API used by
+    # `MediaPipeBackend`. Keep the working legacy API until the backend is
+    # deliberately migrated to MediaPipe Tasks.
+    "mediapipe>=0.10,<1.0",
 ]
 yolo = [
     "ultralytics>=8.1",

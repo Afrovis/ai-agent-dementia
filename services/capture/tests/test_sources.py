@@ -11,14 +11,20 @@ def test_browser_bus_source_reads_and_acks_a_raw_frame():
     bus = FakeBus()
     bus.publish(
         RawFrame(
-            source="embodiment", jpeg=b"jpeg-bytes", width=320, height=240, source_kind="browser"
+            source="embodiment",
+            jpeg=b"jpeg-bytes",
+            width=320,
+            height=240,
+            source_width=1920,
+            source_height=1080,
+            source_kind="browser",
         )
     )
 
     source = BrowserBusSource(bus)
     frame = source.read()
 
-    assert frame == (b"jpeg-bytes", 320, 240, "browser")
+    assert frame == (b"jpeg-bytes", 320, 240, 1920, 1080, "browser")
     assert bus.pending("frames_raw", "capture") == []
 
 

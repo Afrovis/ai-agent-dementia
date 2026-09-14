@@ -20,7 +20,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import ClassVar, Literal
 
-from perceive.backends import PoseResult
+from perceive.backends import LANDMARK_NAMES, PoseResult
 from perceive.zones import ZoneName
 
 PersonStateName = Literal["in_bed", "sitting_up", "standing", "walking", "on_floor", "absent"]
@@ -45,6 +45,18 @@ class ClassifyThresholds:
     min_confidence: float = 0.5
     """Below this overall detection confidence, treat the frame as if no
     person was found at all (`absent`) rather than trust a shaky pose."""
+
+    presence_confidence: float = 0.25
+    """A detection scoring at least this much, but below `min_confidence`,
+    proves someone is in the frame without being trustworthy enough to
+    read a posture from. On the 2026-09-13 bedroom clips YOLO put a
+    0.25-0.5 box on a person lying in bed far more often than a 0.5+ one,
+    and the 0.5 cut-off turned every one of those into `absent`. Such a
+    box in the bed zone counts as `in_bed` (PLAN.md section 6.2 already
+    defines `in_bed` as "in the bed zone and not clearly up"); anywhere
+    else it holds the tracker's current state instead of reporting
+    `absent`. Set equal to `min_confidence` to disable.
+    `PERCEIVE_PRESENCE_CONFIDENCE`."""
 
     lying_extent_ratio: float = 0.5
     """A body's vertical landmark spread at or below this fraction of its
@@ -82,6 +94,42 @@ class ClassifyThresholds:
     frame width) across the tracker's recent-frame window counts as
     `walking` rather than standing in place. `PERCEIVE_WALK_THRESHOLD`."""
 
+    floor_top_y: float = 1.01
+    """Outside the bed zone, a confident detection whose bounding box *top*
+    sits at or below this height is `on_floor`, whatever its aspect ratio.
+    The lying test above only fires for a body stretched across the frame;
+    on the 2026-09-13 clips every floor event was a person sitting,
+    kneeling or foreshortened towards the camera, with a box taller than
+    wide, so it never fired. The head is what drops in a fall, and from a
+    wall-mounted camera a low box top is the plainest sign of it. Like
+    `floor_centroid_y`, the value depends on camera height. The default,
+    above 1.0, disables the rule. `PERCEIVE_FLOOR_TOP_Y`."""
+
+    absent_confirm_seconds: float = 0.0
+    """How long the backend must see nobody before `absent` is reported;
+    until then the last state is held. At 2 fps a one- or two-frame dropout
+    is ordinary detector noise, not a person leaving, and reporting it as
+    `absent` both loses the real state and, for `on_floor`, restarts the
+    agent's floor timer. The agent already tolerates `absent` for
+    `AGENT_ABSENT_LIMIT_SECONDS` (600 s), so a few seconds here cost no
+    alert latency. `0.0` reports `absent` on the first empty frame.
+    `PERCEIVE_ABSENT_CONFIRM_SECONDS`."""
+
+    bed_vanish_hold: bool = False
+    """Treat a person lost while last seen in the bed zone as `in_bed`
+    (through normal hysteresis) rather than `absent`. Getting under a
+    blanket is itself the moment the detector loses them, so the tracker
+    often never sees a lying pose to confirm `in_bed` from and the bed hold
+    (`StateTracker._holds_bed`) never engages. Never applied while the last
+    confirmed state is `walking`. `PERCEIVE_BED_VANISH_HOLD`."""
+
+    hold_floor: bool = False
+    """Keep reporting `on_floor` while the backend sees nobody, as the bed
+    hold does for `in_bed`. A person on the floor beside the bed is often
+    partly hidden by it; dropping to `absent` there would reset the agent's
+    floor escalation. Getting up is a transition the backend sees.
+    `PERCEIVE_HOLD_FLOOR`."""
+
 
 @dataclass(frozen=True)
 class _Geometry:
@@ -107,13 +155,17 @@ def _mean(*values: float | None) -> float | None:
 
 def centroid_of(pose: PoseResult) -> tuple[float, float]:
     """The point handed to `zones.zone_for_point` to decide which zone `pose`
-    occupies: the mean of every canonical landmark, or the bounding-box
-    centre if a backend reported none. The mean of *all* landmarks, not
-    just the hips, so a person bent over or lying across a zone boundary
-    lands on one stable point rather than jittering between zones frame to
-    frame as individual joints cross the line.
+    occupies: the mean of every canonical landmark when the backend
+    reported all of them, otherwise the bounding-box centre. The mean of
+    *all* landmarks, not just the hips, so a person bent over or lying
+    across a zone boundary lands on one stable point rather than jittering
+    between zones frame to frame as individual joints cross the line. A
+    partial set (YOLO omits keypoints it cannot place, see
+    `perceive.backends.PoseResult`) has no such stability -- a head and
+    two shoulders average to the head -- so the box centre is the better
+    point then.
     """
-    if pose.landmarks:
+    if len(pose.landmarks) == len(LANDMARK_NAMES):
         xs = [lm.x for lm in pose.landmarks.values()]
         ys = [lm.y for lm in pose.landmarks.values()]
         return sum(xs) / len(xs), sum(ys) / len(ys)
@@ -122,16 +174,16 @@ def centroid_of(pose: PoseResult) -> tuple[float, float]:
 
 
 def _geometry(pose: PoseResult) -> _Geometry:
-    """Compute `_Geometry` from `pose`'s landmarks (falling back to its
-    bounding box where individual landmarks are unavailable)."""
+    """Compute `_Geometry` from `pose`: body extents from its bounding box,
+    torso and leg measurements from whichever landmarks the backend
+    reported (missing ones read as "unknown", never as a position)."""
     centroid_x, centroid_y = centroid_of(pose)
 
-    if pose.landmarks:
-        xs = [lm.x for lm in pose.landmarks.values()]
-        ys = [lm.y for lm in pose.landmarks.values()]
-    else:
-        x_min, y_min, x_max, y_max = pose.bbox
-        xs, ys = [x_min, x_max], [y_min, y_max]
+    # Extents come from the box, not from the landmarks: for MediaPipe the
+    # two are identical (its box *is* the landmark envelope), and for YOLO
+    # the box is the detector's own estimate of the whole body while the
+    # landmark set may be missing the very limbs that define the extent.
+    x_min, y_min, x_max, y_max = pose.bbox
 
     left_shoulder = pose.landmarks.get("left_shoulder")
     right_shoulder = pose.landmarks.get("right_shoulder")
@@ -166,8 +218,8 @@ def _geometry(pose: PoseResult) -> _Geometry:
     return _Geometry(
         centroid_x=centroid_x,
         centroid_y=centroid_y,
-        vertical_extent=max(ys) - min(ys),
-        horizontal_extent=max(xs) - min(xs),
+        vertical_extent=y_max - y_min,
+        horizontal_extent=x_max - x_min,
         torso_vertical_ratio=torso_vertical_ratio,
         ankle_below_hip=ankle_below_hip,
     )
@@ -187,7 +239,10 @@ def classify_pose(
 
     Evaluated in the order issue #8 lists the states:
 
-    1. `absent` -- no detection, or confidence below `thresholds.min_confidence`.
+    1. `absent` -- no detection, or confidence below `thresholds.min_confidence`,
+       except a detection at or above `thresholds.presence_confidence` in
+       the bed zone, which is `in_bed`: too shaky to read a posture from,
+       but proof enough that somebody is lying where the bed is.
     2. `on_floor` -- lying (small vertical extent relative to horizontal),
        low in the frame, and not in the bed zone.
     3. `in_bed` -- in the bed zone and the torso is not upright (see the
@@ -204,14 +259,20 @@ def classify_pose(
     (`on_floor`/`in_bed`), rather than silently under-reporting an
     ambiguous frame as no risk at all.
     """
-    if pose is None or pose.confidence < thresholds.min_confidence:
-        return "absent", pose.confidence if pose is not None else 0.0
+    if pose is None:
+        return "absent", 0.0
+    if pose.confidence < thresholds.min_confidence:
+        if pose.confidence >= thresholds.presence_confidence and zone == "bed":
+            return "in_bed", pose.confidence
+        return "absent", pose.confidence
 
     geometry = _geometry(pose)
 
     lying = geometry.vertical_extent <= thresholds.lying_extent_ratio * geometry.horizontal_extent
     low_in_frame = geometry.centroid_y >= thresholds.floor_centroid_y
     if lying and low_in_frame and zone != "bed":
+        return "on_floor", pose.confidence
+    if zone != "bed" and pose.bbox[1] >= thresholds.floor_top_y:
         return "on_floor", pose.confidence
 
     torso_upright = geometry.torso_vertical_ratio >= thresholds.torso_upright_ratio
@@ -244,7 +305,12 @@ class StateTracker:
 
     A single bad frame -- IR grain, a momentary occlusion -- must not flap
     the agent between session phases, so `update()` withholds a state
-    change until `confirm_frames` consecutive frames agree, per issue #8.
+    change until `confirm_frames` consecutive detections agree, per issue
+    #8. A frame with no detection at all neither counts towards nor resets
+    that tally: it is missing evidence, not a disagreement, and a person
+    the model only catches every other frame -- the normal reading of
+    someone lying under a blanket -- must still be able to confirm
+    `in_bed` rather than restart the count on every dropped frame.
 
     Two states bypass that hysteresis and report on the very frame they
     are first seen: `on_floor` and `absent`. HANDOFF.md rule 5 sends both
@@ -266,6 +332,12 @@ class StateTracker:
 
     Losing the person while they are in bed is held at `in_bed` rather than
     reported as `absent`; see `_holds_bed` for why that asymmetry exists.
+
+    A detection between `thresholds.presence_confidence` and
+    `thresholds.min_confidence` outside the bed zone is treated as an
+    uninformative frame: someone is there, so it is not `absent`, but the
+    pose is too shaky to say what they are doing, so nothing changes --
+    neither the current state nor a pending confirmation count.
     """
 
     IMMEDIATE_STATES: ClassVar[frozenset[str]] = frozenset({"on_floor", "absent"})
@@ -284,6 +356,7 @@ class StateTracker:
     _pending: _PendingChange | None = field(default=None, init=False, repr=False)
     _centroid_x_history: deque[float] = field(default_factory=deque, init=False, repr=False)
     _undetected_since: float | None = field(default=None, init=False, repr=False)
+    _last_seen_zone: ZoneName = field(default="other", init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.confirm_frames = max(1, self.confirm_frames)
@@ -341,6 +414,16 @@ class StateTracker:
         """
         state, confidence = classify_pose(pose, zone, self.thresholds)
 
+        if (
+            pose is not None
+            and state == "absent"
+            and pose.confidence >= self.thresholds.presence_confidence
+        ):
+            # Seen, but not readably. Evidence against `absent`, not for
+            # anything else: hold what we have and wait for a better frame.
+            self._undetected_since = None
+            return None
+
         if pose is None:
             if self._undetected_since is None:
                 self._undetected_since = now
@@ -348,8 +431,21 @@ class StateTracker:
                 # Keep the last good confidence and the bed zone: the person
                 # has not moved, we simply cannot see them under the covers.
                 return None
+            if self.thresholds.hold_floor and self._current == "on_floor":
+                return None
+            if (
+                self.thresholds.bed_vanish_hold
+                and self._last_seen_zone == "bed"
+                # Someone walking through the bed zone is more likely leaving
+                # the frame than getting under the covers.
+                and self._current not in ("in_bed", "on_floor", "walking")
+            ):
+                state, zone = "in_bed", "bed"
+            elif now - self._undetected_since < self.thresholds.absent_confirm_seconds:
+                return None
         else:
             self._undetected_since = None
+            self._last_seen_zone = zone
 
         self._last_confidence = confidence
         self._last_zone = zone
@@ -363,7 +459,11 @@ class StateTracker:
             self._centroid_x_history.clear()
 
         if state in self.IMMEDIATE_STATES:
-            self._pending = None
+            if pose is not None:
+                # A real detection that contradicts the pending state
+                # restarts its count; a missing one does not (see the
+                # class docstring).
+                self._pending = None
             if state == self._current:
                 return None
             self._current = state

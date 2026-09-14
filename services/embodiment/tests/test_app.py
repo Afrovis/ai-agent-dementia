@@ -295,6 +295,8 @@ def test_publish_frame_publishes_one_frame_event_with_decoded_jpeg():
             "jpeg_b64": base64.b64encode(jpeg_bytes).decode("ascii"),
             "width": 320,
             "height": 240,
+            "source_width": 1920,
+            "source_height": 1080,
         },
         session_id="sess-1",
     )
@@ -303,6 +305,8 @@ def test_publish_frame_publishes_one_frame_event_with_decoded_jpeg():
     assert event.jpeg == jpeg_bytes
     assert event.width == 320
     assert event.height == 240
+    assert event.source_width == 1920
+    assert event.source_height == 1080
     assert event.source_kind == "browser"
     assert event.source == "embodiment"
     assert event.session_id == "sess-1"
@@ -322,10 +326,35 @@ def test_publish_frame_uses_capped_stream_maxlen():
                 "jpeg_b64": base64.b64encode(f"frame-{i}".encode()).decode("ascii"),
                 "width": 1,
                 "height": 1,
+                "source_width": 1,
+                "source_height": 1,
             },
         )
 
     assert len(bus._streams["frames_raw"]) == CAPPED_MAXLEN["frames_raw"]  # noqa: SLF001
+
+
+def test_browser_letterboxes_16_by_9_and_emits_both_dimension_pairs():
+    script = (Path(__file__).parents[1] / "embodiment/static/script.js").read_text()
+
+    source_width, source_height = 1920, 1080
+    target_width, target_height = 320, 240
+    scale = min(target_width / source_width, target_height / source_height)
+    rendered_width = round(source_width * scale)
+    rendered_height = round(source_height * scale)
+    assert (rendered_width, rendered_height) == (320, 180)
+    assert ((target_width - rendered_width) // 2, (target_height - rendered_height) // 2) == (
+        0,
+        30,
+    )
+    assert (
+        "const scale = Math.min(targetWidth / sourceWidth, targetHeight / sourceHeight)" in script
+    )
+    assert "ctx.fillRect(0, 0, FRAME_WIDTH, FRAME_HEIGHT)" in script
+    assert "destination.width" in script
+    assert "destination.height" in script
+    assert "source_width: sourceWidth" in script
+    assert "source_height: sourceHeight" in script
 
 
 def test_publish_audio_chunk_publishes_one_audio_chunk_event_with_decoded_pcm16():
@@ -395,6 +424,8 @@ def test_media_websocket_publishes_frame_event():
                 "jpeg_b64": base64.b64encode(jpeg_bytes).decode("ascii"),
                 "width": 160,
                 "height": 120,
+                "source_width": 1280,
+                "source_height": 720,
             }
         )
         websocket.close()
@@ -405,6 +436,8 @@ def test_media_websocket_publishes_frame_event():
     assert event.jpeg == jpeg_bytes
     assert event.width == 160
     assert event.height == 120
+    assert event.source_width == 1280
+    assert event.source_height == 720
     assert event.source_kind == "browser"
 
 

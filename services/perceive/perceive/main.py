@@ -75,7 +75,14 @@ class PerceiveConfig:
     yaml -- `zones.yaml` is the yaml here -- then defaults in code)."""
 
     pose_backend: str = "mediapipe"
+    yolo_model: str = "yolov8n-pose.pt"
+    mediapipe_video_mode: bool = False
     min_confidence: float = 0.5
+    presence_confidence: float = 0.25
+    floor_top_y: float = 1.01
+    absent_confirm_seconds: float = 3.0
+    bed_vanish_hold: bool = False
+    hold_floor: bool = True
     confirm_frames: int = 3
     bed_hold_seconds: float = 0.0
     walk_threshold: float = 0.15
@@ -93,7 +100,16 @@ class PerceiveConfig:
         env = os.environ if env is None else env
         return cls(
             pose_backend=env.get("PERCEIVE_POSE_BACKEND", "mediapipe"),
+            yolo_model=env.get("PERCEIVE_YOLO_MODEL", "yolov8n-pose.pt"),
+            mediapipe_video_mode=(
+                env.get("PERCEIVE_MEDIAPIPE_VIDEO_MODE", "false").strip().lower() == "true"
+            ),
             min_confidence=float(env.get("PERCEIVE_MIN_CONFIDENCE", "0.5")),
+            presence_confidence=float(env.get("PERCEIVE_PRESENCE_CONFIDENCE", "0.25")),
+            floor_top_y=float(env.get("PERCEIVE_FLOOR_TOP_Y", "1.01")),
+            absent_confirm_seconds=float(env.get("PERCEIVE_ABSENT_CONFIRM_SECONDS", "3")),
+            bed_vanish_hold=env.get("PERCEIVE_BED_VANISH_HOLD", "false").strip().lower() == "true",
+            hold_floor=env.get("PERCEIVE_HOLD_FLOOR", "true").strip().lower() != "false",
             confirm_frames=int(env.get("PERCEIVE_CONFIRM_FRAMES", "3")),
             bed_hold_seconds=float(env.get("PERCEIVE_BED_HOLD_SECONDS", "0")),
             walk_threshold=float(env.get("PERCEIVE_WALK_THRESHOLD", "0.15")),
@@ -111,6 +127,11 @@ def build_tracker(config: PerceiveConfig) -> StateTracker:
     """Build the `StateTracker` described by `config`."""
     thresholds = ClassifyThresholds(
         min_confidence=config.min_confidence,
+        presence_confidence=config.presence_confidence,
+        floor_top_y=config.floor_top_y,
+        absent_confirm_seconds=config.absent_confirm_seconds,
+        bed_vanish_hold=config.bed_vanish_hold,
+        hold_floor=config.hold_floor,
         walk_displacement_threshold=config.walk_threshold,
     )
     return StateTracker(
@@ -304,8 +325,9 @@ def run() -> None:
     """Connect to Redis, build the configured pose backend and zones, then
     loop forever.
 
-    Reads `PERCEIVE_POSE_BACKEND`, `PERCEIVE_MIN_CONFIDENCE`,
-    `PERCEIVE_CONFIRM_FRAMES`, `PERCEIVE_BED_HOLD_SECONDS`,
+    Reads `PERCEIVE_POSE_BACKEND`, `PERCEIVE_YOLO_MODEL`,
+    `PERCEIVE_MEDIAPIPE_VIDEO_MODE`, `PERCEIVE_MIN_CONFIDENCE`,
+    `PERCEIVE_PRESENCE_CONFIDENCE`, `PERCEIVE_CONFIRM_FRAMES`, `PERCEIVE_BED_HOLD_SECONDS`,
     `PERCEIVE_WALK_THRESHOLD`, `PERCEIVE_HEARTBEAT_SECONDS`, `ZONES_PATH`,
     `PERCEIVE_VISION_ENABLED`, `PERCEIVE_VISION_MODEL`,
     `PERCEIVE_VISION_INTERVAL_SECONDS`, `PERCEIVE_VISION_TIMEOUT_SECONDS`,
@@ -321,7 +343,11 @@ def run() -> None:
 
     bus = Bus(redis.Redis.from_url(redis_url))
     bus.ensure_group(FRAME_STREAM, FRAME_GROUP)
-    backend = build_backend(config.pose_backend)
+    backend = build_backend(
+        config.pose_backend,
+        model_path=config.yolo_model,
+        static_image_mode=not config.mediapipe_video_mode,
+    )
     zones = load_zones(config.zones_path)
     tracker = build_tracker(config)
 
