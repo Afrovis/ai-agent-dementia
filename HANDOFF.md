@@ -307,3 +307,14 @@ Run tests for one service: `cd services/agent && pytest`.
 | Local text model | `llama3.1:8b`, compare 3 on the dialogue bench in issue 17 | issue 17 |
 | Smart plug for path light in v1 | manual night light, plug behind a feature flag | project owner |
 | Morning summary contents | count, durations, what helped, faults | project owner after a caregiver interview |
+
+## 13. Fixes
+
+- `tools/video_eval label-local` drops frames when the local vision model's JSON response fails validation. Found 2026-09-13 comparing `qwen3-vl:8b` output against the scripted timeline for clip `2026-09-13_bedroom-sample-01`: 27 of 488 frames (5.5%) came back as `failed_label_record` (all fields null), including a 20-frame block (51.0-60.5s) that swallowed the second scripted `sitting_up` event at t=58s entirely.
+  - Root cause: `labels.py` validates `person_visible` with `type(raw.get("person_visible")) is not bool`, a strict type check. The Ollama call in `label_local.py` only sets `"format": "json"` (loose JSON mode, no schema), so the model is free to emit `person_visible` as a string, a number, or omit it; `qwen3-vl:8b` does this occasionally. `_call_with_retry` allows 2 attempts; when both fail validation the frame is written as a null record instead of a real label.
+  - Compounding factor: adaptive sampling only labels moving frames plus 1-in-10 still frames, propagating each labelled record forward to the frames it skips. When the anchor frame's label attempt fails, every still frame propagated from it inherits the same null record, turning one bad model response into a multi-second coverage gap.
+  - Suggested fix, two independent parts:
+    1. In `labels.py`, coerce common unambiguous non-bool representations (`"true"`/`"false"` strings, `1`/`0`) to bool before rejecting, instead of hard-failing on anything that is not already a Python `bool`.
+    2. In `label_local.py`, constrain the Ollama call with a real JSON-schema `format` (Ollama supports structured outputs) instead of the bare `"format": "json"` string, so `person_visible` is constrained to boolean at generation time rather than policed after the fact.
+  - Add a test to `tests/test_labellers.py` covering a non-bool `person_visible` (e.g. the string `"true"`) to confirm it either coerces cleanly or is retried and falls back to a `failed_label_record`, since no existing test exercises this path.
+  - Not yet implemented — flagged for whoever picks up label-local reliability work.

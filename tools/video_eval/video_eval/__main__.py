@@ -92,6 +92,13 @@ def build_parser() -> argparse.ArgumentParser:
     replay.add_argument("--speed", type=float, default=1.0)
     replay.add_argument("--settle-seconds", type=float, default=5.0)
     replay.add_argument("--force", action="store_true")
+
+    visualize = commands.add_parser("visualize", help="render an annotated, silent video")
+    visualize.add_argument("--clip", required=True)
+    visualize.add_argument("--mode", choices=("manual", "pipeline", "vision"), required=True)
+    visualize.add_argument("--output-dir", type=Path)
+    visualize.add_argument("--pipeline-tag")
+    visualize.add_argument("--force", action="store_true")
     return parser
 
 
@@ -176,7 +183,7 @@ def main(argv: list[str] | None = None) -> int:
         from video_eval.score import score_clip
 
         result = score_clip(args.clip, root=args.data_root, tag=args.tag, force=args.force)
-    else:
+    elif args.command == "replay":
         from video_eval.replay import replay_clip
 
         result = replay_clip(
@@ -186,6 +193,17 @@ def main(argv: list[str] | None = None) -> int:
             variant=args.variant,
             speed=args.speed,
             settle_seconds=args.settle_seconds,
+            force=args.force,
+        )
+    else:
+        from video_eval.visualize import render_visualization
+
+        result = render_visualization(
+            args.clip,
+            args.mode,
+            root=args.data_root,
+            output_dir=args.output_dir,
+            pipeline_tag=args.pipeline_tag,
             force=args.force,
         )
     print(json.dumps(result, sort_keys=True))
