@@ -192,7 +192,7 @@ def test_run_once_returns_none_while_hysteresis_is_pending():
 
 def test_perceive_config_from_env_uses_defaults_when_unset():
     config = PerceiveConfig.from_env(env={})
-    assert config.pose_backend == "mediapipe"
+    assert config.pose_backend == "yolo"
     assert config.min_confidence == 0.5
     assert config.confirm_frames == 3
     assert config.walk_threshold == 0.15

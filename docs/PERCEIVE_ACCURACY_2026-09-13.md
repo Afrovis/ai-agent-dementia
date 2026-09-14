@@ -477,7 +477,11 @@ rerun `label-local --clip <id>` against `--data-root
    camera after checking a standing person at the far wall does not reach it.
    It is the only rule that finds sitting or kneeling falls, and `on_floor`
    pages immediately.
-4. Owner decision (HANDOFF.md section 12): switch `PERCEIVE_POSE_BACKEND` to
+4. **Decided by the owner after section 9.5: YOLO11s.** `PERCEIVE_POSE_BACKEND`
+   now defaults to `yolo` and `PERCEIVE_YOLO_MODEL` to `yolo11s-pose.pt`,
+   the perceive image installs the `yolo` extra (MediaPipe kept as a
+   fallback) and bakes the weights in, and HANDOFF.md section 12 records
+   it. Original recommendation: switch `PERCEIVE_POSE_BACKEND` to
    `yolo`. MediaPipe trails every YOLO model after the rules and produces
    false floor episodes; its box is a landmark envelope. YOLO11s
    (`yolo11s-pose.pt`, 58 ms per frame on the M4 CPU) or YOLOv8n (31 ms).

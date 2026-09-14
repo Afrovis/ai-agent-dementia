@@ -111,8 +111,10 @@ def _decode_rgb(jpeg: bytes) -> np.ndarray | None:
 
 
 class MediaPipeBackend:
-    """Wraps `mediapipe.solutions.pose.Pose`. The default backend (HANDOFF.md
-    section 12: "MediaPipe, evaluate both in issue 8").
+    """Wraps `mediapipe.solutions.pose.Pose`. The fallback backend since
+    2026-09-13, when YOLO11s-pose became the default (HANDOFF.md section 12):
+    its box is the envelope of its nine landmarks, which jumps when a limb is
+    misplaced, and on the bedroom clips that raised false floor alerts.
 
     `static_image_mode=True` by default because `perceive` hands it
     independent JPEGs from the bus, not a continuous video stream mediapipe
@@ -189,10 +191,11 @@ class MediaPipeBackend:
 
 
 class YoloPoseBackend:
-    """Wraps an `ultralytics` YOLOv8-pose model.
+    """Wraps an `ultralytics` YOLO pose model. The default backend, with
+    `yolo11s-pose.pt` (HANDOFF.md section 12, measured in
+    docs/PERCEIVE_ACCURACY_2026-09-13.md); any Ultralytics pose weights work.
 
-    The comparison arm for issue #8's open question (HANDOFF.md section 12).
-    Maps YOLOv8-pose's 17 COCO keypoints onto `LANDMARK_NAMES`; the 8 COCO
+    Maps the model's 17 COCO keypoints onto `LANDMARK_NAMES`; the 8 COCO
     points with no equivalent here (eyes, ears, elbows, wrists) are dropped,
     not carried through, since `perceive.classify` never looks at them.
     """
@@ -210,7 +213,7 @@ class YoloPoseBackend:
     }
     """COCO-17 keypoint index, as produced by ultralytics' pose models."""
 
-    def __init__(self, model_path: str = "yolov8n-pose.pt") -> None:
+    def __init__(self, model_path: str = "yolo11s-pose.pt") -> None:
         try:
             from ultralytics import YOLO
         except ImportError as exc:
@@ -321,7 +324,7 @@ def build_backend(
     if kind == "mediapipe":
         return MediaPipeBackend(static_image_mode=static_image_mode)
     if kind == "yolo":
-        return YoloPoseBackend(model_path=model_path or "yolov8n-pose.pt")
+        return YoloPoseBackend(model_path=model_path or "yolo11s-pose.pt")
     if kind == "scripted":
         return ScriptedBackend([])
     raise ValueError(f"unknown PERCEIVE_POSE_BACKEND: {kind!r}")

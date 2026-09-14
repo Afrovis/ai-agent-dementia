@@ -341,7 +341,7 @@ ai-agent-dementia/
 
 ## 15. Open questions
 
-- Which pose model handles IR and blankets best? Evaluate MediaPipe Pose vs YOLOv8-pose on real captures.
+- Which pose model handles IR and blankets best? Answered for RGB on 2026-09-13: YOLO11s-pose, with zone and dropout rules covering the blanket (docs/PERCEIVE_ACCURACY_2026-09-13.md). IR captures are still unmeasured.
 - Which local text model gives the warmest, most rule-following one-sentence outputs? Compare 3 candidates on the dialogue bench.
 - Is a smart plug for path lighting in scope for v1, or manual night light?
 - What does the caregiver want to see in the morning summary? Interview before building the dashboard.

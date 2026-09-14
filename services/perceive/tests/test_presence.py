@@ -75,7 +75,7 @@ def test_tracker_low_confidence_detection_in_bed_zone_confirms_in_bed():
 
 def test_perceive_config_backend_and_presence_defaults():
     config = PerceiveConfig.from_env(env={})
-    assert config.yolo_model == "yolov8n-pose.pt"
+    assert config.yolo_model == "yolo11s-pose.pt"
     assert config.mediapipe_video_mode is False
     assert config.presence_confidence == 0.25
 

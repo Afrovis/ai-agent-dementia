@@ -302,8 +302,19 @@ Run tests for one service: `cd services/agent && pytest`.
 
 | Question | Default until decided | Decider |
 |---|---|---|
-| Pose model: MediaPipe Pose vs YOLOv8-pose | MediaPipe, both backends built behind `PERCEIVE_POSE_BACKEND` in issue 8; the comparison now runs on the owner's RGB bedroom recordings through `tools/video_eval` (M5). A five-frame smoke test on 2026-09-13 had YOLO finding people in bed that MediaPipe missed at bridge resolution, so expect the default to be revisited | whoever does issue 51, with bench numbers |
+| Pose model: MediaPipe Pose vs YOLO pose | **Decided 2026-09-13: YOLO11s-pose** (`PERCEIVE_POSE_BACKEND=yolo`, `PERCEIVE_YOLO_MODEL=yolo11s-pose.pt`, weights baked into the perceive image, MediaPipe still installed as a fallback). Measured on both RGB bedroom clips against VLM labels and the scripted timeline: every YOLO model beat MediaPipe, which also raised false floor alerts; YOLO11s averaged 0.83 agreement at 58 ms per CPU frame, YOLOv8n 0.81 at 31 ms, YOLO11m no better at 121 ms. IR and night-light captures are still unmeasured. See docs/PERCEIVE_ACCURACY_2026-09-13.md | decided by the project owner on the video_eval numbers |
 | Bridge frame format: 320 by 240 squashed vs letterboxed, and resolution | keep the current squash until issue 51 measures it; do not change `script.js` constants without numbers | issue 52 |
 | Local text model | `llama3.1:8b`, compare 3 on the dialogue bench in issue 17 | issue 17 |
 | Smart plug for path light in v1 | manual night light, plug behind a feature flag | project owner |
 | Morning summary contents | count, durations, what helped, faults | project owner after a caregiver interview |
+
+## 13. Fixes
+
+- `tools/video_eval label-local` dropped frames when the local vision model's JSON response failed validation. Found 2026-09-13 comparing `qwen3-vl:8b` output against the scripted timeline for clip `2026-09-13_bedroom-sample-01`: 27 of 488 frames (5.5%) came back as `failed_label_record` (all fields null), including a 20-frame block (51.0-60.5s) that swallowed the second scripted `sitting_up` event at t=58s entirely.
+  - Root cause: `labels.py` validated `person_visible` with `type(raw.get("person_visible")) is not bool`, a strict type check. The Ollama call in `label_local.py` only set `"format": "json"` (loose JSON mode, no schema), so the model was free to emit `person_visible` as a string, a number, or omit it; `qwen3-vl:8b` did this occasionally. `_call_with_retry` allows 2 attempts; when both failed validation the frame was written as a null record instead of a real label.
+  - Compounding factor: adaptive sampling only labels moving frames plus 1-in-10 still frames, propagating each labelled record forward to the frames it skips. When the anchor frame's label attempt fails, every still frame propagated from it inherits the same null record, turning one bad model response into a multi-second coverage gap.
+  - **Fixed 2026-09-13** on branch `perceive-accuracy-quick-wins`:
+    1. `labels.py` coerces only unambiguous spellings (`"true"`/`"false"` in any case, `1`/`0`) and still rejects anything else.
+    2. `label_local.py` sends a JSON schema (`LABEL_SCHEMA`) as the Ollama `format`, so the fields are typed at generation time.
+    3. `tests/test_labellers.py` covers the coercion and the rejections.
+  - Result: 0 failed records on a 361-frame relabel of the same clip (22 before). The relabel was not adopted as a reference: `qwen3-vl:8b` still calls a covered sleeper `absent`, so a human-confirmed `reference.yaml` is still needed (docs/PERCEIVE_ACCURACY_2026-09-13.md section 11).

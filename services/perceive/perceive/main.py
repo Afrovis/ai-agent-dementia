@@ -74,8 +74,8 @@ class PerceiveConfig:
     """`perceive`'s env-driven configuration (HANDOFF.md section 4: env, then
     yaml -- `zones.yaml` is the yaml here -- then defaults in code)."""
 
-    pose_backend: str = "mediapipe"
-    yolo_model: str = "yolov8n-pose.pt"
+    pose_backend: str = "yolo"
+    yolo_model: str = "yolo11s-pose.pt"
     mediapipe_video_mode: bool = False
     min_confidence: float = 0.5
     presence_confidence: float = 0.25
@@ -99,8 +99,8 @@ class PerceiveConfig:
         """Build a `PerceiveConfig` from environment variables, defaults otherwise."""
         env = os.environ if env is None else env
         return cls(
-            pose_backend=env.get("PERCEIVE_POSE_BACKEND", "mediapipe"),
-            yolo_model=env.get("PERCEIVE_YOLO_MODEL", "yolov8n-pose.pt"),
+            pose_backend=env.get("PERCEIVE_POSE_BACKEND", "yolo"),
+            yolo_model=env.get("PERCEIVE_YOLO_MODEL", "yolo11s-pose.pt"),
             mediapipe_video_mode=(
                 env.get("PERCEIVE_MEDIAPIPE_VIDEO_MODE", "false").strip().lower() == "true"
             ),
