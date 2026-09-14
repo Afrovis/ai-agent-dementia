@@ -17,7 +17,8 @@ Answer with JSON only:
  "note": "at most 15 words"}
 in_bed = lying on the bed, even under a blanket. sitting_up = torso upright
 while on the bed or its edge. upright = standing or walking anywhere.
-on_floor = lying, kneeling or crawling on the floor. absent = no person.
+on_floor = lying, sitting, kneeling or crawling on the floor. absent = no person
+anywhere in the frame; a body shape under bedding is in_bed, not absent.
 Do not describe identity, clothing or the room."""
 
 
@@ -30,12 +31,41 @@ class Label:
     note: str
 
 
+_BOOL_STRINGS = {"true": True, "false": False}
+
+LABEL_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "person_visible": {"type": "boolean"},
+        "posture": {"type": "string", "enum": sorted(POSTURES)},
+        "location": {"type": "string", "enum": sorted(LOCATIONS)},
+        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "note": {"type": "string"},
+    },
+    "required": ["person_visible", "posture", "location", "confidence", "note"],
+}
+"""JSON schema handed to Ollama structured outputs so the fields are typed at
+generation time; `validate_label` still checks every response."""
+
+
+def _coerce_bool(value: Any) -> bool:
+    """Accept only unambiguous boolean spellings: a bool, `"true"`/`"false"`
+    in any case, or the integers 0 and 1. Anything else is rejected, so a
+    missing or free-text value still fails validation rather than guessing."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.strip().lower() in _BOOL_STRINGS:
+        return _BOOL_STRINGS[value.strip().lower()]
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    raise ValueError("person_visible must be a boolean")
+
+
 def validate_label(raw: Any) -> Label:
-    """Validate a model response without silently coercing invalid fields."""
+    """Validate a model response; only unambiguous boolean spellings are coerced."""
     if not isinstance(raw, dict):
         raise ValueError("label must be a JSON object")
-    if type(raw.get("person_visible")) is not bool:
-        raise ValueError("person_visible must be a boolean")
+    person_visible = _coerce_bool(raw.get("person_visible"))
     posture = raw.get("posture")
     if posture not in POSTURES:
         raise ValueError(f"invalid posture: {posture!r}")
@@ -50,7 +80,7 @@ def validate_label(raw: Any) -> Label:
     note = raw.get("note")
     if not isinstance(note, str) or len(note.split()) > 15:
         raise ValueError("note must be a string of at most 15 words")
-    return Label(raw["person_visible"], posture, location, float(confidence), note)
+    return Label(person_visible, posture, location, float(confidence), note)
 
 
 def label_record(label: Label, *, frame_index: int, t_s: float, labeller: str) -> dict[str, Any]:

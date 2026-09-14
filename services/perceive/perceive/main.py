@@ -79,6 +79,10 @@ class PerceiveConfig:
     mediapipe_video_mode: bool = False
     min_confidence: float = 0.5
     presence_confidence: float = 0.25
+    floor_top_y: float = 1.01
+    absent_confirm_seconds: float = 0.0
+    bed_vanish_hold: bool = False
+    hold_floor: bool = False
     confirm_frames: int = 3
     bed_hold_seconds: float = 0.0
     walk_threshold: float = 0.15
@@ -102,6 +106,10 @@ class PerceiveConfig:
             ),
             min_confidence=float(env.get("PERCEIVE_MIN_CONFIDENCE", "0.5")),
             presence_confidence=float(env.get("PERCEIVE_PRESENCE_CONFIDENCE", "0.25")),
+            floor_top_y=float(env.get("PERCEIVE_FLOOR_TOP_Y", "1.01")),
+            absent_confirm_seconds=float(env.get("PERCEIVE_ABSENT_CONFIRM_SECONDS", "0")),
+            bed_vanish_hold=env.get("PERCEIVE_BED_VANISH_HOLD", "false").strip().lower() == "true",
+            hold_floor=env.get("PERCEIVE_HOLD_FLOOR", "false").strip().lower() == "true",
             confirm_frames=int(env.get("PERCEIVE_CONFIRM_FRAMES", "3")),
             bed_hold_seconds=float(env.get("PERCEIVE_BED_HOLD_SECONDS", "0")),
             walk_threshold=float(env.get("PERCEIVE_WALK_THRESHOLD", "0.15")),
@@ -120,6 +128,10 @@ def build_tracker(config: PerceiveConfig) -> StateTracker:
     thresholds = ClassifyThresholds(
         min_confidence=config.min_confidence,
         presence_confidence=config.presence_confidence,
+        floor_top_y=config.floor_top_y,
+        absent_confirm_seconds=config.absent_confirm_seconds,
+        bed_vanish_hold=config.bed_vanish_hold,
+        hold_floor=config.hold_floor,
         walk_displacement_threshold=config.walk_threshold,
     )
     return StateTracker(

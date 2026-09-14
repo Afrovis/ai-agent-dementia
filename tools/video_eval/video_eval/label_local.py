@@ -14,7 +14,13 @@ from typing import Any, Protocol
 from capture.motion import frame_signature, motion_score
 
 from video_eval.common import matching_meta, read_jsonl, update_index, write_jsonl, write_meta
-from video_eval.labels import LABEL_PROMPT, failed_label_record, label_record, validate_label
+from video_eval.labels import (
+    LABEL_PROMPT,
+    LABEL_SCHEMA,
+    failed_label_record,
+    label_record,
+    validate_label,
+)
 from video_eval.paths import EvalPaths
 
 DEFAULT_MODEL = "qwen3-vl:8b"
@@ -48,7 +54,7 @@ class OllamaLabeller:
         response = self._post(
             "/api/chat",
             {
-                "format": "json",
+                "format": LABEL_SCHEMA,
                 "messages": [
                     {
                         "content": LABEL_PROMPT,

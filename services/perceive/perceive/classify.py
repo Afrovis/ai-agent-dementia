@@ -94,6 +94,41 @@ class ClassifyThresholds:
     frame width) across the tracker's recent-frame window counts as
     `walking` rather than standing in place. `PERCEIVE_WALK_THRESHOLD`."""
 
+    floor_top_y: float = 1.01
+    """Outside the bed zone, a confident detection whose bounding box *top*
+    sits at or below this height is `on_floor`, whatever its aspect ratio.
+    The lying test above only fires for a body stretched across the frame;
+    on the 2026-09-13 clips every floor event was a person sitting,
+    kneeling or foreshortened towards the camera, with a box taller than
+    wide, so it never fired. The head is what drops in a fall, and from a
+    wall-mounted camera a low box top is the plainest sign of it. Like
+    `floor_centroid_y`, the value depends on camera height. The default,
+    above 1.0, disables the rule. `PERCEIVE_FLOOR_TOP_Y`."""
+
+    absent_confirm_seconds: float = 0.0
+    """How long the backend must see nobody before `absent` is reported;
+    until then the last state is held. At 2 fps a one- or two-frame dropout
+    is ordinary detector noise, not a person leaving, and reporting it as
+    `absent` both loses the real state and, for `on_floor`, restarts the
+    agent's floor timer. The agent already tolerates `absent` for
+    `AGENT_ABSENT_LIMIT_SECONDS` (600 s), so a few seconds here cost no
+    alert latency. `0.0` reports `absent` on the first empty frame.
+    `PERCEIVE_ABSENT_CONFIRM_SECONDS`."""
+
+    bed_vanish_hold: bool = False
+    """Treat a person lost while last seen in the bed zone as `in_bed`
+    (through normal hysteresis) rather than `absent`. Getting under a
+    blanket is itself the moment the detector loses them, so the tracker
+    often never sees a lying pose to confirm `in_bed` from and the bed hold
+    (`StateTracker._holds_bed`) never engages. `PERCEIVE_BED_VANISH_HOLD`."""
+
+    hold_floor: bool = False
+    """Keep reporting `on_floor` while the backend sees nobody, as the bed
+    hold does for `in_bed`. A person on the floor beside the bed is often
+    partly hidden by it; dropping to `absent` there would reset the agent's
+    floor escalation. Getting up is a transition the backend sees.
+    `PERCEIVE_HOLD_FLOOR`."""
+
 
 @dataclass(frozen=True)
 class _Geometry:
@@ -236,6 +271,8 @@ def classify_pose(
     low_in_frame = geometry.centroid_y >= thresholds.floor_centroid_y
     if lying and low_in_frame and zone != "bed":
         return "on_floor", pose.confidence
+    if zone != "bed" and pose.bbox[1] >= thresholds.floor_top_y:
+        return "on_floor", pose.confidence
 
     torso_upright = geometry.torso_vertical_ratio >= thresholds.torso_upright_ratio
 
@@ -318,6 +355,7 @@ class StateTracker:
     _pending: _PendingChange | None = field(default=None, init=False, repr=False)
     _centroid_x_history: deque[float] = field(default_factory=deque, init=False, repr=False)
     _undetected_since: float | None = field(default=None, init=False, repr=False)
+    _last_seen_zone: ZoneName = field(default="other", init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.confirm_frames = max(1, self.confirm_frames)
@@ -392,8 +430,19 @@ class StateTracker:
                 # Keep the last good confidence and the bed zone: the person
                 # has not moved, we simply cannot see them under the covers.
                 return None
+            if self.thresholds.hold_floor and self._current == "on_floor":
+                return None
+            if (
+                self.thresholds.bed_vanish_hold
+                and self._last_seen_zone == "bed"
+                and self._current not in ("in_bed", "on_floor")
+            ):
+                state, zone = "in_bed", "bed"
+            elif now - self._undetected_since < self.thresholds.absent_confirm_seconds:
+                return None
         else:
             self._undetected_since = None
+            self._last_seen_zone = zone
 
         self._last_confidence = confidence
         self._last_zone = zone
