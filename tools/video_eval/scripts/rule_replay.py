@@ -131,9 +131,9 @@ def score(rows: list[dict], reference: dict[int, str], script: list[dict]) -> di
     }
 
 
-def load_clip(root: Path, clip_id: str):
+def load_clip(root: Path, clip_id: str, labels_path: Path | None = None):
     clip = root / "clips" / clip_id
-    labels = read_jsonl(clip / "labels" / "local.jsonl")
+    labels = read_jsonl(labels_path or clip / "labels" / "local.jsonl")
     reference = {
         int(r["frame_index"]): r["posture"] for r in labels if r.get("posture") in POSTURES
     }
@@ -167,6 +167,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--set", action="append", default=[], help="threshold=value")
     parser.add_argument("--confusion", action="store_true")
     parser.add_argument("--dump", type=Path, help="write replayed rows as JSONL here")
+    parser.add_argument(
+        "--labels-root",
+        type=Path,
+        help="score against clips/<clip>/labels/local.jsonl under this root instead",
+    )
     args = parser.parse_args(argv)
 
     thresholds = replace(ClassifyThresholds(), **parse_sets(args.set))
@@ -175,7 +180,12 @@ def main(argv: list[str] | None = None) -> int:
     header += " ".join(f"{p:>8s}" for p in POSTURES) + "  events floorFP falseEp"
     print(header)
     for clip_id in args.clip:
-        clip, reference, script = load_clip(root, clip_id)
+        labels_path = (
+            args.labels_root.resolve() / "clips" / clip_id / "labels" / "local.jsonl"
+            if args.labels_root
+            else None
+        )
+        clip, reference, script = load_clip(root, clip_id, labels_path)
         zones = load_zones(clip / "zones.yaml")
         for variant in args.variant:
             gate = {

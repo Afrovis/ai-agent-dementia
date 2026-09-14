@@ -1,5 +1,8 @@
 # Perceive accuracy quick wins: handoff (2026-09-13)
 
+Two sessions on the same day. Sections 1 to 6 are the first session as it
+was handed over; sections 7 onward continue it and supersede section 5.
+
 State of an in-flight investigation into why the live pose pipeline missed
 bed and floor events in the two recorded bedroom clips
 (`PIPELINE_TESTING.md`, untracked in the main checkout). Branch
@@ -126,7 +129,7 @@ Reading:
   express it. Expected, not a bug.
 - MediaPipe video mode helps clip 1 and slightly hurts clip 2; left off.
 
-## 5. Next steps, in order
+## 5. Next steps, in order (first session; status in section 10)
 
 1. Explain clip 1 `on_floor` = 0. Run `predict` at 320 and 640 with
    `--no-gate`, dump per-frame `bbox`, zone and state for 118 to 146 s, and
@@ -167,3 +170,148 @@ $PY tools/video_eval/scripts/vlm_agreement.py --data-root $DATA --clip 2026-09-1
 The complete matrix script used for the tables lives only in the job's
 temporary directory and is reproduced by the eight `predict` invocations per
 clip implied by section 4.
+
+## 7. Second session: method
+
+Re-running `predict` for every rule tweak re-runs the model, so the second
+session split inference from classification.
+
+- `tools/video_eval/scripts/detection_cache.py` runs a model once over every
+  prepared bridge frame and stores every candidate box above 0.1 confidence,
+  all 17 keypoints with their confidences, CPU latency, and the motion-gate
+  decision. Output: `clips/<clip>/cache/<model>-<variant>.jsonl` and
+  `gate-<variant>.json`, in the private data root with the rest of the data.
+- `tools/video_eval/scripts/rule_replay.py` rebuilds the `PoseResult` the
+  live backend would produce (0.25 model floor, zeroed keypoints dropped),
+  drives the real `StateTracker`, and scores with `vlm_agreement.py`. It adds
+  a false floor episode count: a run of `on_floor` frames with no VLM
+  `on_floor` frame in it. The agent pages on the first `on_floor` frame
+  (`AGENT_FLOOR_LIMIT_SECONDS=0`), so episodes are what a caregiver feels.
+- Parity: the replay reproduces the section 4 numbers for YOLOv8n and v8s at
+  320 exactly (0.56 / 0.49 / 7 of 9 and 0.57 / 0.49 / 6 of 9), and a real
+  `predict` run with the final rule set matches the replay exactly on both
+  clips (section 9).
+- Six YOLO pose models (v8n, v8s, 11n, 11s, 26n, 26s; the new weights live in
+  `../data-ai-agent-dementia/models/`) and MediaPipe in image and video mode,
+  each at letterbox 320 and 640, on both clips. The scoring reference is
+  still the first-session VLM labels, so the tables stay comparable with
+  section 4; section 11 covers the relabel.
+- Rules and thresholds were chosen on clip 1 only. Clip 2 is the hold-out.
+
+## 8. Findings
+
+### 8.1 Clip 1 `on_floor` = 0 (first-session step 1)
+
+Not the zone and not the centroid height. Every YOLO box on a floor frame is
+taller than wide (height/width 1.2 to 2.4 against the 0.5 lying test), with
+its bottom on the letterbox edge (y 0.87). The VLM notes say why: "sitting on
+floor near bed" (120 to 127 s), "bent over near bed" (135 to 139 s), "on floor
+near dresser and bed" (140 to 144 s). Clip 2's floor event is also sitting.
+The label prompt defines `on_floor` as lying, kneeling or crawling, and the
+scorer already maps the scripted `sitting_on_floor` to `on_floor`, but the
+classifier only ever recognised a body stretched across the frame.
+
+What separates them is where the box starts. Outside the bed zone on clip 1
+(YOLOv8n, 320), the box top sits at a median 0.27 (95th percentile 0.51) for
+`upright` frames and a median 0.59 (5th percentile 0.46) for `on_floor`.
+
+### 8.2 640 losing `in_bed` on clip 1 (first-session step 2)
+
+Not upright misreads, as guessed. At 640 YOLOv8n puts fewer 0.25+ boxes on
+the covered sleeper: 90 `in_bed` frames go to `absent` against 58 at 320.
+The bed-vanish rule below removes the difference (0.89 at 640, 0.91 at 320).
+
+### 8.3 The dominant error was `absent`, not posture
+
+On clip 1 at 320 with YOLOv8n, 131 of 461 labelled frames were `absent`
+while a person was plainly there: one- to four-frame detector dropouts
+published `absent` immediately, and every recovery then waited three
+confirming frames. Worse, getting under the blanket is itself the moment the
+detector loses the person (11.5 to 22 s, 90 to 98 s), so the tracker never
+saw a lying pose, never confirmed `in_bed`, and the bed hold never engaged.
+
+### 8.4 Static false positives: not worth a filter
+
+A fixed box at (0.37, 0.13, 0.55, 0.30), confidence 0.26 to 0.40, appears on
+clip 1 (14 frames for YOLOv8n at 320) and is picked over the real person in
+15 of 310 detected frames. A "same box for five frames" filter would also
+drop the real person sitting still on clip 2, so none was built.
+
+### 8.5 MediaPipe and the box-top rule do not mix
+
+MediaPipe's box is the envelope of its nine landmarks, which jumps when a
+limb is misplaced. Even before any new rule it produced 5 false floor
+episodes of 6 on clip 2 at 320; with the rules, 2 to 3 per run.
+
+## 9. Rules added and results
+
+Four thresholds in `ClassifyThresholds`, each with an env key. All four are
+off in `ClassifyThresholds` itself so the existing unit tests keep their
+meaning; `PerceiveConfig` turns two of them on:
+
+| key | rule | `PerceiveConfig` default |
+|---|---|---|
+| `PERCEIVE_FLOOR_TOP_Y` | outside the bed zone, a 0.5+ detection whose box top is at or below this is `on_floor` | off (1.01) |
+| `PERCEIVE_ABSENT_CONFIRM_SECONDS` | `absent` only after this long with no detection; the last state is held meanwhile | **3** |
+| `PERCEIVE_BED_VANISH_HOLD` | a person lost while last seen in the bed zone confirms `in_bed` (then the bed hold applies) | off |
+| `PERCEIVE_HOLD_FLOOR` | `on_floor` is held while nobody is detected | **on** |
+
+Tests: `services/perceive/tests/test_floor_and_dropout_rules.py`.
+
+"Rules" below means all four: floor top 0.5, absent 3 s, bed vanish, floor
+hold. Agreement is per-frame agreement with the VLM; "ev" is scripted events
+matched; "fl" is `on_floor` recall; "FE" is false floor episodes of all floor
+episodes.
+
+Letterbox 320:
+
+| model | c1 base | c1 rules | c1 in_bed | c1 fl | c1 ev | c1 FE | c2 base | c2 rules | c2 in_bed | c2 fl | c2 ev | c2 FE |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| yolov8n | 0.56 | **0.76** | 0.91 | 0.51 | 9/9 | 0/2 | 0.65 | **0.82** | 0.73 | 0.95 | 11/11 | 0/1 |
+| yolov8s | 0.57 | 0.75 | 0.89 | 0.54 | 9/9 | 1/3 | 0.64 | 0.78 | 0.13 | 0.95 | 11/11 | 0/1 |
+| yolo11n | 0.51 | 0.76 | 0.91 | 0.54 | 9/9 | 0/2 | 0.73 | 0.90 | 0.93 | 0.95 | 11/11 | 0/1 |
+| yolo11s | 0.66 | 0.76 | 0.91 | 0.54 | 9/9 | 0/2 | 0.73 | 0.90 | 0.80 | 0.95 | 11/11 | 0/1 |
+| yolo26n | 0.46 | 0.74 | 0.90 | 0.54 | 9/9 | 0/2 | 0.63 | 0.91 | 0.83 | 0.90 | 11/11 | 0/1 |
+| yolo26s | 0.48 | 0.76 | 0.89 | 0.54 | 9/9 | 0/2 | 0.59 | 0.81 | 0.70 | 0.95 | 11/11 | 0/1 |
+| mediapipe | 0.48 | 0.68 | 0.91 | 1.00 | 9/9 | 0/2 | 0.59 | 0.68 | 0.00 | 1.00 | 9/11 | 3/4 |
+| mediapipe video | 0.56 | 0.65 | 0.92 | 0.34 | 9/9 | 0/3 | 0.56 | 0.69 | 0.00 | 1.00 | 9/11 | 2/3 |
+
+Letterbox 640:
+
+| model | c1 base | c1 rules | c1 in_bed | c1 fl | c1 ev | c1 FE | c2 base | c2 rules | c2 in_bed | c2 fl | c2 ev | c2 FE |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| yolov8n | 0.52 | 0.76 | 0.89 | 0.54 | 9/9 | 0/2 | 0.73 | 0.85 | 0.73 | 0.95 | 11/11 | 0/1 |
+| yolov8s | 0.52 | **0.80** | 0.89 | 0.80 | 9/9 | 0/3 | 0.72 | 0.84 | 0.57 | 0.95 | 11/11 | 0/1 |
+| yolo11n | 0.66 | 0.74 | 0.90 | 0.54 | 9/9 | 0/2 | 0.66 | 0.77 | 0.00 | 0.95 | 10/11 | 0/1 |
+| yolo11s | 0.63 | 0.79 | 0.90 | 0.74 | 9/9 | 0/2 | 0.73 | 0.84 | 0.70 | 0.95 | 11/11 | 0/1 |
+| yolo26n | 0.54 | 0.75 | 0.88 | 0.54 | 9/9 | 0/2 | 0.66 | **0.88** | 0.73 | 0.95 | 11/11 | 0/1 |
+| yolo26s | 0.52 | 0.78 | 0.88 | 0.63 | 9/9 | 0/2 | 0.73 | 0.84 | 0.67 | 0.95 | 11/11 | 0/1 |
+| mediapipe | 0.45 | 0.69 | 0.91 | 1.00 | 9/9 | 0/2 | 0.62 | 0.73 | 0.30 | 1.00 | 11/11 | 3/4 |
+| mediapipe video | 0.53 | 0.71 | 0.92 | 0.77 | 9/9 | 0/3 | 0.61 | 0.79 | 0.67 | 1.00 | 11/11 | 1/2 |
+
+Single rules on clip 1, YOLOv8n at 320 (agree / events): baseline 0.56 / 7;
+absent 3 s 0.67 / 7; bed vanish 0.71 / 7; floor top 0.5 0.58 / 9 (0 false
+episodes of 3). On the hold-out clip the same single rules take YOLOv8n from
+0.65 to 0.67, 0.72 and 0.73, and to 0.82 with all four.
+
+Sensitivity on clip 1 with the other rules on (five models): floor top 0.45
+to 0.55 is flat; 0.6 drops floor recall to 0.11 to 0.43. Absent confirmation
+of 1 to 8 s is flat within 0.02. Presence 0.25 is best (0.35 costs `in_bed`
+0.2 to 0.3). Min confidence 0.5 is best; 0.4 gives YOLO11s a false floor
+episode.
+
+End-to-end check through `predict` and `PerceiveConfig.from_env`, YOLOv8n at
+320 with the four rule keys set: clip 1 0.76, `in_bed` 0.91, `on_floor`
+0.51, 9 of 9 events, median latency 1.0 s; clip 2 0.82, 11 of 11, median
+0.0 s. Identical to the replay.
+
+### 9.1 Latency (single frame, CPU, Mac mini M4, median)
+
+| backend | 320 | 640 |
+|---|---|---|
+| yolov8n / 11n / 26n | 30.8 / 34.0 / 34.4 ms | 29.3 / 31.4 / 32.9 ms |
+| yolov8s / 11s / 26s | 59.1 / 58.5 / 62.1 ms | 57.4 / 56.5 / 58.3 ms |
+| mediapipe / video mode | 18.6 / 12.0 ms | 19.2 / 12.4 ms |
+
+Ultralytics resizes to 640 either way, so bridge resolution does not change
+inference cost. Every backend fits a 500 ms, 2 fps budget many times over.
