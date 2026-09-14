@@ -382,6 +382,34 @@ clip 2 goes 0.84 to 0.92, and the small models find more of clip 1's floor
 frames (v8s 0.85, 11s 0.75 against 0.45 at 320). YOLO11n at 640 is the one
 bad cell (clip 2 `in_bed` 0.00).
 
+### 9.5 YOLO11m: not worth the cost
+
+Added on request after the handoff. `yolo11m-pose.pt` (42 MB, in
+`../data-ai-agent-dementia/models/`) cached and replayed like the others.
+
+Final rule set, clip 1 / clip 2:
+
+| model | VLM 320 | VLM 640 | script 320 | script 640 | CPU median / p95 |
+|---|---|---|---|---|---|
+| yolov8n | 0.78 / 0.82 | 0.78 / 0.85 | 0.77 / 0.84 | 0.77 / 0.92 | 31 / 32 ms |
+| yolo11s | 0.78 / **0.90** | 0.80 / 0.84 | 0.78 / **0.97** | 0.78 / 0.97 | 58 / 60 ms |
+| yolo11m | 0.78 / 0.82 | **0.81 / 0.88** | 0.77 / 0.82 | 0.79 / 0.97 | 121 / 124 ms |
+
+- At 320, the current bridge size, YOLO11m is worse than YOLO11s on clip 2
+  (0.82 against 0.90 and 0.97) and no better than YOLOv8n.
+- At 640 it is the best cell against the VLM, 0.01 to 0.04 ahead of YOLO11s,
+  and ties it against the script. Two clips cannot resolve that.
+- Without the rules it is the weakest on the covered sleeper (clip 1
+  `in_bed` 0.01 to 0.06): larger models put even fewer low-confidence boxes
+  on a person under a blanket, so it leans harder on bed vanish.
+- It costs 2x YOLO11s and 4x YOLOv8n per frame on the M4 CPU. That fits the
+  500 ms budget at 2 fps, but perceive shares the CPU with Whisper, Piper
+  and Ollama.
+
+Verdict: stay with YOLO11s (or YOLOv8n where CPU is tight). Revisit YOLO11m
+only together with 640 bridge frames and more clips that show a consistent
+lead.
+
 ## 10. Status of the first-session next steps
 
 1. Clip 1 `on_floor` = 0: explained (section 8.1), fixed by the floor-top
