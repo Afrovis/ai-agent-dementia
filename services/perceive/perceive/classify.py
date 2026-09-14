@@ -120,7 +120,8 @@ class ClassifyThresholds:
     (through normal hysteresis) rather than `absent`. Getting under a
     blanket is itself the moment the detector loses them, so the tracker
     often never sees a lying pose to confirm `in_bed` from and the bed hold
-    (`StateTracker._holds_bed`) never engages. `PERCEIVE_BED_VANISH_HOLD`."""
+    (`StateTracker._holds_bed`) never engages. Never applied while the last
+    confirmed state is `walking`. `PERCEIVE_BED_VANISH_HOLD`."""
 
     hold_floor: bool = False
     """Keep reporting `on_floor` while the backend sees nobody, as the bed
@@ -435,7 +436,9 @@ class StateTracker:
             if (
                 self.thresholds.bed_vanish_hold
                 and self._last_seen_zone == "bed"
-                and self._current not in ("in_bed", "on_floor")
+                # Someone walking through the bed zone is more likely leaving
+                # the frame than getting under the covers.
+                and self._current not in ("in_bed", "on_floor", "walking")
             ):
                 state, zone = "in_bed", "bed"
             elif now - self._undetected_since < self.thresholds.absent_confirm_seconds:

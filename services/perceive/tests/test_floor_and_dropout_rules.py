@@ -96,6 +96,23 @@ def test_person_lost_in_bed_zone_confirms_in_bed_and_is_then_held():
     assert tracker.update(None, "other", now=600.0) is None
 
 
+def test_person_lost_while_walking_through_bed_zone_is_not_in_bed():
+    thresholds = ClassifyThresholds(bed_vanish_hold=True, walk_displacement_threshold=0.1)
+    tracker = StateTracker(thresholds=thresholds, confirm_frames=1)
+    tracker.update(standing_pose(), "bed", now=0.0)
+    moved = PoseResult(
+        landmarks={
+            name: type(lm)(x=lm.x + 0.3, y=lm.y, visibility=lm.visibility)
+            for name, lm in standing_pose().landmarks.items()
+        },
+        bbox=standing_pose().bbox,
+        confidence=0.9,
+    )
+    assert tracker.update(moved, "bed", now=0.5) == ("walking", 0.9)
+
+    assert tracker.update(None, "other", now=1.0) == ("absent", 0.0)
+
+
 def test_person_lost_outside_bed_zone_is_still_absent():
     tracker = StateTracker(thresholds=ClassifyThresholds(bed_vanish_hold=True), confirm_frames=1)
     tracker.update(standing_pose(), "other", now=0.0)
