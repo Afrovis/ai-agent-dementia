@@ -81,6 +81,18 @@ reference for manually writing the clip's normalised `zones.yaml`; see
 outputs unless `--force` is supplied. Every output records the current git SHA,
 parameters, package versions, and elapsed time in a neighboring metadata file.
 
+Render silent, synchronized review videos from the recorder's scenario card,
+the selected gated real-time pose pipeline, or the local vision-language labels:
+
+```sh
+.venv-video-eval/bin/python -m video_eval visualize \
+  --clip 2026-09-13_bedroom-sample-01 --mode pipeline
+```
+
+The default output directory is `../data-ai-agent-dementia/analysis`. Each
+video includes the full camera view, the exact 320 by 240 letterboxed runtime
+input, source-specific annotations, and a state timeline. Audio is never copied.
+
 For package parity, build the optional tooling into the perceive image:
 
 ```sh
