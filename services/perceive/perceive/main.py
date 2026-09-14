@@ -80,9 +80,9 @@ class PerceiveConfig:
     min_confidence: float = 0.5
     presence_confidence: float = 0.25
     floor_top_y: float = 1.01
-    absent_confirm_seconds: float = 0.0
+    absent_confirm_seconds: float = 3.0
     bed_vanish_hold: bool = False
-    hold_floor: bool = False
+    hold_floor: bool = True
     confirm_frames: int = 3
     bed_hold_seconds: float = 0.0
     walk_threshold: float = 0.15
@@ -107,9 +107,9 @@ class PerceiveConfig:
             min_confidence=float(env.get("PERCEIVE_MIN_CONFIDENCE", "0.5")),
             presence_confidence=float(env.get("PERCEIVE_PRESENCE_CONFIDENCE", "0.25")),
             floor_top_y=float(env.get("PERCEIVE_FLOOR_TOP_Y", "1.01")),
-            absent_confirm_seconds=float(env.get("PERCEIVE_ABSENT_CONFIRM_SECONDS", "0")),
+            absent_confirm_seconds=float(env.get("PERCEIVE_ABSENT_CONFIRM_SECONDS", "3")),
             bed_vanish_hold=env.get("PERCEIVE_BED_VANISH_HOLD", "false").strip().lower() == "true",
-            hold_floor=env.get("PERCEIVE_HOLD_FLOOR", "false").strip().lower() == "true",
+            hold_floor=env.get("PERCEIVE_HOLD_FLOOR", "true").strip().lower() != "false",
             confirm_frames=int(env.get("PERCEIVE_CONFIRM_FRAMES", "3")),
             bed_hold_seconds=float(env.get("PERCEIVE_BED_HOLD_SECONDS", "0")),
             walk_threshold=float(env.get("PERCEIVE_WALK_THRESHOLD", "0.15")),
