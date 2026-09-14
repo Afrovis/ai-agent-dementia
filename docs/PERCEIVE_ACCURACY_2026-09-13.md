@@ -315,3 +315,124 @@ End-to-end check through `predict` and `PerceiveConfig.from_env`, YOLOv8n at
 
 Ultralytics resizes to 640 either way, so bridge resolution does not change
 inference cost. Every backend fits a 500 ms, 2 fps budget many times over.
+
+### 9.2 Guards tried after reading the remaining errors
+
+With all four rules on, the clip 1 errors that still matter for safety were a
+standing person read as `in_bed` (108.5 to 113.5 s and a few single frames):
+the detector drops them in front of the bed, a 0.29 to 0.38 presence box or
+the bed-vanish rule then says `in_bed`. Two guards were measured:
+
+- Presence boxes in the bed zone count as `in_bed` only when not tall (box
+  height at most 1.0 or 1.5 times width). Mixed, within 0.01 on clip 1,
+  costs up to 0.1 `in_bed` on clip 2. Removed.
+- Bed vanish never fires while the last confirmed state is `walking`.
+  Clip 1 `upright` recall 0.89 to 0.93 and agreement +0.02 for v8n, v8s,
+  11s; clip 2 unchanged to two decimals. Kept, built into `bed_vanish_hold`
+  with no separate key.
+
+### 9.3 Final rule set
+
+Floor top 0.5, absent 3 s, bed vanish (skipping `walking`), floor hold.
+Agreement with the first-session VLM labels, clip 1 / clip 2:
+
+| model | 320 | 640 | mean | c1 ev | c2 ev | false floor episodes |
+|---|---|---|---|---|---|---|
+| yolov8n | 0.78 / 0.82 | 0.78 / 0.85 | 0.81 | 9/9 | 11/11 | 0 |
+| yolov8s | 0.78 / 0.78 | 0.81 / 0.84 | 0.80 | 9/9 | 11/11 | 1 of 3 (clip 1, 320) |
+| yolo11n | 0.78 / 0.90 | 0.78 / 0.77 | 0.81 | 9/9 | 10-11/11 | 0 |
+| **yolo11s** | 0.78 / 0.90 | 0.80 / 0.84 | **0.83** | 9/9 | 11/11 | 0 |
+| yolo26n | 0.74 / 0.91 | 0.76 / 0.88 | 0.82 | 9/9 | 11/11 | 0 |
+| yolo26s | 0.78 / 0.81 | 0.79 / 0.84 | 0.81 | 9/9 | 11/11 | 0 |
+
+For comparison the section 4 starting point was YOLOv8n 320 at 0.56 / 0.65
+with 7/9 and 10/11 events and no `on_floor` at all, and the MediaPipe default
+at 0.48 / 0.59.
+
+Model differences after the rules (0.80 to 0.83 on average) are smaller than
+the rule gains (+0.2) and than what two clips can resolve. YOLO11s is the
+best and steadiest; YOLOv8n is within 0.02 at half the cost.
+
+## 10. Status of the first-session next steps
+
+1. Clip 1 `on_floor` = 0: explained (section 8.1), fixed by the floor-top
+   rule. `on_floor` recall 0.51 to 0.80 on clip 1 and 0.90 to 0.95 on clip 2,
+   no false floor episodes for YOLO except v8s at 320.
+2. 640 losing `in_bed` on clip 1: explained (section 8.2), moot with bed
+   vanish.
+3. Bridge resolution: keep 320x240 letterboxed. With the rules, 640 wins
+   for the small models on clip 1 and loses for the nano models on clip 2;
+   no consistent gain, and inference cost is the same either way. Nothing
+   in `script.js` changed.
+4. Owner-drawn zones: still open, and now more important. Bed vanish and
+   the floor-top rule both key off the bed polygon, and the floor-top value
+   (0.5) is tied to this camera's height.
+5. Labeller fix: done (`labels.py` coerces only `true`/`false` strings and
+   0/1; `label_local.py` sends a JSON schema as Ollama `format`; the prompt
+   now names sitting on the floor as `on_floor` and bedding shapes as
+   `in_bed`). Relabel in section 11.
+6. "Lost in room" rule: the absent confirmation plus bed vanish cover the
+   in-room dropouts seen on these clips. A door-zone rule still needs a
+   door polygon. The async VLM second opinion was not built.
+
+## 11. Relabel with the fixed labeller
+
+RELABEL_PLACEHOLDER
+
+## 12. Recommendations
+
+1. Keep the two defaults turned on in `PerceiveConfig`
+   (`PERCEIVE_ABSENT_CONFIRM_SECONDS=3`, `PERCEIVE_HOLD_FLOOR=true`). Both are
+   camera-independent and never delay an alert.
+2. Owner decision: enable `PERCEIVE_BED_VANISH_HOLD=true` once real zones
+   are drawn. It is the largest single `in_bed` gain (0.49 to 0.86 on clip 1)
+   but widens the bed hold to people last seen standing, not walking, in the
+   bed zone, so a bed exit that the camera never sees upright outside the bed
+   polygon is held as `in_bed`.
+3. Owner decision: enable `PERCEIVE_FLOOR_TOP_Y` at about 0.5 for this
+   camera after checking a standing person at the far wall does not reach it.
+   It is the only rule that finds sitting or kneeling falls, and `on_floor`
+   pages immediately.
+4. Owner decision (HANDOFF.md section 12): switch `PERCEIVE_POSE_BACKEND` to
+   `yolo`. MediaPipe trails every YOLO model after the rules and produces
+   false floor episodes; its box is a landmark envelope. YOLO11s
+   (`yolo11s-pose.pt`, 58 ms per frame on the M4 CPU) or YOLOv8n (31 ms).
+   The perceive image needs the `yolo` extra for that.
+5. Record more clips before tuning further, especially a night-light or IR
+   clip and a bed exit straight out of frame, which is the residual risk of
+   recommendation 2.
+
+## 13. Commands (second session)
+
+Run from the worktree with the section 6 environment (`PY`, `PYTHONPATH`,
+`DATA`). `WEIGHTS` is a directory holding the `.pt` files.
+
+```sh
+# Once per clip and variant: cache every model's raw output (about 2 min per model pair).
+$PY tools/video_eval/scripts/detection_cache.py --data-root $DATA \
+  --clip 2026-09-13_bedroom-sample-01 --variant letterbox \
+  --model /Users/mathiasserver/Documents/ai-agent-dementia/yolov8n-pose.pt \
+  --model $DATA/models/yolo11s-pose.pt --model $DATA/models/yolo26n-pose.pt \
+  --model mediapipe --model mediapipe_video
+
+# Replay and score in seconds; --set takes any ClassifyThresholds field.
+$PY tools/video_eval/scripts/rule_replay.py --data-root $DATA \
+  --clip 2026-09-13_bedroom-sample-01 --clip 2026-09-13_bedroom-sample-02 \
+  --variant letterbox --variant letterbox640 \
+  --model yolov8n-pose --model yolo11s-pose --model yolo26n-pose \
+  --set floor_top_y=0.5 --set absent_confirm_seconds=3 \
+  --set bed_vanish_hold=1 --set hold_floor=1 --confusion
+
+# Score against a relabelled reference instead of labels/local.jsonl.
+$PY tools/video_eval/scripts/rule_replay.py ... --labels-root $DATA/relabel-v2
+
+# End-to-end through PerceiveConfig.from_env, as the service reads it.
+PERCEIVE_FLOOR_TOP_Y=0.5 PERCEIVE_BED_VANISH_HOLD=true \
+  $PY -m video_eval --data-root $DATA predict --force \
+  --clip 2026-09-13_bedroom-sample-01 --backend yolo --variant letterbox \
+  --yolo-model /Users/mathiasserver/Documents/ai-agent-dementia/yolov8n-pose.pt
+```
+
+The shell in this environment rejects `export` of a computed value, so the
+second session ran every command through a small wrapper script that sets
+`PYTHONPATH` and execs the venv Python.
