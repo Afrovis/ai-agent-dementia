@@ -353,6 +353,35 @@ Model differences after the rules (0.80 to 0.83 on average) are smaller than
 the rule gains (+0.2) and than what two clips can resolve. YOLO11s is the
 best and steadiest; YOLOv8n is within 0.02 at half the cost.
 
+### 9.4 Check against the scripted timeline (no VLM)
+
+Both VLM label sets have blind spots (sections 1 and 11), so the final rule
+set was also scored against a per-frame reference built from `clip.yaml`:
+each scripted action holds until the next, actions perceive cannot express
+(drawers, dressing, getting up) are unscored, and frames within 2 s of any
+transition are skipped. Clip 1 has 249 scored frames (157 `in_bed`), clip 2
+has 90. `rule_replay.py --reference script` reproduces it.
+
+| model | 320 c1 base / final | 320 c2 base / final | 640 c1 base / final | 640 c2 base / final |
+|---|---|---|---|---|
+| yolov8n | 0.45 / **0.77** | 0.62 / 0.84 | 0.24 / 0.77 | 0.81 / 0.92 |
+| yolov8s | 0.43 / 0.75 | 0.64 / 0.79 | 0.17 / 0.80 | 0.82 / 0.93 |
+| yolo11n | 0.36 / 0.78 | 0.84 / 0.96 | 0.60 / 0.77 | 0.67 / 0.78 |
+| yolo11s | 0.61 / 0.78 | 0.86 / **0.97** | 0.57 / 0.78 | 0.86 / 0.97 |
+| yolo26n | 0.12 / 0.75 | 0.67 / 1.00 | 0.28 / 0.78 | 0.67 / 0.97 |
+| yolo26s | 0.16 / 0.76 | 0.60 / 0.90 | 0.17 / 0.74 | 0.84 / 0.96 |
+| mediapipe video | 0.55 / 0.68 | 0.57 / 0.71 | 0.44 / 0.74 | 0.78 / 0.91 |
+
+Per class for YOLOv8n at 320, clip 1, base to final: `in_bed` 0.53 to 0.81,
+`upright` 0.54 to 1.00, `on_floor` 0.00 to 0.45, `sitting_up` 0.17 to 0.29.
+Clip 2: `in_bed` 0.37 to 0.89, `on_floor` 0.00 to 1.00.
+
+The rule gains hold without the VLM and are larger than against it. On this
+reference 640 is neutral to slightly better once the rules are on: YOLOv8n
+clip 2 goes 0.84 to 0.92, and the small models find more of clip 1's floor
+frames (v8s 0.85, 11s 0.75 against 0.45 at 320). YOLO11n at 640 is the one
+bad cell (clip 2 `in_bed` 0.00).
+
 ## 10. Status of the first-session next steps
 
 1. Clip 1 `on_floor` = 0: explained (section 8.1), fixed by the floor-top
@@ -360,10 +389,12 @@ best and steadiest; YOLOv8n is within 0.02 at half the cost.
    no false floor episodes for YOLO except v8s at 320.
 2. 640 losing `in_bed` on clip 1: explained (section 8.2), moot with bed
    vanish.
-3. Bridge resolution: keep 320x240 letterboxed. With the rules, 640 wins
-   for the small models on clip 1 and loses for the nano models on clip 2;
-   no consistent gain, and inference cost is the same either way. Nothing
-   in `script.js` changed.
+3. Bridge resolution: no longer blocking, and still undecided on two clips.
+   Against the VLM, 640 helps the small models on clip 1 and hurts YOLO11n
+   on clip 2; against the script (section 9.4), 640 is neutral to slightly
+   better for every model except YOLO11n. Inference cost is identical. A
+   reasonable switch with YOLOv8n or a small model, not a clear win, so
+   `script.js` and its 320x240 tests were left unchanged.
 4. Owner-drawn zones: still open, and now more important. Bed vanish and
    the floor-top rule both key off the bed polygon, and the floor-top value
    (0.5) is tied to this camera's height.
@@ -397,7 +428,8 @@ RELABEL_PLACEHOLDER
    `yolo`. MediaPipe trails every YOLO model after the rules and produces
    false floor episodes; its box is a landmark envelope. YOLO11s
    (`yolo11s-pose.pt`, 58 ms per frame on the M4 CPU) or YOLOv8n (31 ms).
-   The perceive image needs the `yolo` extra for that.
+   The perceive image needs the `yolo` extra for that. If switching, 640
+   letterboxed bridge frames are worth taking at the same time (section 9.4).
 5. Record more clips before tuning further, especially a night-light or IR
    clip and a bed exit straight out of frame, which is the residual risk of
    recommendation 2.

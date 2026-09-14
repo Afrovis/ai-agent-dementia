@@ -25,7 +25,16 @@ from perceive.classify import ClassifyThresholds, StateTracker, centroid_of
 from perceive.zones import load_zones
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from vlm_agreement import POSTURES, agreement, event_latencies, read_jsonl  # noqa: E402
+from vlm_agreement import (  # noqa: E402
+    POSTURES,
+    SCRIPT_STATE,
+    agreement,
+    event_latencies,
+    read_jsonl,
+)
+
+SCRIPT_MARGIN_S = 2.0
+"""Frames this close to a scripted transition are left out of the script reference."""
 
 COCO = {
     "nose": 0,
@@ -131,6 +140,23 @@ def score(rows: list[dict], reference: dict[int, str], script: list[dict]) -> di
     }
 
 
+def script_reference(cache_rows: list[dict], script: list[dict]) -> dict[int, str]:
+    """A per-frame reference from `clip.yaml`, independent of any VLM: each
+    scripted action holds until the next; actions perceive cannot express and
+    frames within `SCRIPT_MARGIN_S` of a transition are left unscored."""
+    times = [float(event["t_s"]) for event in script]
+    reference = {}
+    for row in cache_rows:
+        t = float(row["t_s"])
+        active = [event for event in script if float(event["t_s"]) <= t]
+        if not active or any(abs(t - s) < SCRIPT_MARGIN_S for s in times):
+            continue
+        posture = SCRIPT_STATE.get(active[-1]["action"])
+        if posture is not None:
+            reference[int(row["frame_index"])] = posture
+    return reference
+
+
 def load_clip(root: Path, clip_id: str, labels_path: Path | None = None):
     clip = root / "clips" / clip_id
     labels = read_jsonl(labels_path or clip / "labels" / "local.jsonl")
@@ -168,6 +194,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--confusion", action="store_true")
     parser.add_argument("--dump", type=Path, help="write replayed rows as JSONL here")
     parser.add_argument(
+        "--reference",
+        choices=("vlm", "script"),
+        default="vlm",
+        help="score against VLM labels or the clip.yaml script timeline",
+    )
+    parser.add_argument(
         "--labels-root",
         type=Path,
         help="score against clips/<clip>/labels/local.jsonl under this root instead",
@@ -199,8 +231,14 @@ def main(argv: list[str] | None = None) -> int:
                 if not path.exists():
                     print(f"missing {path.name}")
                     continue
+                cache_rows = read_jsonl(path)
+                frame_reference = (
+                    script_reference(cache_rows, script)
+                    if args.reference == "script"
+                    else reference
+                )
                 rows = replay(
-                    read_jsonl(path),
+                    cache_rows,
                     gate,
                     zones,
                     thresholds,
@@ -208,7 +246,7 @@ def main(argv: list[str] | None = None) -> int:
                     model_floor=0.0 if model.startswith("mediapipe") else args.model_floor,
                     gated=not args.no_gate,
                 )
-                result = score(rows, reference, script)
+                result = score(rows, frame_reference, script)
                 cells = " ".join(
                     f"{result['recall'][p]:8.2f}"
                     if result["recall"][p] is not None
