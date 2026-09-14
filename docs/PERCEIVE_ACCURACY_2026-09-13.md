@@ -408,7 +408,32 @@ bad cell (clip 2 `in_bed` 0.00).
 
 ## 11. Relabel with the fixed labeller
 
-RELABEL_PLACEHOLDER
+The fixed labeller (`qwen3-vl:8b`, schema-constrained, revised prompt, adaptive
+sampling) was run into a mirror root, `../data-ai-agent-dementia/relabel-v2/`,
+so `labels/local.jsonl` stayed untouched. The run was killed by macOS for low
+memory after 361 of clip 1's 488 frames (up to about 180 s); clip 2 was not
+reached. The first-session labels are backed up as
+`labels/local.v1-qwen3vl.jsonl` beside the originals.
+
+On the 361 shared frames:
+
+- Failed records: 22 in the first-session labels, 0 in the relabel. The
+  `person_visible` fix and structured output work.
+- 317 postures identical. The differences all go the wrong way: the 20
+  formerly failed frames at 51 to 60.5 s (scripted `sitting_up`) now read
+  `absent`, and 20 covered-sleeper frames at 11 to 15.5 s and 166.5 to 171 s
+  flip from `in_bed` to `absent`. The known 36 to 45.5 s error is unchanged.
+  The prompt line "a body shape under bedding is in_bed, not absent" did not
+  help.
+
+So `qwen3-vl:8b` has a blind spot for a covered or dim person that prompting
+does not fix, and the relabel is not a better reference. It was not adopted;
+every table in this document scores against the first-session labels or the
+script (section 9.4). A human-confirmed `reference.yaml` (the `reconcile`
+step in docs/VIDEO_EVAL.md) is still needed before trusting VLM numbers to
+two decimals. To finish the relabel, stop other memory-heavy work first and
+rerun `label-local --clip <id>` against `--data-root
+../data-ai-agent-dementia/relabel-v2`.
 
 ## 12. Recommendations
 
