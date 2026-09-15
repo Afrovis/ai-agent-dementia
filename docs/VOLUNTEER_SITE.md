@@ -1,6 +1,6 @@
 # Volunteer recording site
 
-Plan and execution brief for `upload.mathiasvissers.com`: a public page where
+Design for `upload.mathiasvissers.com`: a public page where
 healthy volunteers record themselves moving around a room with their laptop
 camera, see what the pipeline makes of the sample-02 recording, and download
 the analysis video of their own clip once it has been processed.
@@ -81,8 +81,10 @@ browser ──HTTPS──▶ Cloudflare edge ──Tunnel──▶ cloudflared �
 | `worker` | Polls SQLite for finalized submissions, decrypts, runs `video_eval`, encrypts the result. Concurrency 1, CPU-limited. |
 
 A separate compose network, with nothing published on host ports.
-`cloudflared` reaches `web`; `web` reaches nothing. SQLite
-(`volunteer_clips/volunteer.db`, WAL mode) is the queue. A second Redis would
+`cloudflared` reaches `web`; `web` reaches only Turnstile's verify endpoint;
+`worker` has no network at all. SQLite (`volunteer_clips/volunteer.db`,
+rollback journal, since WAL is unreliable across containers on a macOS bind
+mount) is the queue. A second Redis would
 be one more thing to run for a queue that sees a few jobs a day.
 
 `worker` gets `cpus: ${WORKER_CPUS}` and `mem_limit`, so a volunteer job cannot
@@ -99,7 +101,7 @@ volunteer_clips/
 ├── incoming/<id>/
 │   ├── key.wrapped                   RSA-OAEP wrapped AES key
 │   ├── chunk_000000.enc …            ciphertext as uploaded
-│   └── consent.json                  consent text version, timestamp, markers
+│   └── submission.json               consent version, mime type, markers, duration
 ├── raw/<id>.mkv                      decrypted, remuxed recording
 ├── clips/<id>/…                      video_eval prepare/predict outputs
 ├── analysis/<id>__pipeline.mp4       plaintext render, local only
@@ -110,9 +112,8 @@ The submission id is a random 128-bit URL-safe string, which also serves as the
 `video_eval` clip id. The database stores `sha256(deletion_token)`, never the
 token.
 
-`submissions` columns: `id, created_at, consent_version, user_agent_family,
-status (recording|finalized|processing|ready|failed|deleted), chunk_count,
-bytes, duration_s, pipeline_tag, error, updated_at`.
+The exact `submissions` schema, status transitions, crypto wire format and HTTP
+API are specified in `volunteer/HANDOFF.md` section 5.
 
 ## Volunteer flow
 
@@ -163,8 +164,9 @@ to the names in `visualize.py`, because unmapped names render as `upright`
 | Get up and walk back to the laptop | 15 | `walking` |
 
 The floor step carries an explicit safety line and a "Skip" affordance that is
-the default when unsure. Check the marker names against the `visualize.py`
-mapping when implementing.
+the default when unsure. The Marker column is each step's expected state; step ids
+are defined separately in `volunteer/HANDOFF.md`. Check expected states against
+the `visualize.py` mapping when implementing.
 
 ## Sample-02 demo
 
@@ -173,7 +175,7 @@ HEVC at 60 fps, 114 s. Predictions: `predictions/yolo_yolo11s-pose-letterbox640-
 (2 fps; `t_s`, `state`, `state_confidence`, `zone`, `gated`, `bbox`, and COCO-17
 `landmarks` as `[x, y, visibility]`).
 
-A one-off `volunteer/scripts/build_sample.py` produces the demo assets in
+A one-off `python -m volunteer_worker.build_sample` produces the demo assets in
 `VOLUNTEER_DATA_DIR/sample/`, which is not in git:
 
 - `sample.mp4`: 1280×720 H.264, 30 fps, no audio, `+faststart`.
@@ -243,21 +245,21 @@ It never prints the token or secrets. The token needs Account › Cloudflare
 Tunnel › Edit, Account › Turnstile › Edit, and Zone › DNS › Edit on
 `mathiasvissers.com`.
 
-`volunteer/scripts/make_keys.py` generates the RSA-3072 key pair in
+`python -m volunteer_worker.make_keys` generates the RSA-3072 key pair in
 `VOLUNTEER_KEY_DIR` (mode 600), and only if none exists. Losing the private key
 makes every stored clip unreadable, so back it up outside the Mac mini.
 
 ## Abuse and limits
 
-- Turnstile on submission creation. A signed, short-lived upload capability is
-  returned for the chunk calls.
+- Turnstile on submission creation. A random per-submission upload token,
+  stored hashed, authorizes the chunk calls.
 - In-memory rate limits: 5 submissions per IP per hour, and one active
   recording per submission.
 - Per-chunk size cap. Total `MAX_UPLOAD_MB` and `MAX_RECORDING_SECONDS` are
   enforced server side.
 - `web` accepts only `application/octet-stream` chunks and never parses the
   ciphertext. Only the worker's ffmpeg touches decrypted media, in its own
-  container, with no network egress (`internal: true` network).
+  container, with no network at all (`network_mode: none`).
 - Security headers: strict CSP (self plus the Turnstile origin), `Permissions-Policy: camera=(self)`,
   no referrer.
 - Free disk space check. `web` refuses new submissions below a threshold.
@@ -267,7 +269,7 @@ makes every stored clip unreadable, so back it up outside the Mac mini.
 "Delete my video" on the status page sends the deletion token. `web` verifies
 it against the stored hash and marks the row `deleted`. The worker removes
 `incoming/<id>`, `raw/<id>.*`, `clips/<id>`, `analysis/<id>__*`, and
-`results/<id>*`. Email requests are handled with `volunteer/scripts/delete.py <id>`.
+`results/<id>*`. Email requests are handled with `python -m volunteer_worker.delete <id>`.
 
 ## Build phases
 
@@ -304,5 +306,6 @@ Consistent with the repository rule that no service needs hardware to test:
 
 ## Configuration
 
-See `volunteer/.env.example`. `volunteer/.env` is gitignored by the root
+See `volunteer/.env.example`. The execution brief, with contracts and work
+items, is `volunteer/HANDOFF.md`. `volunteer/.env` is gitignored by the root
 `.env` rule.
