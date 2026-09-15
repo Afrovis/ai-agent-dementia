@@ -18,6 +18,7 @@ from perceive.main import (
     FRAME_GROUP,
     FRAME_STREAM,
     PerceiveConfig,
+    build_floor_check_client,
     build_tracker,
     build_vision_client,
     maybe_emit_health,
@@ -106,7 +107,7 @@ def on_floor_pose() -> PoseResult:
 
 def _publish_frame(bus) -> None:
     bus.publish(
-        Frame(source="capture", jpeg=b"\xff\xd8\xff", width=320, height=240, source_kind="browser"),
+        Frame(source="capture", jpeg=b"\xff\xd8\xff", width=640, height=480, source_kind="browser"),
         maxlen=CAPPED_MAXLEN["frames"],
     )
 
@@ -192,12 +193,13 @@ def test_run_once_returns_none_while_hysteresis_is_pending():
 
 def test_perceive_config_from_env_uses_defaults_when_unset():
     config = PerceiveConfig.from_env(env={})
-    assert config.pose_backend == "mediapipe"
+    assert config.pose_backend == "yolo"
     assert config.min_confidence == 0.5
     assert config.confirm_frames == 3
     assert config.walk_threshold == 0.15
     assert config.heartbeat_seconds == 60.0
     assert config.zones_path is None
+    assert config.floor_check_think is False
 
 
 def test_perceive_config_from_env_reads_every_key():
@@ -208,6 +210,7 @@ def test_perceive_config_from_env_reads_every_key():
         "PERCEIVE_WALK_THRESHOLD": "0.2",
         "PERCEIVE_HEARTBEAT_SECONDS": "30",
         "ZONES_PATH": "/app/config/zones.yaml",
+        "PERCEIVE_FLOOR_CHECK_THINK": "true",
     }
     config = PerceiveConfig.from_env(env=env)
     assert config.pose_backend == "scripted"
@@ -216,6 +219,20 @@ def test_perceive_config_from_env_reads_every_key():
     assert config.walk_threshold == 0.2
     assert config.heartbeat_seconds == 30.0
     assert config.zones_path == "/app/config/zones.yaml"
+    assert config.floor_check_think is True
+
+
+def test_perceive_config_floor_check_think_can_be_unset():
+    for value in ("", "auto", "unset"):
+        config = PerceiveConfig.from_env(env={"PERCEIVE_FLOOR_CHECK_THINK": value})
+        assert config.floor_check_think is None
+
+
+def test_build_floor_check_client_wires_think_through():
+    client = build_floor_check_client(PerceiveConfig(floor_check_think=None))
+
+    assert client is not None
+    assert client._think is None  # noqa: SLF001 - constructor wiring
 
 
 def test_build_tracker_wires_config_thresholds_through():

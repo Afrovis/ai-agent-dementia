@@ -95,14 +95,16 @@ class ZoneMap:
 
     polygons: dict[str, Polygon] = field(default_factory=dict)
 
-    def zone_for_point(self, x: float, y: float) -> ZoneName:
+    def zone_for_point(self, x: float, y: float, *, include_bed: bool = True) -> ZoneName:
         """Return which zone `(x, y)` (normalised, 0.0-1.0) falls in.
 
         Applies the fixed precedence documented on `_PRECEDENCE` when
         polygons overlap. Returns `"other"` if the point is in none of
-        them, or if no zones are configured at all.
+        them, or if no zones are configured at all. Set `include_bed=False`
+        to apply the same precedence among the remaining zones.
         """
-        for name in _PRECEDENCE:
+        precedence = _PRECEDENCE if include_bed else _PRECEDENCE[1:]
+        for name in precedence:
             polygon = self.polygons.get(name)
             if polygon and _point_in_polygon(x, y, polygon):
                 return name

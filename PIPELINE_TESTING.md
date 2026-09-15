@@ -145,7 +145,36 @@ clean: only 1/229 frames malformed (an Ollama request timeout at t=11.5s,
 0.4% — a different and much rarer failure mode than video 1's validation
 bug).
 
-## Initial conclusions
+## Video 3 — `2026-09-13_bedroom-sample-03` (176s, provisional)
+
+This is a machine-only baseline. The scenario card is intentionally empty and
+the clip has no `zones.yaml`; add the recorder's timestamps and hand-drawn zones
+before scoring accuracy or interpreting `absent` as a miss.
+
+The standard gated YOLO11s-pose letterbox pipeline processed 352 frames. The
+motion gate admitted 177 frames and pose inference detected a person in 111 of
+those (62.7%). Tracker output over the complete video was 129 `absent` frames,
+94 `sitting_up`, 108 `standing`, 14 `walking`, and 7 warm-up frames with no
+state. The longest `absent` interval was 57.5-111.5s; its correctness is unknown
+until the manual timeline is supplied. Mean admitted-frame inference time was
+63.0ms.
+
+Prediction tag: `yolo_yolo11s-pose-letterbox-a66ff5d5-g`. The silent annotated
+output is `analysis/2026-09-13_bedroom-sample-03__pipeline.mp4` in the private
+evaluation data directory.
+
+The adaptive local `qwen3-vl:8b` pass made 36 model calls and produced 352
+validated frame records with no failures; 316 unchanged frames inherited the
+most recent sampled result. Its coarse timeline contains 57s `upright`, 50s
+`sitting_up`, 35s `in_bed`, 25s `on_floor`, and 9s `absent`. Most notably, it
+labels 137-162s as `on_floor`, while the pose pipeline reports `sitting_up`
+from 142.5s and `standing` from 166.5s without emitting `on_floor` anywhere.
+Collapsed posture agreement between the two machine systems is 123/352
+(34.9%); this is disagreement, not an accuracy measurement, until the manual
+timeline is available. The VLM video is
+`analysis/2026-09-13_bedroom-sample-03__vision.mp4`.
+
+## Initial conclusions from videos 1 and 2
 
 - **The production pose backend (MediaPipe, and YOLO likewise) has a real
   blind spot on exactly the states this system exists to catch.** Both
@@ -188,15 +217,20 @@ data-ai-agent-dementia/
 │   └── predictions/mediapipe-squash-aa67d72c-g.jsonl,
 │       yolo-squash-f208d4a1.jsonl,
 │       yolo-letterbox-f208d4a1.jsonl                # MediaPipe / YOLO result
-└── clips/2026-09-13_bedroom-sample-02/
+├── clips/2026-09-13_bedroom-sample-02/
     ├── clip.yaml                                    # source, video metadata, script (my label)
     ├── labels/local.jsonl, local.meta.json          # VLM result
     └── predictions/mediapipe-squash-fbb83bc0-g.jsonl,
         yolo-squash-fbb83bc0.jsonl,
         yolo-letterbox-fbb83bc0.jsonl                # MediaPipe / YOLO result
+└── clips/2026-09-13_bedroom-sample-03/
+    ├── clip.yaml                                    # script pending
+    └── predictions/
+        yolo_yolo11s-pose-letterbox-a66ff5d5-g.jsonl # provisional machine baseline
 ```
 
-Neither clip has a confirmed `labels/reference.yaml` yet (the reconcile /
+None of the clips has a confirmed `labels/reference.yaml` yet (the reconcile /
 Codex-label steps in `docs/VIDEO_EVAL.md` haven't run) — the `script:` field
-in each `clip.yaml` is the closest thing to ground truth right now and is
-what this document's "My label" columns are drawn from.
+in the first two `clip.yaml` files is the closest thing to ground truth right
+now and is what this document's "My label" columns are drawn from. Sample 03's
+script remains empty until the recorder annotations are added.

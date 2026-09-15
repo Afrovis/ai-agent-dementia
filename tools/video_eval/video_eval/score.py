@@ -19,6 +19,7 @@ from video_eval.reconcile import validate_timeline
 TARGET_RECALL = ACCURACY_TARGET
 TARGET_FLOOR_DELAY_S = LATENCY_TARGET_S
 EVENT_WINDOW_S = 30.0
+EARLY_EVENT_TOLERANCE_S = 3.0
 FALSE_TRANSITION_TOLERANCE_S = 10.0
 
 
@@ -177,6 +178,38 @@ def event_metrics(
     predicted = _prediction_events(predictions)
     delays: list[dict[str, Any]] = []
     for expected in references:
+        before = [row for row in predictions if float(row["t_s"]) <= expected["t_s"]]
+        current = (
+            max(before, key=lambda row: float(row["t_s"]))
+            if before
+            else min(predictions, key=lambda row: float(row["t_s"]), default=None)
+        )
+        current_value = None
+        if current is not None:
+            if expected["kind"] == "state" and current.get("state") is not None:
+                current_value = (
+                    "upright" if current["state"] in {"standing", "walking"} else current["state"]
+                )
+            elif expected["kind"] == "zone":
+                current_value = current.get("zone")
+        run_onset = max(
+            (
+                event["t_s"]
+                for event in predicted
+                if current is not None
+                and event["kind"] == expected["kind"]
+                and event["value"] == expected["value"]
+                and event["t_s"] <= float(current["t_s"])
+            ),
+            default=None,
+        )
+        early_onset = (
+            run_onset
+            if current_value == expected["value"]
+            and run_onset is not None
+            and expected["t_s"] - EARLY_EVENT_TOLERANCE_S <= run_onset < expected["t_s"]
+            else None
+        )
         hits = [
             event
             for event in predicted
@@ -184,8 +217,20 @@ def event_metrics(
             and event["value"] == expected["value"]
             and expected["t_s"] <= event["t_s"] <= expected["t_s"] + EVENT_WINDOW_S
         ]
-        delay = None if not hits else min(event["t_s"] for event in hits) - expected["t_s"]
-        delays.append({**expected, "delay_s": delay, "missed": delay is None})
+        if early_onset is not None:
+            onset_offset = early_onset - expected["t_s"]
+            delay = 0.0
+        else:
+            delay = None if not hits else min(event["t_s"] for event in hits) - expected["t_s"]
+            onset_offset = delay
+        delays.append(
+            {
+                **expected,
+                "delay_s": delay,
+                "onset_offset_s": onset_offset,
+                "missed": delay is None,
+            }
+        )
     false = [
         event
         for event in predicted
@@ -298,7 +343,10 @@ def render_markdown(report: dict[str, Any]) -> str:
         lines.append(f"| {state} | {_percent(row['all'])} | {_percent(row['admitted'])} |")
     lines.extend(["", "## Event metrics", ""])
     for event in report["events"]["delays"]:
-        value = "missed" if event["missed"] else f"{event['delay_s']:.1f}s"
+        value = "missed"
+        if not event["missed"]:
+            onset_offset = event.get("onset_offset_s", event["delay_s"])
+            value = f"{event['delay_s']:.1f}s (onset offset {onset_offset:+.1f}s)"
         lines.append(f"- {event['kind']} `{event['value']}` at {event['t_s']:.1f}s: {value}")
     false_rate = report["events"]["false_transitions_per_minute"]
     rendered_rate = "not measurable" if false_rate is None else f"{false_rate:.3f}"

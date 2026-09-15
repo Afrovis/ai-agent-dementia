@@ -13,6 +13,7 @@ from PIL import Image
 
 from perceive.backends import LANDMARK_NAMES, Landmark, PoseResult, YoloPoseBackend
 from perceive.classify import StateTracker, centroid_of, classify_pose
+from perceive.phantom import KnownPhantoms
 from tests.test_classify import THRESHOLDS, in_bed_pose
 
 
@@ -56,7 +57,10 @@ class _Result:
 
 def _stub_backend(result: _Result) -> YoloPoseBackend:
     backend = YoloPoseBackend.__new__(YoloPoseBackend)
-    backend._model = lambda image, verbose: [result]
+    backend._model = lambda image, verbose, imgsz: [result]
+    backend._imgsz = 640
+    backend._detect_conf = None
+    backend._known_phantoms = KnownPhantoms([])  # inactive; see test_phantom.py
     return backend
 
 

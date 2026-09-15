@@ -23,6 +23,86 @@ def test_event_metrics_reports_delay_miss_and_false_transition():
     assert result["false_transition_count"] == 1
 
 
+def test_event_metrics_accepts_early_onset_within_tolerance():
+    timeline = [{"from_s": 10, "to_s": 20, "state": "on_floor", "zone": "other"}]
+    predictions = [
+        {"t_s": 8.5, "state": "standing", "zone": "other"},
+        {"t_s": 9.0, "state": "on_floor", "zone": "other"},
+        {"t_s": 10.0, "state": "on_floor", "zone": "other"},
+    ]
+
+    event = event_metrics(predictions, timeline)["delays"][0]
+
+    assert event["missed"] is False
+    assert event["delay_s"] == 0.0
+    assert event["onset_offset_s"] == -1.0
+
+
+def test_event_metrics_does_not_accept_early_run_older_than_tolerance():
+    timeline = [{"from_s": 10, "to_s": 20, "state": "on_floor", "zone": "other"}]
+    predictions = [
+        {"t_s": 6.5, "state": "on_floor", "zone": "other"},
+        {"t_s": 10.0, "state": "on_floor", "zone": "other"},
+        {"t_s": 11.0, "state": "standing", "zone": "other"},
+        {"t_s": 12.0, "state": "on_floor", "zone": "other"},
+    ]
+
+    event = event_metrics(predictions, timeline)["delays"][0]
+
+    assert event["missed"] is False
+    assert event["delay_s"] == 2.0
+    assert event["onset_offset_s"] == 2.0
+
+
+def test_event_metrics_keeps_post_label_onset_delay():
+    timeline = [{"from_s": 10, "to_s": 20, "state": "on_floor", "zone": "other"}]
+    predictions = [
+        {"t_s": 10.0, "state": "standing", "zone": "other"},
+        {"t_s": 11.5, "state": "on_floor", "zone": "other"},
+    ]
+
+    event = event_metrics(predictions, timeline)["delays"][0]
+
+    assert event["delay_s"] == 1.5
+    assert event["onset_offset_s"] == 1.5
+
+
+def test_event_metrics_does_not_match_later_fall_after_early_first_fall():
+    timeline = [
+        {"from_s": 0, "to_s": 120, "state": "standing", "zone": "other"},
+        {"from_s": 120, "to_s": 125, "state": "on_floor", "zone": "other"},
+        {"from_s": 125, "to_s": 135, "state": "standing", "zone": "other"},
+        {"from_s": 135, "to_s": 140, "state": "on_floor", "zone": "other"},
+    ]
+    predictions = [
+        {"t_s": 0, "state": "standing", "zone": "other"},
+        {"t_s": 119, "state": "on_floor", "zone": "other"},
+        {"t_s": 125, "state": "standing", "zone": "other"},
+        {"t_s": 135, "state": "on_floor", "zone": "other"},
+    ]
+
+    floor_events = [
+        event
+        for event in event_metrics(predictions, timeline)["delays"]
+        if event["value"] == "on_floor"
+    ]
+
+    assert [event["delay_s"] for event in floor_events] == [0.0, 0.0]
+    assert [event["onset_offset_s"] for event in floor_events] == [-1.0, 0.0]
+    frames = {
+        "all": {
+            "exact": {
+                "per_state": {
+                    "standing": {"recall": 1.0},
+                    "on_floor": {"recall": 1.0},
+                }
+            }
+        }
+    }
+    gate = _gate_verdicts(frames, {"delays": floor_events})["on_floor_delay"]
+    assert gate["value_s"] == 0.0
+
+
 def test_missed_floor_transition_fails_measured_latency_gate():
     frames = {
         "all": {

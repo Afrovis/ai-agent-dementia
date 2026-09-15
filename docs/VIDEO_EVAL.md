@@ -146,6 +146,7 @@ frames.jsonl + two frame sets per clip
    |                                                 + disagreements.md
    |--> predict   (perceive backend + StateTracker + MotionGate on bridge/)
    |                                              -> predictions/<tag>.jsonl
+   |--> visualize --mode pipeline                 -> analysis/<clip>__pipeline.mp4
    |--> score     (reference vs predictions)      -> reports/<tag>.md, .json
    |
    '--> replay    (bridge/ as RawFrame events onto the live stack)
@@ -383,7 +384,9 @@ Turns per-frame labels plus the scenario card into a reference timeline.
 3. Event metrics: for each reference transition into `sitting_up`,
    `upright`, `on_floor`, `absent` and each zone entry into `door` or
    `bathroom_path`, the delay until the prediction first shows that state,
-   or `missed` if it never does within 30 s. Also false transitions per
+   or `missed` if it never does within 30 s. A matching state already active
+   at the labelled onset counts as zero-delay when its run began at most 3 s
+   early; reports retain that signed onset offset. Also false transitions per
    minute: predicted transitions with no reference transition within 10 s.
 4. Gate evaluation against PLAN.md: recall for `standing` and `on_floor`
    at least 0.95, `on_floor` delay at most 2 s. Print which gates were

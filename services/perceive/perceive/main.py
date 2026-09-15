@@ -28,6 +28,15 @@ attached to subsequent `PersonState` publishes until it goes stale or is
 replaced. The call itself runs off the frame-processing path entirely --
 see `perceive.scene_notes.SceneNoteCache` -- so a slow or dead vision model
 degrades `scene_note` to `None`, never `perceive`'s frame latency.
+
+A second, distinct local vision call -- `perceive.floor_check` -- can
+*upgrade* an ambiguous frame to `on_floor` (a fall drop then lost, a
+person lost outside the bed, or a low, sustained height ratio while
+`sitting_up` outside the bed), but never vetoes or blocks on a
+pose-confirmed one: it runs the same non-blocking, at-most-one-in-flight
+way `scene_note` does, and only applies through
+`perceive.classify.StateTracker.confirm_floor` after re-checking its
+trigger condition against the frame current when the answer arrives.
 """
 
 from __future__ import annotations
@@ -44,7 +53,13 @@ from nc_shared.bus import Bus
 from nc_shared.events import Health, PersonState
 
 from perceive.backends import PoseBackend, build_backend
-from perceive.classify import ClassifyThresholds, StateTracker, centroid_of
+from perceive.classify import ClassifyThresholds, StateTracker, zone_for_pose
+from perceive.floor_check import (
+    FloorCheckClient,
+    FloorCheckScheduler,
+    FloorCheckTrigger,
+    OllamaFloorCheckClient,
+)
 from perceive.scene_notes import SceneNoteCache, SessionPhaseTracker, read_session_phase
 from perceive.vision import OllamaVisionClient, VisionClient
 from perceive.zones import ZoneMap, ZoneName, load_zones
@@ -69,13 +84,41 @@ def _log(message: str, level: int = logging.INFO, **fields: object) -> None:
     logger.log(level, json.dumps({"service": SERVICE_NAME, "message": message, **fields}))
 
 
+def _parse_ground_line(value: str) -> tuple[float, float] | None:
+    """Parse `PERCEIVE_GROUND_LINE="a,b"` into a `(a, b)` override for
+    `perceive.classify.StateTracker.ground_line`, or `None` for the default
+    empty string -- online self-calibration stays in charge then."""
+    value = value.strip()
+    if not value:
+        return None
+    try:
+        a_str, b_str = value.split(",", 1)
+        return float(a_str), float(b_str)
+    except ValueError:
+        _log("invalid PERCEIVE_GROUND_LINE, ignoring", level=logging.WARNING, value=value)
+        return None
+
+
+def _parse_optional_bool(value: str | None, *, default: bool) -> bool | None:
+    """Parse an optional env bool; empty, ``auto``, or ``unset`` means omit."""
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"", "auto", "unset"}:
+        return None
+    return normalized == "true"
+
+
 @dataclass(frozen=True)
 class PerceiveConfig:
     """`perceive`'s env-driven configuration (HANDOFF.md section 4: env, then
     yaml -- `zones.yaml` is the yaml here -- then defaults in code)."""
 
-    pose_backend: str = "mediapipe"
-    yolo_model: str = "yolov8n-pose.pt"
+    pose_backend: str = "yolo"
+    yolo_model: str = "yolo11s-pose.pt"
+    yolo_imgsz: int = 640
+    phantoms_file: str | None = None
+    phantom_max_confidence: float = 0.7
     mediapipe_video_mode: bool = False
     min_confidence: float = 0.5
     presence_confidence: float = 0.25
@@ -93,14 +136,30 @@ class PerceiveConfig:
     vision_interval_seconds: float = 60.0
     vision_timeout_seconds: float = 10.0
     ollama_url: str = "http://host.docker.internal:11434"
+    floor_height_ratio: float = 0.6
+    fall_window_seconds: float = 2.5
+    fall_drop: float = 0.15
+    floor_suspect_seconds: float = 20.0
+    ground_line: tuple[float, float] | None = None
+    ground_line_file: str | None = None
+    floor_check_enabled: bool = True
+    floor_check_model: str = "gemma4:e4b-mlx"
+    floor_check_think: bool | None = False
+    floor_check_timeout_seconds: float = 20.0
+    floor_check_cooldown_seconds: float = 10.0
+    floor_check_min_confidence: float = 0.6
+    floor_check_required_positives: int = 2
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> PerceiveConfig:
         """Build a `PerceiveConfig` from environment variables, defaults otherwise."""
         env = os.environ if env is None else env
         return cls(
-            pose_backend=env.get("PERCEIVE_POSE_BACKEND", "mediapipe"),
-            yolo_model=env.get("PERCEIVE_YOLO_MODEL", "yolov8n-pose.pt"),
+            pose_backend=env.get("PERCEIVE_POSE_BACKEND", "yolo"),
+            yolo_model=env.get("PERCEIVE_YOLO_MODEL", "yolo11s-pose.pt"),
+            yolo_imgsz=int(env.get("PERCEIVE_YOLO_IMGSZ", "640")),
+            phantoms_file=env.get("PERCEIVE_PHANTOMS_FILE", "").strip() or None,
+            phantom_max_confidence=float(env.get("PERCEIVE_PHANTOM_MAX_CONFIDENCE", "0.7")),
             mediapipe_video_mode=(
                 env.get("PERCEIVE_MEDIAPIPE_VIDEO_MODE", "false").strip().lower() == "true"
             ),
@@ -120,6 +179,29 @@ class PerceiveConfig:
             vision_interval_seconds=float(env.get("PERCEIVE_VISION_INTERVAL_SECONDS", "60")),
             vision_timeout_seconds=float(env.get("PERCEIVE_VISION_TIMEOUT_SECONDS", "10")),
             ollama_url=env.get("OLLAMA_URL", "http://host.docker.internal:11434"),
+            floor_height_ratio=float(env.get("PERCEIVE_FLOOR_HEIGHT_RATIO", "0.6")),
+            fall_window_seconds=float(env.get("PERCEIVE_FALL_WINDOW_SECONDS", "2.5")),
+            fall_drop=float(env.get("PERCEIVE_FALL_DROP", "0.15")),
+            floor_suspect_seconds=float(env.get("PERCEIVE_FLOOR_SUSPECT_SECONDS", "20")),
+            ground_line=_parse_ground_line(env.get("PERCEIVE_GROUND_LINE", "")),
+            ground_line_file=env.get("PERCEIVE_GROUND_LINE_FILE") or None,
+            floor_check_enabled=(
+                env.get("PERCEIVE_FLOOR_CHECK_ENABLED", "true").strip().lower() != "false"
+            ),
+            floor_check_model=env.get("PERCEIVE_FLOOR_CHECK_MODEL", "gemma4:e4b-mlx"),
+            floor_check_think=_parse_optional_bool(
+                env.get("PERCEIVE_FLOOR_CHECK_THINK"), default=False
+            ),
+            floor_check_timeout_seconds=float(
+                env.get("PERCEIVE_FLOOR_CHECK_TIMEOUT_SECONDS", "20")
+            ),
+            floor_check_cooldown_seconds=float(
+                env.get("PERCEIVE_FLOOR_CHECK_COOLDOWN_SECONDS", "10")
+            ),
+            floor_check_min_confidence=float(env.get("PERCEIVE_FLOOR_CHECK_MIN_CONFIDENCE", "0.6")),
+            floor_check_required_positives=int(
+                env.get("PERCEIVE_FLOOR_CHECK_REQUIRED_POSITIVES", "2")
+            ),
         )
 
 
@@ -133,11 +215,17 @@ def build_tracker(config: PerceiveConfig) -> StateTracker:
         bed_vanish_hold=config.bed_vanish_hold,
         hold_floor=config.hold_floor,
         walk_displacement_threshold=config.walk_threshold,
+        floor_height_ratio=config.floor_height_ratio,
+        fall_window_seconds=config.fall_window_seconds,
+        fall_drop=config.fall_drop,
+        floor_suspect_seconds=config.floor_suspect_seconds,
     )
     return StateTracker(
         thresholds=thresholds,
         confirm_frames=config.confirm_frames,
         bed_hold_seconds=config.bed_hold_seconds,
+        ground_line=config.ground_line,
+        ground_line_file=config.ground_line_file,
     )
 
 
@@ -158,6 +246,22 @@ def build_vision_client(config: PerceiveConfig) -> VisionClient | None:
     )
 
 
+def build_floor_check_client(config: PerceiveConfig) -> FloorCheckClient | None:
+    """Build the configured `FloorCheckClient`, or `None` if the floor
+    check is disabled. Same shape as `build_vision_client`: `None` means no
+    `OllamaFloorCheckClient` is ever constructed, so there is no Ollama
+    dependency at runtime, and `run_once` already treats "no floor check
+    client" the same as "no second opinion this round"."""
+    if not config.floor_check_enabled:
+        return None
+    return OllamaFloorCheckClient(
+        ollama_url=config.ollama_url,
+        model=config.floor_check_model,
+        timeout_seconds=config.floor_check_timeout_seconds,
+        think=config.floor_check_think,
+    )
+
+
 def run_once(
     bus,
     backend: PoseBackend,
@@ -170,6 +274,8 @@ def run_once(
     now_fn: Callable[[], float] = time.time,
     scene_cache: SceneNoteCache | None = None,
     engaged: bool = False,
+    floor_scheduler: FloorCheckScheduler | None = None,
+    floor_trigger: FloorCheckTrigger | None = None,
 ) -> PersonState | None:
     """Read one `Frame`, classify it, and publish `PersonState` if the tracker
     reports a change.
@@ -195,6 +301,33 @@ def run_once(
     `engaged=True`, on the configured interval; either way `maybe_request`
     never blocks this function. The latest completed note, if any and not
     stale, is attached to every `PersonState` this function publishes.
+
+    When `floor_scheduler`/`floor_trigger` are both given (`None` when
+    `PERCEIVE_FLOOR_CHECK_ENABLED=false`, per `build_floor_check_client`),
+    this function does two more things, neither of which blocks it: it
+    asks `floor_trigger.reason(...)` whether the tracker's now-current
+    state warrants a vision second opinion and, if so, offers this frame to
+    `floor_scheduler.maybe_trigger` (a no-op if one is already in flight, or
+    the cooldown -- or, mid-streak, the shorter follow-up interval -- has
+    not elapsed); if the trigger condition does *not* currently hold, any
+    running positive streak is reset. It also collects any check that
+    completed since the last call via `floor_scheduler.take_result()`. A
+    completed answer only counts towards the streak
+    (`floor_scheduler.note_positive()`) if it says `person_on_floor=True` at
+    or above `floor_scheduler.min_confidence`, the answer is not older than
+    `floor_scheduler.answer_max_age_seconds`, and `floor_trigger.reason(...)`
+    says the trigger condition still holds against the frame current *now*,
+    not the one the check was fired against -- any other answer resets the
+    streak. Only once `floor_scheduler.required_positives` consecutive
+    qualifying answers have accumulated does this apply --
+    `tracker.confirm_floor` and an immediate `PersonState` publish,
+    `scene_note` marked `"vision: person on floor"` so downstream can tell
+    it did not come from pose -- and reset the streak: the vision model can
+    only ever upgrade an ambiguous frame, never veto a pose-based
+    `on_floor` (already published without waiting) or apply itself against
+    a situation that has since resolved or a single, possibly mistaken,
+    answer. One structured log line covers every completed check, whether
+    or not it was applied, and never includes frame bytes.
     """
     messages = bus.read(FRAME_STREAM, FRAME_GROUP, consumer, count=count, block_ms=block_ms)
     if not messages:
@@ -206,8 +339,7 @@ def run_once(
 
     zone: ZoneName = "other"
     if pose is not None:
-        centroid_x, centroid_y = centroid_of(pose)
-        zone = zones.zone_for_point(centroid_x, centroid_y)
+        zone = zone_for_pose(zones, pose)
 
     now = now_fn()
     result = tracker.update(pose, zone, now)
@@ -230,8 +362,83 @@ def run_once(
             current_state, _confidence, _zone = snapshot
             scene_cache.maybe_request(frame.jpeg, current_state, now, engaged=engaged)
 
+    floor_check_event: PersonState | None = None
+    if floor_scheduler is not None and floor_trigger is not None:
+        floor_snapshot = tracker.snapshot()
+        if floor_snapshot is not None:
+            floor_state, _floor_confidence, floor_zone = floor_snapshot
+            trigger_reason = floor_trigger.reason(tracker, floor_state, floor_zone, now)
+            if trigger_reason is not None:
+                floor_scheduler.maybe_trigger(frame.jpeg, trigger_reason, now)
+            else:
+                # The trigger condition itself no longer holds -- any
+                # positive streak in progress no longer means anything.
+                floor_scheduler.reset_positive_streak()
+
+        completed = floor_scheduler.take_result()
+        if completed is not None:
+            vision_result, reason, triggered_at, latency_ms = completed
+            applied = False
+            streak_count = floor_scheduler.positive_streak_count
+            answer_log: dict[str, object] | None = None
+            if vision_result is not None:
+                answer_log = {
+                    "person_on_floor": vision_result.person_on_floor,
+                    "confidence": round(vision_result.confidence, 3),
+                }
+            qualifies = (
+                vision_result is not None
+                and vision_result.person_on_floor
+                and vision_result.confidence >= floor_scheduler.min_confidence
+                and (now - triggered_at) <= floor_scheduler.answer_max_age_seconds
+            )
+            still_holds = False
+            if qualifies:
+                recheck_snapshot = tracker.snapshot()
+                if recheck_snapshot is not None:
+                    recheck_state, _recheck_confidence, recheck_zone = recheck_snapshot
+                    still_holds = (
+                        floor_trigger.reason(tracker, recheck_state, recheck_zone, now) is not None
+                    )
+            if qualifies and still_holds:
+                streak_count = floor_scheduler.note_positive()
+                if streak_count >= floor_scheduler.required_positives:
+                    confirmed = tracker.confirm_floor(
+                        now, confidence=vision_result.confidence, source="vision"
+                    )
+                    floor_scheduler.reset_positive_streak()
+                    if confirmed is not None:
+                        applied = True
+                        confirmed_state, confirmed_confidence = confirmed
+                        floor_check_event = PersonState(
+                            source=SERVICE_NAME,
+                            state=confirmed_state,
+                            confidence=confirmed_confidence,
+                            zone=recheck_zone,
+                            scene_note="vision: person on floor",
+                        )
+                        bus.publish(floor_check_event)
+                        _log(
+                            "published PersonState",
+                            event_type="PersonState",
+                            state=confirmed_state,
+                            confidence=round(confirmed_confidence, 3),
+                            zone=recheck_zone,
+                        )
+            else:
+                floor_scheduler.reset_positive_streak()
+            _log(
+                "floor check",
+                event_type="FloorCheck",
+                reason=reason,
+                latency_ms=round(latency_ms, 1),
+                answer=answer_log,
+                positive_streak_count=streak_count,
+                applied=applied,
+            )
+
     if result is None:
-        return None
+        return floor_check_event
 
     state, confidence = result
     scene_note = scene_cache.current(now) if scene_cache is not None else None
@@ -325,15 +532,24 @@ def run() -> None:
     """Connect to Redis, build the configured pose backend and zones, then
     loop forever.
 
-    Reads `PERCEIVE_POSE_BACKEND`, `PERCEIVE_YOLO_MODEL`,
+    Reads `PERCEIVE_POSE_BACKEND`, `PERCEIVE_YOLO_MODEL`, `PERCEIVE_YOLO_IMGSZ`,
+    `PERCEIVE_PHANTOMS_FILE`, `PERCEIVE_PHANTOM_MAX_CONFIDENCE`,
     `PERCEIVE_MEDIAPIPE_VIDEO_MODE`, `PERCEIVE_MIN_CONFIDENCE`,
     `PERCEIVE_PRESENCE_CONFIDENCE`, `PERCEIVE_CONFIRM_FRAMES`, `PERCEIVE_BED_HOLD_SECONDS`,
     `PERCEIVE_WALK_THRESHOLD`, `PERCEIVE_HEARTBEAT_SECONDS`, `ZONES_PATH`,
     `PERCEIVE_VISION_ENABLED`, `PERCEIVE_VISION_MODEL`,
     `PERCEIVE_VISION_INTERVAL_SECONDS`, `PERCEIVE_VISION_TIMEOUT_SECONDS`,
-    and `OLLAMA_URL` from the environment (defaults documented in
-    `.env.example`). A short sleep between iterations when nothing was
-    published avoids a busy loop.
+    `OLLAMA_URL`, `PERCEIVE_FLOOR_HEIGHT_RATIO`, `PERCEIVE_FALL_WINDOW_SECONDS`,
+    `PERCEIVE_FALL_DROP`, `PERCEIVE_FLOOR_SUSPECT_SECONDS`,
+    `PERCEIVE_GROUND_LINE`, `PERCEIVE_GROUND_LINE_FILE`,
+    `PERCEIVE_FLOOR_CHECK_ENABLED`, `PERCEIVE_FLOOR_CHECK_MODEL`,
+    `PERCEIVE_FLOOR_CHECK_THINK`,
+    `PERCEIVE_FLOOR_CHECK_TIMEOUT_SECONDS`,
+    `PERCEIVE_FLOOR_CHECK_COOLDOWN_SECONDS`,
+    `PERCEIVE_FLOOR_CHECK_MIN_CONFIDENCE` and
+    `PERCEIVE_FLOOR_CHECK_REQUIRED_POSITIVES` from the environment (defaults
+    documented in `.env.example`). A short sleep between iterations when
+    nothing was published avoids a busy loop.
     """
     config = PerceiveConfig.from_env()
     redis_url = os.environ.get("REDIS_URL", "redis://bus:6379")
@@ -347,6 +563,9 @@ def run() -> None:
         config.pose_backend,
         model_path=config.yolo_model,
         static_image_mode=not config.mediapipe_video_mode,
+        yolo_imgsz=config.yolo_imgsz,
+        phantoms_file=config.phantoms_file,
+        phantom_max_confidence=config.phantom_max_confidence,
     )
     zones = load_zones(config.zones_path)
     tracker = build_tracker(config)
@@ -359,6 +578,19 @@ def run() -> None:
     )
     session_tracker = SessionPhaseTracker()
 
+    floor_check_client = build_floor_check_client(config)
+    floor_scheduler = (
+        FloorCheckScheduler(
+            client=floor_check_client,
+            min_confidence=config.floor_check_min_confidence,
+            cooldown_seconds=config.floor_check_cooldown_seconds,
+            required_positives=config.floor_check_required_positives,
+        )
+        if floor_check_client is not None
+        else None
+    )
+    floor_trigger = FloorCheckTrigger() if floor_scheduler is not None else None
+
     last_health_at: float | None = None
     last_heartbeat_at: float | None = None
     while True:
@@ -370,6 +602,8 @@ def run() -> None:
             tracker,
             scene_cache=scene_cache,
             engaged=session_tracker.engaged,
+            floor_scheduler=floor_scheduler,
+            floor_trigger=floor_trigger,
         )
         now = time.time()
         if published is not None:

@@ -72,6 +72,7 @@ flowchart LR
   s_capture --> q_frames
   q_frames --> s_dashboard
   q_frames --> s_perceive
+  q_frames --> s_perceive
   s_embodiment --> q_frames_raw
   q_frames_raw --> s_capture
   s_agent --> q_light
@@ -146,7 +147,7 @@ flowchart LR
 | `ack` | `Ack` | dashboard | dashboard (`dashboard-live`), notify (`notify`), store (`store`) | no |
 | `audio_in` | `AudioChunk` | embodiment | listen (`listen`) | yes, 50 |
 | `cloud` | `CloudCall` | agent | store (`store`) | no |
-| `frames` | `Frame` | capture | dashboard (`dashboard`), perceive (`perceive`) | yes, 50 |
+| `frames` | `Frame` | capture | dashboard (`dashboard`), perceive (`perceive`), perceive (`perceive-calibrate`) | yes, 50 |
 | `frames_raw` | `RawFrame` | embodiment | capture (`capture`) | yes, 50 |
 | `health` | `Health` | agent, capture, light, listen, perceive | dashboard (`dashboard-live`), store (`store`) | no |
 | `light` | `LightCommand` | agent | light (`light`), store (`store`) | no |
