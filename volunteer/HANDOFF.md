@@ -1,6 +1,6 @@
 # Volunteer site: execution brief
 
-Read [docs/VOLUNTEER_SITE.md](../docs/VOLUNTEER_SITE.md) for the design. This
+Read [PLAN.md](PLAN.md) for the design. This
 file is what an implementer needs to build it without further context: the
 fixed decisions, the rules, the exact contracts, and the work items with their
 acceptance checks.
@@ -50,7 +50,7 @@ video.
    processes one job at a time.
 5. **The privacy copy must stay true.** Any change that touches storage,
    transport, analysis or third-party requests updates the copy in
-   `docs/VOLUNTEER_SITE.md` and the page in the same commit.
+   `volunteer/PLAN.md` and the page in the same commit.
 6. **Nothing from `VOLUNTEER_DATA_DIR`, `VOLUNTEER_KEY_DIR` or `volunteer/.env`
    enters git.** Logs never contain URLs with fragments, tokens, wrapped keys,
    IP addresses or media bytes.
@@ -261,7 +261,7 @@ Response headers on HTML:
 ### 5.7 Guided script (`static/script.json`)
 
 `[{step_id, text, seconds, expected_state, optional, safety_note}]`. The first
-version follows the table in `docs/VOLUNTEER_SITE.md`. Step ids:
+version follows the table in `volunteer/PLAN.md`. Step ids:
 `stand_still`, `walk_around`, `sit_edge`, `lie_down`, `sit_up`, `leave_view`,
 `come_back`, `floor`, `walk_back`. `floor` has `optional: true` and a safety
 note. Before relying on `expected_state` values for any rendering, check them
@@ -291,7 +291,7 @@ because unmapped names render as `upright`.
 
 Each item is independently delegable (Codex or the `coder` agent). The
 coordinator runs the acceptance check and keeps the phase checks in
-`docs/VOLUNTEER_SITE.md`.
+`volunteer/PLAN.md`.
 
 | # | Item | Depends | Acceptance |
 | --- | --- | --- | --- |

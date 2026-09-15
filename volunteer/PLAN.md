@@ -1,4 +1,4 @@
-# Volunteer recording site
+# Volunteer recording site: plan
 
 Design for `upload.mathiasvissers.com`: a public page where
 healthy volunteers record themselves moving around a room with their laptop
