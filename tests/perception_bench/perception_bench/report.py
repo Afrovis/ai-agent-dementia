@@ -134,8 +134,18 @@ def _tier3_gate_detail(gate_name: str, gate: dict) -> str:
             else ("not measured (no frames)")
         )
     if gate_name == "on_floor_delay":
-        return f"max {gate['value_s']:.2f}s"
+        return _latency_text(gate["value_s"], gate.get("missed", 0))
     return f"{gate['value']:.1%}"
+
+
+def _latency_text(value_s: float | None, missed: int) -> str:
+    """A measured on_floor latency: a missed event is reported as such, never
+    as a missing number (it fails the gate, see `infrared._latency_gate`)."""
+    detected = None if value_s is None else f"max {value_s:.2f}s"
+    if not missed:
+        return detected or "n/a"
+    missed_text = f"missed {missed} on_floor event(s)"
+    return missed_text if detected is None else f"{missed_text}, detected {detected}"
 
 
 def _tier3_verdicts(tier3: Tier3Result) -> list[Verdict]:
@@ -213,7 +223,7 @@ def _format_confusion_matrix(accuracy: AccuracyResult) -> str:
 
 def _format_verdict(v: Verdict) -> str:
     marker = "PASS" if v.passed else ("FAIL" if v.passed is False else "n/a ")
-    tag = " (advisory, smoke-test, does not gate exit code)" if v.advisory else ""
+    tag = " (advisory, does not gate exit code)" if v.advisory else ""
     return f"  [{marker}] {v.label}{tag}: {v.detail}"
 
 
@@ -260,9 +270,7 @@ def print_report(report: BenchReport) -> None:
                 acc = "n/a" if row.overall_accuracy is None else f"{row.overall_accuracy:.1%}"
                 standing = "n/a" if row.standing_recall is None else f"{row.standing_recall:.1%}"
                 floor = "n/a" if row.on_floor_recall is None else f"{row.on_floor_recall:.1%}"
-                latency = (
-                    "n/a" if row.on_floor_latency_s is None else f"{row.on_floor_latency_s:.2f}s"
-                )
+                latency = _latency_text(row.on_floor_latency_s, row.on_floor_missed)
                 print(
                     f"  {row.clip_id} [{row.tag}] frames={row.frame_count} acc={acc} "
                     f"standing_recall={standing} on_floor_recall={floor} "
@@ -276,11 +284,7 @@ def print_report(report: BenchReport) -> None:
                     "n/a" if pooled.standing_recall is None else f"{pooled.standing_recall:.1%}"
                 )
                 floor = "n/a" if pooled.on_floor_recall is None else f"{pooled.on_floor_recall:.1%}"
-                latency = (
-                    "n/a"
-                    if pooled.on_floor_latency_s is None
-                    else f"{pooled.on_floor_latency_s:.2f}s"
-                )
+                latency = _latency_text(pooled.on_floor_latency_s, pooled.on_floor_missed)
                 print(
                     f"  {pooled.tag_family}: clips={len(pooled.clip_ids)} "
                     f"frames={pooled.frame_count} acc={acc} standing_recall={standing} "
@@ -302,8 +306,8 @@ def print_report(report: BenchReport) -> None:
         print("Result: at least one measured target was missed.")
     elif advisory_miss:
         print(
-            "Result: no measured target was missed. "
-            "(Advisory tier 1 targets missed, see above -- does not gate.)"
+            "Result: no gating target was missed. "
+            "(Advisory tier 1/tier 3 targets missed, see above -- they do not gate.)"
         )
     else:
         print("Result: no measured target missed. (Tiers marked n/a were not measured.)")

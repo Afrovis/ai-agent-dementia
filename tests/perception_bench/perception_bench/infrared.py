@@ -63,13 +63,14 @@ DEFAULT_MANIFEST_PATH = Path("tests/perception_bench/fixtures/ir_manifest.yaml")
 
 # A prediction tag is `f"{backend}-{variant}-{sha[:8]}{'-g' if gated else ''}"`
 # (see `video_eval.predict.prediction_tag`) -- an 8-hex-digit short SHA with
-# an optional trailing `-g`. Stripping that suffix pools tags produced by the
-# same backend/variant across clips scored at different commits.
-_TAG_SHA_SUFFIX_RE = re.compile(r"-[0-9a-f]{7,40}(-g)?$")
+# an optional trailing `-g`. Stripping only the SHA pools tags produced by the
+# same backend/variant across clips scored at different commits, while the
+# `-g` (motion-gated) suffix is kept so gated and ungated runs never pool.
+_TAG_SHA_SUFFIX_RE = re.compile(r"-[0-9a-f]{7,40}(?=(?:-g)?$)")
 
 
 def tag_family(tag: str) -> str:
-    """`tag` with its trailing git-sha component (and optional `-g`) removed."""
+    """`tag` with its trailing git-sha component removed (`-g` is kept)."""
     return _TAG_SHA_SUFFIX_RE.sub("", tag)
 
 
@@ -129,7 +130,11 @@ class ClipTagResult:
     on_floor_recall: float | None
     on_floor_latency_s: float | None
     """Max on_floor detection delay in seconds (`gates.on_floor_delay.value_s`
-    in the report), `None` when no on_floor event was in the reference."""
+    in the report), `None` when no on_floor event was in the reference or
+    none was detected."""
+    on_floor_missed: int
+    """Reference on_floor events the prediction never reached
+    (`gates.on_floor_delay.missed`). Any miss fails the latency gate."""
     gates: dict[str, Any]
     """Exactly `report["gates"]` as `score.py` wrote it."""
     confusion: dict[str, dict[str, int]] = field(repr=False)
@@ -152,6 +157,8 @@ class PooledResult:
     on_floor_recall: float | None
     on_floor_latency_s: float | None
     """Max on_floor latency across the pooled clips' own max latencies."""
+    on_floor_missed: int
+    """Undetected on_floor events summed across the pooled clips."""
     gates: dict[str, Any]
 
 
@@ -189,10 +196,17 @@ def _recall_gate(recall: float | None) -> dict[str, Any]:
     }
 
 
-def _latency_gate(latency: float | None, *, measured: bool) -> dict[str, Any]:
+def _latency_gate(latency: float | None, *, measured: bool, missed: int) -> dict[str, Any]:
+    # Mirrors `video_eval.score._gate_verdicts`: a missed on_floor event fails
+    # the gate even when every other event was detected quickly.
     return {
         "measured": measured,
-        "met": None if not measured else (latency is not None and latency <= LATENCY_TARGET_S),
+        "met": (
+            None
+            if not measured
+            else missed == 0 and latency is not None and latency <= LATENCY_TARGET_S
+        ),
+        "missed": missed,
         "value_s": latency,
         "target_s": LATENCY_TARGET_S,
     }
@@ -210,6 +224,7 @@ def _clip_result_from_report(clip_id: str, tag: str, report: dict[str, Any]) -> 
         standing_recall=per_state.get("standing", {}).get("recall"),
         on_floor_recall=per_state.get("on_floor", {}).get("recall"),
         on_floor_latency_s=gates["on_floor_delay"]["value_s"],
+        on_floor_missed=int(gates["on_floor_delay"].get("missed", 0)),
         gates=gates,
         confusion=exact["confusion"],
     )
@@ -244,6 +259,7 @@ def _pool_by_tag_family(clip_results: list[ClipTagResult]) -> list[PooledResult]
         latencies = [row.on_floor_latency_s for row in rows if row.on_floor_latency_s is not None]
         on_floor_latency = max(latencies) if latencies else None
         latency_measured = any(row.gates["on_floor_delay"]["measured"] for row in rows)
+        on_floor_missed = sum(row.on_floor_missed for row in rows)
 
         pooled.append(
             PooledResult(
@@ -254,10 +270,13 @@ def _pool_by_tag_family(clip_results: list[ClipTagResult]) -> list[PooledResult]
                 standing_recall=standing_recall,
                 on_floor_recall=on_floor_recall,
                 on_floor_latency_s=on_floor_latency,
+                on_floor_missed=on_floor_missed,
                 gates={
                     "standing_recall": _recall_gate(standing_recall),
                     "on_floor_recall": _recall_gate(on_floor_recall),
-                    "on_floor_delay": _latency_gate(on_floor_latency, measured=latency_measured),
+                    "on_floor_delay": _latency_gate(
+                        on_floor_latency, measured=latency_measured, missed=on_floor_missed
+                    ),
                 },
             )
         )

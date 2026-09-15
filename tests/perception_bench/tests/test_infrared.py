@@ -35,14 +35,16 @@ def _write_reference(
     (labels / "reference.yaml").write_text(yaml.safe_dump(reference), encoding="utf-8")
 
 
-def _write_frames_and_predictions(root: Path, clip_id: str, tag: str) -> None:
+def _write_frames_and_predictions(
+    root: Path, clip_id: str, tag: str, *, detects_floor: bool = True
+) -> None:
     from video_eval.common import write_jsonl
 
     clip = root / "clips" / clip_id
     frames = [{"frame_index": index, "t_s": index * 0.5} for index in range(8)]
     predictions = []
     for index in range(8):
-        state = "standing" if index < 4 else "on_floor"
+        state = "standing" if index < 4 or not detects_floor else "on_floor"
         predictions.append(
             {
                 "frame_index": index,
@@ -120,10 +122,12 @@ def test_example_manifest_in_this_repo_parses_and_skips_missing_clip():
 # --- tag_family ---------------------------------------------------------
 
 
-def test_tag_family_strips_sha_and_gate_suffix():
+def test_tag_family_strips_sha_but_keeps_gate_suffix():
     assert tag_family("mediapipe-squash-abcdef12") == "mediapipe-squash"
-    assert tag_family("mediapipe-squash-abcdef12-g") == "mediapipe-squash"
-    assert tag_family("yolo-letterbox-01234567-g") == "yolo-letterbox"
+    assert tag_family("mediapipe-squash-abcdef12-g") == "mediapipe-squash-g"
+    assert tag_family("yolo_yolo11s-pose-letterbox-0c3f17b1-g") == "yolo_yolo11s-pose-letterbox-g"
+    # Gated and ungated runs of one backend must never pool together.
+    assert tag_family("yolo-letterbox-f208d4a1") != tag_family("yolo-letterbox-fbb83bc0-g")
 
 
 # --- run_tier3 skip paths -------------------------------------------------
@@ -236,7 +240,7 @@ def test_run_tier3_pools_tag_family_across_clips_with_different_shas(tmp_path):
     _write_reference(tmp_path, "clip-a")
     _write_reference(tmp_path, "clip-b")
     _write_frames_and_predictions(tmp_path, "clip-a", "mediapipe-squash-01234567")
-    _write_frames_and_predictions(tmp_path, "clip-b", "mediapipe-squash-89abcdef-g")
+    _write_frames_and_predictions(tmp_path, "clip-b", "mediapipe-squash-89abcdef")
 
     result = run_tier3(manifest)
 
@@ -248,6 +252,58 @@ def test_run_tier3_pools_tag_family_across_clips_with_different_shas(tmp_path):
     assert pooled.frame_count == 16
     assert pooled.standing_recall == 1.0
     assert pooled.on_floor_recall == 1.0
+
+
+def test_run_tier3_missed_on_floor_event_fails_latency_gate_and_reports(tmp_path):
+    """Regression: on real clips a backend that never reaches on_floor gives
+    `on_floor_delay` measured=True with value_s=None; that must fail the gate
+    and render, not crash the report."""
+    pytest.importorskip("video_eval")
+    from perception_bench.report import _tier3_verdicts
+
+    manifest = _write_manifest(tmp_path, [{"clip_id": "clip-1"}])
+    _write_reference(tmp_path, "clip-1")
+    _write_frames_and_predictions(
+        tmp_path, "clip-1", "mediapipe-squash-01234567", detects_floor=False
+    )
+
+    result = run_tier3(manifest)
+
+    row = result.clip_results[0]
+    assert row.on_floor_latency_s is None
+    assert row.on_floor_missed == 1
+    assert row.gates["on_floor_delay"]["met"] is False
+    pooled = result.pooled_results[0]
+    assert pooled.on_floor_missed == 1
+    assert pooled.gates["on_floor_delay"] == {
+        "measured": True,
+        "met": False,
+        "missed": 1,
+        "value_s": None,
+        "target_s": 2.0,
+    }
+    latency_verdicts = [v for v in _tier3_verdicts(result) if "latency" in v.label]
+    assert latency_verdicts[0].passed is False
+    assert latency_verdicts[0].detail == "missed 1 on_floor event(s)"
+
+
+def test_run_tier3_pooled_latency_fails_when_any_clip_missed_its_event(tmp_path):
+    pytest.importorskip("video_eval")
+    manifest = _write_manifest(tmp_path, [{"clip_id": "clip-a"}, {"clip_id": "clip-b"}])
+    _write_reference(tmp_path, "clip-a")
+    _write_reference(tmp_path, "clip-b")
+    _write_frames_and_predictions(tmp_path, "clip-a", "mediapipe-squash-01234567")
+    _write_frames_and_predictions(
+        tmp_path, "clip-b", "mediapipe-squash-89abcdef", detects_floor=False
+    )
+
+    result = run_tier3(manifest)
+
+    pooled = result.pooled_results[0]
+    assert pooled.clip_ids == ["clip-a", "clip-b"]
+    assert pooled.on_floor_latency_s is not None
+    assert pooled.on_floor_missed == 1
+    assert pooled.gates["on_floor_delay"]["met"] is False
 
 
 def test_run_tier3_ir_tag_filters_prediction_tags(tmp_path):

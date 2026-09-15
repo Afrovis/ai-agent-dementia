@@ -98,9 +98,9 @@ for the manifest format tier 3 reads.
 Tier 1: synthetic scripted clips (advisory / smoke-test, does not gate exit code)
 ------------------------------------------------------------
 overall frame accuracy: 91.3%          # <- ILLUSTRATIVE, not measured
-  [PASS] tier1 standing recall >= 95% (advisory, smoke-test, does not gate exit code): 100.0%
-  [PASS] tier1 on_floor recall >= 95% (advisory, smoke-test, does not gate exit code): 100.0%
-  [PASS] tier1 latency <= 2s (advisory, smoke-test, does not gate exit code): max 1.00s, mean 0.40s
+  [PASS] tier1 standing recall >= 95% (advisory, does not gate exit code): 100.0%
+  [PASS] tier1 on_floor recall >= 95% (advisory, does not gate exit code): 100.0%
+  [PASS] tier1 latency <= 2s (advisory, does not gate exit code): max 1.00s, mean 0.40s
 ```
 
 For real numbers, run the bench yourself; see the verification output in

@@ -455,9 +455,11 @@ are scored and reported, and `--ir-backend NAME` (with `--ir-variant`) runs
 `--ir-rescore` forces re-running predict/score instead of reusing existing
 reports. Per-clip/tag rows (frame count, accuracy, `standing`/`on_floor`
 recall, `on_floor` latency, gate verdicts) are pooled per **tag family** --
-the prediction tag with its trailing git-sha (and optional `-g`) removed --
-so the same backend/variant scored across clips, or at different commits,
-still tells one story. Tier 3's verdicts stay advisory, like tier 1's: a
+the prediction tag with its trailing git-sha removed, keeping any `-g` so
+gated and ungated runs never pool -- so the same backend/variant scored
+across clips, or at different commits, still tells one story. A reference
+`on_floor` event the prediction never reaches counts as missed and fails
+the latency gate, per clip and pooled. Tier 3's verdicts stay advisory, like tier 1's: a
 missed gate is reported honestly but does not fail the process, since a
 handful of confirmed clips is not yet the statistical evidence PLAN.md
 section 12's >=95%/<=2s targets assume.
