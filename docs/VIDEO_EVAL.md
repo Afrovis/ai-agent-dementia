@@ -146,7 +146,8 @@ frames.jsonl + two frame sets per clip
    |                                                 + disagreements.md
    |--> predict   (perceive backend + StateTracker + MotionGate on bridge/)
    |                                              -> predictions/<tag>.jsonl
-   |--> visualize --mode pipeline                 -> analysis/<clip>__pipeline.mp4
+   |--> visualize --mode pipeline|manual|vision   -> analysis/<clip>__<mode>.mp4
+   |      (runbook: tools/video_eval/README.md, "Rendering review videos")
    |--> score     (reference vs predictions)      -> reports/<tag>.md, .json
    |
    '--> replay    (bridge/ as RawFrame events onto the live stack)

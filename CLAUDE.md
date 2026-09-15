@@ -121,9 +121,14 @@ python -m dialogue_bench --model llama3.1:8b --model qwen2.5:7b
 
 Evaluating perception and the agent against recorded bedroom videos is
 described in [docs/VIDEO_EVAL.md](docs/VIDEO_EVAL.md): a one-time tooling
-build under `tools/video_eval/` and a per-video runbook. `prepare` and
-`predict` are implemented; their installation and container-parity commands
-are in [tools/video_eval/README.md](tools/video_eval/README.md). Recordings,
+build under `tools/video_eval/` and a per-video runbook. Installation,
+every subcommand and container-parity commands are in
+[tools/video_eval/README.md](tools/video_eval/README.md). Before rendering
+review videos, or turning someone's timestamped annotation into markers and a
+reference timeline, read its "Rendering review videos" section: every mode
+needs an explicit `--pipeline-tag` on most clips, existing videos are skipped
+without `--force`, and unmapped marker names silently render as `upright`.
+Recordings,
 frames and labels live outside the repository in `../data-ai-agent-dementia/`
 and never enter git; only face-blurred, verified frames may be sent to Codex.
 
