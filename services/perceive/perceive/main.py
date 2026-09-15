@@ -125,6 +125,7 @@ class PerceiveConfig:
     floor_top_y: float = 1.01
     absent_confirm_seconds: float = 3.0
     bed_vanish_hold: bool = False
+    sitting_thigh_ratio: float = 0.0
     hold_floor: bool = True
     confirm_frames: int = 3
     bed_hold_seconds: float = 0.0
@@ -168,6 +169,7 @@ class PerceiveConfig:
             floor_top_y=float(env.get("PERCEIVE_FLOOR_TOP_Y", "1.01")),
             absent_confirm_seconds=float(env.get("PERCEIVE_ABSENT_CONFIRM_SECONDS", "3")),
             bed_vanish_hold=env.get("PERCEIVE_BED_VANISH_HOLD", "false").strip().lower() == "true",
+            sitting_thigh_ratio=float(env.get("PERCEIVE_SITTING_THIGH_RATIO", "0")),
             hold_floor=env.get("PERCEIVE_HOLD_FLOOR", "true").strip().lower() != "false",
             confirm_frames=int(env.get("PERCEIVE_CONFIRM_FRAMES", "3")),
             bed_hold_seconds=float(env.get("PERCEIVE_BED_HOLD_SECONDS", "0")),
@@ -213,6 +215,7 @@ def build_tracker(config: PerceiveConfig) -> StateTracker:
         floor_top_y=config.floor_top_y,
         absent_confirm_seconds=config.absent_confirm_seconds,
         bed_vanish_hold=config.bed_vanish_hold,
+        sitting_thigh_ratio=config.sitting_thigh_ratio,
         hold_floor=config.hold_floor,
         walk_displacement_threshold=config.walk_threshold,
         floor_height_ratio=config.floor_height_ratio,
