@@ -20,7 +20,7 @@ video.
 | --- | --- |
 | Host | Mac mini, compose project `nc-volunteer` in `volunteer/docker-compose.yml`. |
 | Exposure | Cloudflare Tunnel, remotely managed. No host ports published in production. |
-| Access | Fully public. Cloudflare Turnstile on submission creation. |
+| Access | Fully public. Cloudflare Turnstile on submission creation, managed mode with `appearance: interaction-only`: invisible for most visitors, a checkbox only when Cloudflare suspects an automated agent. |
 | Storage | Local disk under `VOLUNTEER_DATA_DIR` (`../data-ai-agent-dementia/volunteer_clips`). No object storage. |
 | Media | Video only, never audio. |
 | Analysis | `prepare`, `predict --backend yolo --yolo-model yolo11s-pose.pt --variant letterbox640`, `visualize --mode pipeline`. Nothing else. |
@@ -234,6 +234,14 @@ Rate limit: at most 5 submission creations per hour per `CF-Connecting-IP`,
 held in memory only. The header is trusted because only `cloudflared` can reach
 `web`. Turnstile siteverify is called without `remoteip`.
 
+Turnstile widget on `/record`: render explicitly with `appearance: "interaction-only"`,
+`execution: "render"` and `action: "submit"`. Keep its container hidden until
+`before-interactive-callback` fires, then show the checkbox next to the consent
+button. The consent button stays disabled until the token callback delivers a
+token; `expired-callback` and `error-callback` reset the widget and disable the
+button again, with a short retry message. Tokens are single-use and expire
+after 300 s, so obtain the token when the consent form is shown, not earlier.
+
 Response headers on HTML:
 - `Content-Security-Policy: default-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; media-src 'self' blob:; img-src 'self' data:; connect-src 'self'`
 - `Permissions-Policy: camera=(self), microphone=()`
@@ -292,7 +300,7 @@ coordinator runs the acceptance check and keeps the phase checks in
 | V3 | `scripts/setup_cloudflare.py` (section 7) and the `cloudflared` service. | V1 | Two consecutive runs; the second reports no changes. The strict `curl` check in section 8 returns 200 from a phone on mobile data. Script output contains no secrets. |
 | V4 | `common/db.py` and `common/crypto.py`, `static/crypto.js`, `make_vector.mjs`, vectors and tests. | V1 | Python decrypts the committed WebCrypto vectors; `node --test` decrypts Python-made output; tampering with the AAD, IV or a truncated result fails. |
 | V5 | `web` API from 5.5, including the Turnstile client (stubbed in tests), rate limit, caps, disk guard and headers. | V4 | Tests cover each status code in 5.5, transition guards, and that no request path writes anything except ciphertext, `key.wrapped` and `submission.json`. |
-| V6 | Pages: landing with privacy copy, consent, setup checklist, recorder, status with decrypt-and-download and delete. | V5 | Manual: full recording in Chrome and Safari on macOS; closing the tab mid-recording leaves ordered chunks on disk; a refused camera permission shows a clear message; no request in devtools goes anywhere except self and Turnstile. |
+| V6 | Pages: landing with privacy copy, consent with the interaction-only Turnstile widget, setup checklist, recorder, status with decrypt-and-download and delete. | V5 | Manual: in a normal browser the Turnstile widget never appears and consent enables by itself; with the forced-interaction test sitekey the checkbox appears and consent enables only after ticking it; full recording in Chrome and Safari on macOS; closing the tab mid-recording leaves ordered chunks on disk; a refused camera permission shows a clear message; no request in devtools goes anywhere except self and Turnstile. |
 | V7 | Worker job from 5.8. | V4, V5 | Container test: a `testsrc` WebM, encrypted with the JS vector code path, reaches `ready`; the decrypted result is a playable MP4; the allowlist test rejects `label-codex`. Record wall time for a real 3-minute clip. |
 | V8 | Deletion: API, worker purge, `python -m volunteer_worker.delete <id>`. | V7 | After deletion, `find "$VOLUNTEER_DATA_DIR" -name "*<id>*"` prints nothing and the row reads `deleted`. |
 | V9 | `build_sample` and the demo overlay (`sample.js`: canvas skeleton, bbox, state badge, timeline, gated indicator). | V1 | At five timestamps the overlay matches `analysis/2026-09-13_bedroom-sample-02__pipeline.mp4`; it plays and scrubs in Safari. |
@@ -365,6 +373,10 @@ Gotchas:
   explicitly for `sample.mp4`.
 - The Cloudflare free plan caps request bodies at 100 MB, which is why chunks
   are at most 8 MiB.
+- Turnstile test keys: sitekey `1x00000000000000000000BB` always passes invisibly,
+  `3x00000000000000000000FF` forces the interactive checkbox, and secret
+  `1x0000000000000000000000000000000AA` always validates. Use the forced one to
+  exercise the checkbox path, and confirm these against the Cloudflare docs.
 
 ## 9. Definition of done for any item
 

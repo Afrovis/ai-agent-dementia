@@ -121,7 +121,10 @@ API are specified in `volunteer/HANDOFF.md` section 5.
    sample-02 demo, and a "Record a video" button.
 2. **Consent** (`/record`). Checkboxes: 18 or older; understands the video is
    stored and analysed as described; will only film themselves, with nobody
-   else in view. Turnstile widget. Accepting creates the submission
+   else in view. A Turnstile check runs in the background
+   (managed mode, `appearance: interaction-only`): most visitors see nothing,
+   and a regular checkbox appears only if Cloudflare suspects an automated
+   agent. Accepting creates the submission
    (`POST /api/submissions` with the wrapped key and Turnstile token) and
    rewrites the URL to include the fragment. The page also tells people to
    bookmark the link.
