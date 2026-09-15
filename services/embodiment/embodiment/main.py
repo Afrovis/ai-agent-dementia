@@ -61,6 +61,7 @@ def run() -> None:
     # missing from `.env` through as an empty string, and an empty path
     # would silently resolve no photos at all.
     photo_dir = os.environ.get("PHOTO_DIR") or "data/photos"
+    voice_clip_dir = os.environ.get("VOICE_CLIP_DIR") or "/app/data/voice-clips"
 
     strategies_path = os.environ.get("STRATEGIES_PATH") or "/app/config/strategies.yaml"
     person_path = os.environ.get("PERSON_PATH") or "/app/config/person.yaml"
@@ -89,6 +90,7 @@ def run() -> None:
         photo_dir=photo_dir,
         speech=speech,
         prerender_phrases=phrases,
+        voice_clip_dir=voice_clip_dir,
     )
 
     ssl_kwargs = ssl_kwargs_for(cert_file, cert_key)

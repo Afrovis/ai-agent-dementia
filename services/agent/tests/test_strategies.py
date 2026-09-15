@@ -2,6 +2,8 @@
 fallback chain, and `StrategyEngine`'s ordering/cooldown/dwell/progress
 behaviour."""
 
+import wave
+
 from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -13,6 +15,7 @@ from agent.strategies import (
     DEFAULT_PROFILE,
     DEFAULT_STRATEGIES,
     ESCALATE_PHONE_ID,
+    FAMILIAR_VOICE_ID,
     PATH_LIGHT_ID,
     PersonProfile,
     StrategyEngine,
@@ -46,6 +49,14 @@ def strategies_by_order(*, dwell=100.0, cooldown=50.0):
             base, id="c", order=3, enabled=True, dwell_seconds=dwell, cooldown_seconds=cooldown
         ),
     ]
+
+
+def write_wav(path: Path, *, seconds: float = 0.25) -> None:
+    with wave.open(str(path), "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(8000)
+        audio.writeframes(b"\0\0" * int(8000 * seconds))
 
 
 # --- StrategyEngine: ordering, enable/disable, cooldown, dwell -----------
@@ -82,6 +93,56 @@ def test_all_disabled_has_nothing_available():
     engine = StrategyEngine(strategies)
     assert engine.has_available(NOW) is False
     assert engine.start(NOW) is None
+
+
+def test_familiar_voice_disabled_is_ineligible_even_with_a_clip(tmp_path):
+    write_wav(tmp_path / "family-message.wav")
+    strategy = replace(
+        next(s for s in DEFAULT_STRATEGIES if s.id == FAMILIAR_VOICE_ID),
+        enabled=False,
+        clip_id="family-message",
+    )
+
+    assert StrategyEngine([strategy], voice_clip_dir=tmp_path).start(NOW) is None
+
+
+@pytest.mark.parametrize("clip_id", [None, "", "../secret", "folder/clip", r"folder\clip", "Upper"])
+def test_familiar_voice_rejects_missing_or_unsafe_clip_id(tmp_path, clip_id):
+    strategy = replace(
+        next(s for s in DEFAULT_STRATEGIES if s.id == FAMILIAR_VOICE_ID),
+        enabled=True,
+        clip_id=clip_id,
+    )
+
+    assert StrategyEngine([strategy], voice_clip_dir=tmp_path).start(NOW) is None
+
+
+def test_familiar_voice_rejects_missing_and_unreadable_wav(tmp_path):
+    base = next(s for s in DEFAULT_STRATEGIES if s.id == FAMILIAR_VOICE_ID)
+    missing = replace(base, enabled=True, clip_id="missing")
+    assert StrategyEngine([missing], voice_clip_dir=tmp_path).start(NOW) is None
+
+    (tmp_path / "broken.wav").write_bytes(b"not a wave file")
+    broken = replace(base, enabled=True, clip_id="broken")
+    assert StrategyEngine([broken], voice_clip_dir=tmp_path).start(NOW) is None
+
+
+def test_familiar_voice_uses_wav_duration_plus_fifteen_seconds(tmp_path):
+    write_wav(tmp_path / "family-message.wav", seconds=0.25)
+    strategy = replace(
+        next(s for s in DEFAULT_STRATEGIES if s.id == FAMILIAR_VOICE_ID),
+        enabled=True,
+        clip_id="family-message",
+        dwell_seconds=999,
+    )
+    engine = StrategyEngine([strategy], voice_clip_dir=tmp_path)
+
+    selected = engine.start(NOW)
+
+    assert selected is not None
+    assert selected.dwell_seconds == pytest.approx(15.25)
+    assert engine.maybe_advance(NOW + timedelta(seconds=15.24))[1] is False
+    assert engine.maybe_advance(NOW + timedelta(seconds=15.26))[2] is True
 
 
 def test_dwell_elapsed_with_no_progress_advances_to_next():
@@ -256,6 +317,19 @@ def test_load_strategies_uses_env_path(tmp_path):
     loaded = load_strategies(env={"STRATEGIES_PATH": str(path)})
     by_id = {s.id: s for s in loaded}
     assert by_id["ambient_orient"].enabled is False
+
+
+def test_load_strategies_reads_familiar_voice_clip_id(tmp_path):
+    path = tmp_path / "strategies.yaml"
+    path.write_text(
+        "strategies:\n  - id: familiar_voice\n    enabled: true\n    clip_id: family-message\n",
+        encoding="utf-8",
+    )
+
+    familiar = next(s for s in load_strategies(path) if s.id == FAMILIAR_VOICE_ID)
+
+    assert familiar.enabled is True
+    assert familiar.clip_id == "family-message"
 
 
 # --- render_template / time_as_words -------------------------------------

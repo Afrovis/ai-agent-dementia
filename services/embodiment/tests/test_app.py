@@ -4,6 +4,7 @@ import asyncio
 import base64
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from nc_shared.bus import FakeBus
 from nc_shared.events import AudioChunk, RawFrame, Say, Show, SpeechStarted
@@ -18,6 +19,7 @@ from embodiment.app import (
     publish_audio_chunk,
     publish_frame,
     resolve_photo,
+    resolve_voice_clip,
 )
 
 
@@ -227,6 +229,50 @@ def test_websocket_synthesizes_say_and_delivers_same_origin_audio_url(tmp_path):
     assert message["session_id"] == "session-1"
 
 
+def test_websocket_uses_caregiver_clip_without_calling_piper(tmp_path):
+    clip_id = "family-message"
+    (tmp_path / f"{clip_id}.wav").write_bytes(b"RIFFfamily-wave")
+    bus = FakeBus()
+    speech = FakeSpeech(tmp_path)
+    app = create_app(bus, speech=speech, voice_clip_dir=tmp_path)
+
+    with TestClient(app) as client, client.websocket_connect("/ws") as websocket:
+        bus.publish(
+            Say(
+                source="agent",
+                text="Here is a familiar voice for you.",
+                strategy="familiar_voice",
+                interruptible=True,
+                clip_id=clip_id,
+            )
+        )
+        message = websocket.receive_json()
+
+    assert message["audio_url"] == f"/voice/{clip_id}.wav"
+    assert speech.synthesized == []
+
+
+def test_websocket_missing_caregiver_clip_stays_text_only_without_piper(tmp_path):
+    bus = FakeBus()
+    speech = FakeSpeech(tmp_path)
+    app = create_app(bus, speech=speech, voice_clip_dir=tmp_path)
+
+    with TestClient(app) as client, client.websocket_connect("/ws") as websocket:
+        bus.publish(
+            Say(
+                source="agent",
+                text="Here is a familiar voice for you.",
+                strategy="familiar_voice",
+                interruptible=True,
+                clip_id="missing",
+            )
+        )
+        message = websocket.receive_json()
+
+    assert "audio_url" not in message
+    assert speech.synthesized == []
+
+
 def test_websocket_delivers_early_speech_signal_for_barge_in():
     bus = FakeBus()
     app = create_app(bus)
@@ -268,6 +314,47 @@ def test_speech_route_rejects_unknown_audio_id(tmp_path):
         response = client.get(f"/speech/{'b' * 64}.wav")
 
     assert response.status_code == 404
+
+
+def test_voice_route_serves_only_existing_valid_clip_ids(tmp_path):
+    (tmp_path / "family-message.wav").write_bytes(b"RIFFfamily-wave")
+    app = create_app(FakeBus(), voice_clip_dir=tmp_path)
+
+    with TestClient(app) as client:
+        response = client.get("/voice/family-message.wav")
+        missing = client.get("/voice/missing.wav")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "audio/wav"
+    assert response.content == b"RIFFfamily-wave"
+    assert missing.status_code == 404
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "/voice/..%2Fsecret.wav",
+        "/voice/%2E%2E%5Csecret.wav",
+        "/voice/Upper.wav",
+    ],
+)
+def test_voice_route_rejects_traversal_and_invalid_ids(tmp_path, url):
+    (tmp_path / "secret.wav").write_bytes(b"private")
+    app = create_app(FakeBus(), voice_clip_dir=tmp_path)
+
+    with TestClient(app) as client:
+        response = client.get(url)
+
+    assert response.status_code == 404
+    assert b"private" not in response.content
+
+
+def test_resolve_voice_clip_rejects_unsafe_ids(tmp_path):
+    (tmp_path / "safe.wav").write_bytes(b"wave")
+
+    assert resolve_voice_clip(tmp_path, "safe") == tmp_path / "safe.wav"
+    assert resolve_voice_clip(tmp_path, "../safe") is None
+    assert resolve_voice_clip(tmp_path, r"..\safe") is None
 
 
 def test_app_prerenders_fixed_phrases_during_startup(tmp_path):

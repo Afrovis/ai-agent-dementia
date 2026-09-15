@@ -164,11 +164,17 @@ class CloudCall(BaseEvent):
 
 
 class Say(BaseEvent):
-    """Text-to-speech instruction. Produced by `agent`."""
+    """Speech instruction. Produced by `agent`.
+
+    When ``clip_id`` is set, embodiment plays that caregiver-uploaded,
+    consented voice clip instead of synthesising ``text``; ``text`` is still
+    shown on screen.
+    """
 
     text: str
     strategy: str
     interruptible: bool
+    clip_id: str | None = None
 
 
 class Show(BaseEvent):

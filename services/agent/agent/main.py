@@ -296,6 +296,7 @@ def _maybe_publish_say(
         # ordinary strategy's speech can be (HANDOFF.md section 7:
         # `listen`'s barge-in) -- there is nothing left to redirect to.
         interruptible=strategy.id != ESCALATE_PHONE_ID,
+        clip_id=strategy.clip_id,
     )
     bus.publish(say_event)
     session.record_say(now)

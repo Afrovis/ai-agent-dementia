@@ -379,6 +379,7 @@ def _render_strategies(strategies: list[dict], message: str = "") -> str:
             "body": strategy.get("body", ""),
             "say": strategy.get("say", "") or "",
             "photo_id": strategy.get("photo_id", "") or "",
+            "clip_id": strategy.get("clip_id", "") or "",
         }
         numeric_fields = (
             ("order", "Order", 'min="1" max="100" step="1" required'),
@@ -411,6 +412,8 @@ def _render_strategies(strategies: list[dict], message: str = "") -> str:
                 ("photo_id", "Photo ID"),
             )
         )
+        if strategy_id == "familiar_voice":
+            text_fields += _field("Voice clip ID", prefix + "clip_id", values["clip_id"])
         label = html.escape(strategy_id.replace("_", " ").title())
         enabled = (
             f'<label class="toggle"><input type="checkbox" name="{prefix}enabled"'

@@ -5,8 +5,10 @@ mic, or Ollama. `now_fn` is always an explicit, advancing fixed clock, so
 nothing here sleeps for a real duration.
 """
 
+import wave
 from dataclasses import replace as dc_replace
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from nc_shared.bus import FakeBus
 from nc_shared.events import (
@@ -34,7 +36,7 @@ from agent.main import (
     run_once,
 )
 from agent.session import Session
-from agent.strategies import DEFAULT_STRATEGIES
+from agent.strategies import DEFAULT_STRATEGIES, FAMILIAR_VOICE_ID
 
 NIGHT = datetime(2026, 1, 1, 23, 0)
 
@@ -422,6 +424,36 @@ def test_a_strategy_with_a_say_template_publishes_a_say():
     assert isinstance(say_events[0], Say)
     assert say_events[0].text == "Say for s2."
     assert say_events[0].strategy == "s2"
+
+
+def test_familiar_voice_publishes_clip_say_and_family_show(tmp_path, monkeypatch):
+    clip_id = "family-message"
+    with wave.open(str(Path(tmp_path) / f"{clip_id}.wav"), "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(8000)
+        audio.writeframes(b"\0\0" * 800)
+    monkeypatch.setenv("VOICE_CLIP_DIR", str(tmp_path))
+    familiar = dc_replace(
+        next(s for s in DEFAULT_STRATEGIES if s.id == FAMILIAR_VOICE_ID),
+        enabled=True,
+        clip_id=clip_id,
+    )
+    session = Session(config=AgentConfig(observe_seconds=1.0), strategies=[familiar])
+    bus = make_bus()
+    now_fn, advance = make_clock(NIGHT)
+
+    bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    advance(2)
+    run_once(bus, session, now_fn=now_fn)
+
+    say = [event for _id, event in bus.read("say", "test", "c1", count=10)][-1]
+    show = [event for _id, event in bus.read("show", "test", "c1", count=10)][-1]
+    assert say.strategy == FAMILIAR_VOICE_ID
+    assert say.clip_id == clip_id
+    assert say.interruptible is True
+    assert show.photo_id == "demo_family"
 
 
 def test_a_say_rejected_by_rule_3_is_not_published_and_falls_back_to_silence():
