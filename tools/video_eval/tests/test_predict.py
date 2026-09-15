@@ -106,6 +106,7 @@ def test_predict_runs_backend_tracker_and_motion_gate_offline(tmp_path, monkeypa
     assert admitted["detected"] is True
     assert admitted["state"] == "sitting_up"
     assert admitted["zone"] == "bed"
+    assert set(admitted["landmarks"]) == set(LANDMARK_NAMES)
     gated = next(row for row in records if row["gated"])
     assert gated["detected"] is None
     assert gated["backend_ms"] == 0.0

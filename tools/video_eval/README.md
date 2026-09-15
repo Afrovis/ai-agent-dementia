@@ -80,6 +80,9 @@ reference for manually writing the clip's normalised `zones.yaml`; see
 `prepare` requires `ffmpeg` and `ffprobe`. Commands skip matching completed
 outputs unless `--force` is supplied. Every output records the current git SHA,
 parameters, package versions, and elapsed time in a neighboring metadata file.
+Event scoring accepts a predicted state already active at the labelled onset as
+zero-delay when its run began at most 3 seconds early; the signed onset offset
+remains in reports.
 
 Render silent, synchronized review videos from the recorder's scenario card,
 the selected gated real-time pose pipeline, or the local vision-language labels:
@@ -92,6 +95,9 @@ the selected gated real-time pose pipeline, or the local vision-language labels:
 The default output directory is `../data-ai-agent-dementia/analysis`. Each
 video includes the full camera view, the exact 320 by 240 letterboxed runtime
 input, source-specific annotations, and a state timeline. Audio is never copied.
+The pipeline visualization is a standard output for every analyzed clip: render
+it immediately after selecting the prediction tag. It does not require manual
+annotations or local-VLM labels; those sources can be added and rendered later.
 
 For package parity, build the optional tooling into the perceive image:
 

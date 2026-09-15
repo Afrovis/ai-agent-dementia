@@ -28,12 +28,15 @@ tests must run with neither installed.
 from __future__ import annotations
 
 import io
+import os
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
 import numpy as np
 from PIL import Image
+
+from perceive.phantom import DEFAULT_MAX_CONFIDENCE, Candidate, KnownPhantoms
 
 LANDMARK_NAMES: tuple[str, ...] = (
     "nose",
@@ -97,11 +100,11 @@ class PoseBackend(Protocol):
 def _decode_rgb(jpeg: bytes) -> np.ndarray | None:
     """Decode `jpeg` to an RGB `numpy` array, or `None` if it will not decode.
 
-    Shared by both real backends: mediapipe and ultralytics both expect a
-    plain RGB array, not JPEG bytes, so the decode step belongs here rather
-    than duplicated in each backend. A decode failure degrades to "no
-    person seen" (`None`) rather than raising -- a single corrupt frame
-    must not crash the service (HANDOFF.md rule 4).
+    Shared by both real backends: MediaPipe consumes this RGB array directly,
+    while the YOLO backend converts it to the BGR convention Ultralytics uses
+    for numpy inputs. A decode failure degrades to "no person seen" (`None`)
+    rather than raising -- a single corrupt frame must not crash the service
+    (HANDOFF.md rule 4).
     """
     try:
         with Image.open(io.BytesIO(jpeg)) as image:
@@ -189,12 +192,33 @@ class MediaPipeBackend:
 
 
 class YoloPoseBackend:
-    """Wraps an `ultralytics` YOLOv8-pose model.
+    """Wraps an `ultralytics` YOLO-pose model (default weights: YOLO11s-pose;
+    `PERCEIVE_YOLO_MODEL` also accepts any other ultralytics pose checkpoint,
+    e.g. a YOLOv8-pose one).
 
     The comparison arm for issue #8's open question (HANDOFF.md section 12).
-    Maps YOLOv8-pose's 17 COCO keypoints onto `LANDMARK_NAMES`; the 8 COCO
+    Maps the model's 17 COCO keypoints onto `LANDMARK_NAMES`; the 8 COCO
     points with no equivalent here (eyes, ears, elbows, wrists) are dropped,
     not carried through, since `perceive.classify` never looks at them.
+
+    `imgsz` (`PERCEIVE_YOLO_IMGSZ`, default 640) is passed explicitly to
+    every inference call instead of relying on ultralytics' own default, so
+    the inference resolution is a config knob rather than an implicit
+    consequence of whatever the ultralytics version defaults to.
+
+    `phantoms_file` (`PERCEIVE_PHANTOMS_FILE`, default unset -- filtering
+    off) guards against a fixed non-person object the model reports as
+    "person" with an unmoving box in every frame, including an empty room
+    (2026-09-14 bedroom evidence: a headboard-area false positive scored
+    high enough to win selection over an empty bed or a person elsewhere in
+    frame). Unlike an earlier design, this is *not* learned at runtime --
+    that turned out both ineffective (the phantom and the real person never
+    actually co-occur in one frame on the real clips) and unsafe (a
+    sleeping person's own static box could get permanently misflagged by
+    an unrelated mover elsewhere). See `perceive.phantom` for the
+    calibrated-box rule this backend applies instead, and
+    `perceive.calibrate_phantoms` for producing the file with the room
+    empty.
     """
 
     _KEYPOINT_INDEX: dict[str, int] = {
@@ -210,7 +234,15 @@ class YoloPoseBackend:
     }
     """COCO-17 keypoint index, as produced by ultralytics' pose models."""
 
-    def __init__(self, model_path: str = "yolov8n-pose.pt") -> None:
+    def __init__(
+        self,
+        model_path: str = "yolo11s-pose.pt",
+        *,
+        imgsz: int = 640,
+        detect_conf: float | None = None,
+        phantoms_file: str | None = None,
+        phantom_max_confidence: float | None = None,
+    ) -> None:
         try:
             from ultralytics import YOLO
         except ImportError as exc:
@@ -220,26 +252,50 @@ class YoloPoseBackend:
             ) from exc
 
         self._model = YOLO(model_path)
+        self._imgsz = imgsz
+        self._detect_conf = detect_conf
+
+        # `phantoms_file`/`phantom_max_confidence` default to `None` (rather
+        # than baking the env read into `build_backend`'s signature) so a
+        # caller that never mentions phantoms at all -- like
+        # `video_eval.predict`, which calls `build_backend` without these
+        # kwargs -- still gets `PERCEIVE_PHANTOMS_FILE` from its own
+        # environment, exactly like running the real service would.
+        resolved_path = (
+            phantoms_file
+            if phantoms_file is not None
+            else os.environ.get("PERCEIVE_PHANTOMS_FILE", "").strip() or None
+        )
+        resolved_max_confidence = (
+            phantom_max_confidence
+            if phantom_max_confidence is not None
+            else float(
+                os.environ.get("PERCEIVE_PHANTOM_MAX_CONFIDENCE", str(DEFAULT_MAX_CONFIDENCE))
+            )
+        )
+        self._known_phantoms = KnownPhantoms.load(
+            resolved_path, max_confidence=resolved_max_confidence
+        )
 
     def detect(self, jpeg: bytes) -> PoseResult | None:
-        """Run the YOLOv8-pose model on `jpeg` and map the best detection
+        """Run the configured YOLO-pose model on `jpeg` and map the best detection
         onto `LANDMARK_NAMES`."""
-        image = _decode_rgb(jpeg)
-        if image is None:
+        detected = self._detect_candidates(jpeg)
+        if detected is None:
             return None
-
-        results = self._model(image, verbose=False)
-        if not results:
-            return None
-        result = results[0]
-        if result.keypoints is None or result.boxes is None or len(result.boxes) == 0:
+        result, candidates = detected
+        if result.keypoints is None:
             return None
 
         # Multiple people can appear in frame; `perceive` tracks the one
-        # person this system is built for, so take the most confident
-        # detection rather than trying to disambiguate identity.
-        confidences = result.boxes.conf.tolist()
-        best = max(range(len(confidences)), key=lambda i: confidences[i])
+        # real person this system is built for. `KnownPhantoms.select`
+        # takes every candidate and returns the most confident one that
+        # isn't sitting on a calibrated phantom box below the confidence
+        # floor, `None` if every candidate in this frame is excluded.
+        selected = self._known_phantoms.select(candidates)
+        if selected is None:
+            return None
+        best = selected.index
 
         points = result.keypoints.xyn[best].tolist()
         point_conf = (
@@ -264,8 +320,38 @@ class YoloPoseBackend:
         return PoseResult(
             landmarks=landmarks,
             bbox=(x_min, y_min, x_max, y_max),
-            confidence=float(confidences[best]),
+            confidence=selected.confidence,
         )
+
+    def detect_candidates(self, jpeg: bytes) -> list[Candidate]:
+        """Return every raw candidate in `jpeg`, without phantom filtering."""
+        detected = self._detect_candidates(jpeg)
+        return [] if detected is None else detected[1]
+
+    def _detect_candidates(self, jpeg: bytes) -> tuple[object, list[Candidate]] | None:
+        image = _decode_rgb(jpeg)
+        if image is None:
+            return None
+
+        # Ultralytics interprets numpy image arrays as OpenCV-style BGR.
+        image = np.ascontiguousarray(image[..., ::-1])
+        model_kwargs: dict[str, object] = {"verbose": False, "imgsz": self._imgsz}
+        if self._detect_conf is not None:
+            model_kwargs["conf"] = self._detect_conf
+        results = self._model(image, **model_kwargs)
+        if not results:
+            return None
+        result = results[0]
+        if result.boxes is None or len(result.boxes) == 0:
+            return None
+
+        confidences = result.boxes.conf.tolist()
+        boxes = result.boxes.xyxyn.tolist()
+        candidates = [
+            Candidate(box=tuple(box), confidence=float(confidence), index=i)
+            for i, (box, confidence) in enumerate(zip(boxes, confidences))
+        ]
+        return result, candidates
 
 
 class ScriptedBackend:
@@ -303,25 +389,47 @@ class ScriptedBackend:
 
 
 def build_backend(
-    kind: str, *, model_path: str | None = None, static_image_mode: bool = True
+    kind: str,
+    *,
+    model_path: str | None = None,
+    static_image_mode: bool = True,
+    yolo_imgsz: int = 640,
+    detect_conf: float | None = None,
+    phantoms_file: str | None = None,
+    phantom_max_confidence: float | None = None,
 ) -> PoseBackend:
     """Return the configured `PoseBackend` for `kind` (`mediapipe`, `yolo`, `scripted`).
 
-    `model_path` is only used by `yolo` (`PERCEIVE_YOLO_MODEL`);
+    `model_path`, `yolo_imgsz`, `detect_conf`, `phantoms_file` and
+    `phantom_max_confidence`
+    are only used by `yolo` (`PERCEIVE_YOLO_MODEL`, `PERCEIVE_YOLO_IMGSZ`,
+    `PERCEIVE_PHANTOMS_FILE`, `PERCEIVE_PHANTOM_MAX_CONFIDENCE`);
     `static_image_mode` only by `mediapipe` (`PERCEIVE_MEDIAPIPE_VIDEO_MODE`
-    inverted). `scripted` builds an empty
-    `ScriptedBackend` (always reports "no person") -- a legitimate config
-    for smoke-testing the rest of the pipeline with `docker compose up`
-    and no model weights installed, but production nights should use
-    `mediapipe` or `yolo`; real scripted sequences are built directly by
-    tests and the perception bench, not through this factory. Raises
-    `ValueError` for an unrecognised `kind`, treated as a configuration
-    error worth failing loudly on at startup (HANDOFF.md rule 4).
+    inverted). Leaving `phantoms_file`/`phantom_max_confidence` at their
+    `None` default (as `video_eval.predict` does, calling this without
+    either) makes `YoloPoseBackend` read `PERCEIVE_PHANTOMS_FILE` and
+    `PERCEIVE_PHANTOM_MAX_CONFIDENCE` from its own environment, so the
+    offline evaluator picks up the same calibrated phantoms the live
+    service would without needing to know about them here. `scripted`
+    builds an empty `ScriptedBackend` (always reports "no person") -- a
+    legitimate config for smoke-testing the rest of the pipeline with
+    `docker compose up` and no model weights installed, but production
+    nights should use `mediapipe` or `yolo`; real scripted sequences are
+    built directly by tests and the perception bench, not through this
+    factory. Raises `ValueError` for an unrecognised `kind`, treated as a
+    configuration error worth failing loudly on at startup (HANDOFF.md rule
+    4).
     """
     if kind == "mediapipe":
         return MediaPipeBackend(static_image_mode=static_image_mode)
     if kind == "yolo":
-        return YoloPoseBackend(model_path=model_path or "yolov8n-pose.pt")
+        return YoloPoseBackend(
+            model_path=model_path or "yolo11s-pose.pt",
+            imgsz=yolo_imgsz,
+            detect_conf=detect_conf,
+            phantoms_file=phantoms_file,
+            phantom_max_confidence=phantom_max_confidence,
+        )
     if kind == "scripted":
         return ScriptedBackend([])
     raise ValueError(f"unknown PERCEIVE_POSE_BACKEND: {kind!r}")

@@ -21,7 +21,7 @@ from pathlib import Path
 
 import yaml
 from perceive.backends import LANDMARK_NAMES, Landmark, PoseResult
-from perceive.classify import ClassifyThresholds, StateTracker, centroid_of
+from perceive.classify import ClassifyThresholds, StateTracker, zone_for_pose
 from perceive.zones import load_zones
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -89,7 +89,7 @@ def replay(
             dets = [d for d in row["dets"] if d["conf"] >= model_floor]
             if dets:
                 pose = to_pose(max(dets, key=lambda d: d["conf"]), mediapipe)
-            zone = zones.zone_for_point(*centroid_of(pose)) if pose is not None else "other"
+            zone = zone_for_pose(zones, pose) if pose is not None else "other"
             tracker.update(pose, zone, row["t_s"])
         snap = tracker.snapshot()
         rows.append(

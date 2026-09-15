@@ -158,8 +158,8 @@
   // rest of the page keeps working with no media bridge.
 
   const FRAME_FPS = 2;
-  const FRAME_WIDTH = 320;
-  const FRAME_HEIGHT = 240;
+  const FRAME_WIDTH = 640;
+  const FRAME_HEIGHT = 480;
   const FRAME_JPEG_QUALITY = 0.6;
   const AUDIO_SAMPLE_RATE = 16000;
   // 4096 samples at the browser's native audio rate (e.g. 48 kHz) is a
@@ -205,7 +205,7 @@
   }
 
   // Fit the whole camera image inside the fixed 4:3 transport canvas without
-  // changing its proportions. A 16:9 stream becomes 320x180 at (0, 30).
+  // changing its proportions. A 16:9 stream becomes 640x360 at (0, 60).
   function letterboxRect(sourceWidth, sourceHeight, targetWidth, targetHeight) {
     const scale = Math.min(targetWidth / sourceWidth, targetHeight / sourceHeight);
     const width = Math.round(sourceWidth * scale);

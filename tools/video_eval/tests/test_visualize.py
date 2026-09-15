@@ -1,4 +1,9 @@
-from video_eval.visualize import _current_manual, _manual_state, _runtime_to_source
+import json
+
+import yaml
+
+from video_eval.common import write_jsonl
+from video_eval.visualize import _current_manual, _load_inputs, _manual_state, _runtime_to_source
 
 
 def test_manual_markers_hold_until_the_next_timestamp():
@@ -23,3 +28,32 @@ def test_manual_actions_map_only_to_coarse_pipeline_states():
 def test_runtime_letterbox_coordinates_map_back_to_source_image():
     assert _runtime_to_source((0.5, 0.125)) == (0.5, 0.0)
     assert _runtime_to_source((0.5, 0.875)) == (0.5, 1.0)
+
+
+def test_pipeline_visualization_uses_pose_data_from_prediction(tmp_path):
+    clip = tmp_path / "clips" / "clip"
+    predictions = clip / "predictions"
+    predictions.mkdir(parents=True)
+    (clip / "clip.yaml").write_text(
+        yaml.safe_dump({"script": [], "video": {"duration_s": 0.5}}), encoding="utf-8"
+    )
+    write_jsonl(
+        clip / "frames.jsonl",
+        [{"frame_index": 0, "t_s": 0.0, "review_path": "review.jpg"}],
+    )
+    row = {
+        "frame_index": 0,
+        "t_s": 0.0,
+        "bbox": [0.4, 0.2, 0.6, 0.8],
+        "landmarks": {"nose": [0.5, 0.3, 0.9]},
+    }
+    write_jsonl(predictions / "selected.jsonl", [row])
+    (predictions / "selected.meta.json").write_text(
+        json.dumps({"parameters": {"backend": "yolo", "variant": "letterbox"}}),
+        encoding="utf-8",
+    )
+
+    inputs = _load_inputs(tmp_path, "clip", "selected")
+
+    assert inputs.poses == [row]
+    assert inputs.vision == []

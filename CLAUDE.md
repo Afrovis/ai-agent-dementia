@@ -230,6 +230,23 @@ at `/photos/demo_family` and `/photos/demo_room`. Caregiver uploads under
 `data/` is gitignored. Certificates, the SQLite database and recordings all
 live there and none of them belong in a commit.
 
+`perceive`'s YOLO backend can lock onto a fixed non-person object (a lamp,
+a headboard corner) that scores as "person" with an unmoving box, including
+in an empty room. `PERCEIVE_PHANTOMS_FILE` points at a short, calibrated
+list of such boxes to exclude below `PERCEIVE_PHANTOM_MAX_CONFIDENCE`
+(default 0.7); unset (the default), the filter is off. Calibrate it with
+the room empty:
+
+```sh
+docker compose exec perceive python -m perceive.calibrate_phantoms \
+  --out /app/config/phantoms.yaml --redis redis://bus:6379 --count 60
+```
+
+or offline against prepared frames (`--frames-dir DIR` instead of
+`--redis`/`--count`, used by `tools/video_eval`). Restart `perceive`
+afterwards to pick up the file. Do this again, and re-run it, any time the
+camera or the room's static furniture changes.
+
 ## Conventions
 
 Log one structured JSON line per event to stdout, with a `service` field.

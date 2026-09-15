@@ -103,7 +103,8 @@ def _load_inputs(root: Path, clip_id: str, pipeline_tag: str | None) -> RenderIn
     clip = yaml.safe_load((clip_dir / "clip.yaml").read_text(encoding="utf-8"))
     frames = read_jsonl(clip_dir / "frames.jsonl")
     manual = sorted(clip.get("script") or [], key=lambda item: float(item["t_s"]))
-    vision = read_jsonl(clip_dir / "labels" / "local.jsonl")
+    vision_path = clip_dir / "labels" / "local.jsonl"
+    vision = read_jsonl(vision_path) if vision_path.exists() else []
 
     if pipeline_tag is None:
         candidates = sorted(
@@ -123,12 +124,16 @@ def _load_inputs(root: Path, clip_id: str, pipeline_tag: str | None) -> RenderIn
     model_path = prediction_parameters.get("yolo_model")
     pipeline_backend = Path(model_path).stem if model_path else backend_name
     cache_name = f"{pipeline_backend}-letterbox.jsonl"
-    poses = read_jsonl(clip_dir / "cache" / cache_name)
+    cache_path = clip_dir / "cache" / cache_name
+    # New predictions carry the canonical pose geometry needed by their own
+    # visualization.  Keep the old raw-detection cache as a compatibility
+    # source for predictions produced before that field existed.
+    poses = read_jsonl(cache_path) if cache_path.exists() else pipeline
     zones_path = clip_dir / "zones.yaml"
     zones = yaml.safe_load(zones_path.read_text(encoding="utf-8")) if zones_path.exists() else {}
 
     count = len(frames)
-    for name, records in (("pipeline", pipeline), ("pose cache", poses), ("vision", vision)):
+    for name, records in (("pipeline", pipeline), ("pose data", poses)):
         if len(records) != count:
             raise ValueError(f"{name} has {len(records)} records; frames has {count}")
     return RenderInputs(
@@ -196,17 +201,47 @@ def _draw_pose(
     source_mapping: bool,
 ) -> None:
     detections = pose_record.get("dets") or []
-    if not detections:
-        return
-    detection = max(detections, key=lambda item: float(item.get("conf", 0.0)))
-    keypoints = detection.get("kp") or []
+    if detections:
+        detection = max(detections, key=lambda item: float(item.get("conf", 0.0)))
+        keypoints = detection.get("kp") or []
+        edges = COCO_EDGES
+    else:
+        bbox = pose_record.get("bbox")
+        landmarks = pose_record.get("landmarks") or {}
+        if not bbox:
+            return
+        names = (
+            "nose",
+            "left_shoulder",
+            "right_shoulder",
+            "left_hip",
+            "right_hip",
+            "left_knee",
+            "right_knee",
+            "left_ankle",
+            "right_ankle",
+        )
+        keypoints = [landmarks.get(name, [0.0, 0.0, 0.0]) for name in names]
+        edges = (
+            (0, 1),
+            (0, 2),
+            (1, 2),
+            (1, 3),
+            (2, 4),
+            (3, 4),
+            (3, 5),
+            (5, 7),
+            (4, 6),
+            (6, 8),
+        )
+        detection = {"bbox": bbox}
     mapped: list[tuple[int, int] | None] = []
     for raw_x, raw_y, visibility in keypoints:
         normalized = (float(raw_x), float(raw_y))
         if source_mapping:
             normalized = _runtime_to_source(normalized)
         mapped.append(_point(rect, normalized) if visibility >= 0.3 else None)
-    for first, second in COCO_EDGES:
+    for first, second in edges:
         if first < len(mapped) and second < len(mapped) and mapped[first] and mapped[second]:
             draw.line((mapped[first], mapped[second]), fill=(39, 236, 208), width=4)
     for value in mapped:
@@ -468,6 +503,10 @@ def render_visualization(
     started_at = time.monotonic()
     root = EvalPaths.for_clip(clip_id, root).root
     inputs = _load_inputs(root, clip_id, pipeline_tag)
+    if mode == "vision" and len(inputs.vision) != len(inputs.frames):
+        raise FileNotFoundError(
+            f"local vision labels are incomplete for {clip_id}; run label-local first"
+        )
     output_dir = output_dir or root / "analysis"
     output = output_dir / f"{clip_id}__{mode}.mp4"
     meta_path = output.with_suffix(".meta.json")

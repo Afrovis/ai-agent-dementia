@@ -338,14 +338,14 @@ def test_browser_letterboxes_16_by_9_and_emits_both_dimension_pairs():
     script = (Path(__file__).parents[1] / "embodiment/static/script.js").read_text()
 
     source_width, source_height = 1920, 1080
-    target_width, target_height = 320, 240
+    target_width, target_height = 640, 480
     scale = min(target_width / source_width, target_height / source_height)
     rendered_width = round(source_width * scale)
     rendered_height = round(source_height * scale)
-    assert (rendered_width, rendered_height) == (320, 180)
+    assert (rendered_width, rendered_height) == (640, 360)
     assert ((target_width - rendered_width) // 2, (target_height - rendered_height) // 2) == (
         0,
-        30,
+        60,
     )
     assert (
         "const scale = Math.min(targetWidth / sourceWidth, targetHeight / sourceHeight)" in script
