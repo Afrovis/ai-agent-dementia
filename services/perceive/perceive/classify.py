@@ -112,6 +112,22 @@ class ClassifyThresholds:
     checks, this rules out a half-risen, still-bent posture being counted
     as fully `standing`."""
 
+    sitting_thigh_ratio: float = 0.0
+    """With the knees visible, a thigh that drops less than this fraction of
+    the torso length (`_Geometry.thigh_drop_ratio`) is level or pointing at
+    the camera: seated, even when the ankles hang well below the hips.
+    Someone sitting on the bed edge with their feet on the floor otherwise
+    reads as `standing`, the one posture that says "not in bed". On the
+    2026-09-13/14 clips seated frames had a median of 0.11 (p90 0.42) and
+    standing or walking frames a p10 of 0.67, so 0.55 separates them.
+
+    `0.0`, the default, disables the rule. It turns seated people in the bed
+    zone into bed occupants, so a bed zone that also covers a chair or the
+    floor in front of the bed turns them into false `in bed` readings: on
+    the same clips it added 33 false bed frames with the old hand-drawn
+    zones, against a net gain with zones from `perceive.calibrate_bed`.
+    Enable it together with that calibration. `PERCEIVE_SITTING_THIGH_RATIO`."""
+
     walk_displacement_threshold: float = 0.15
     """A `standing` person's centroid moving at least this much (normalised
     frame width) across the tracker's recent-frame window counts as
@@ -210,6 +226,10 @@ class _Geometry:
     ankle_below_hip: float
     """`ankle_y - hip_y`; positive means the ankles sit lower in the frame
     (further from the top, i.e. further down) than the hips."""
+    thigh_drop_ratio: float | None = None
+    """`(knee_y - hip_y) / torso_length`: about 0.8 for a standing thigh,
+    near 0 for a seated one. `None` when a knee, a hip or the torso is
+    missing, since there is then nothing to measure."""
 
 
 def _mean(*values: float | None) -> float | None:
@@ -299,6 +319,15 @@ def _geometry(pose: PoseResult) -> _Geometry:
 
     ankle_below_hip = (ankle_y - hip_y) if (ankle_y is not None and hip_y is not None) else 0.0
 
+    left_knee = pose.landmarks.get("left_knee")
+    right_knee = pose.landmarks.get("right_knee")
+    knee_y = _mean(left_knee.y if left_knee else None, right_knee.y if right_knee else None)
+    thigh_drop_ratio = None
+    if knee_y is not None and None not in (shoulder_x, shoulder_y, hip_x, hip_y):
+        torso_length = math.hypot(hip_x - shoulder_x, hip_y - shoulder_y)
+        if torso_length > 0.02:
+            thigh_drop_ratio = (knee_y - hip_y) / torso_length
+
     return _Geometry(
         centroid_x=centroid_x,
         centroid_y=centroid_y,
@@ -306,6 +335,7 @@ def _geometry(pose: PoseResult) -> _Geometry:
         horizontal_extent=x_max - x_min,
         torso_vertical_ratio=torso_vertical_ratio,
         ankle_below_hip=ankle_below_hip,
+        thigh_drop_ratio=thigh_drop_ratio,
     )
 
 
@@ -528,9 +558,10 @@ def classify_pose(
     3. `in_bed` -- in the bed zone and the torso is not upright (see the
        module docstring: this deliberately does not require confident limb
        detection, because a blanket makes that unreliable).
-    4. `sitting_up` -- torso upright, ankles not clearly below the hips.
-    5. `standing` -- torso upright, ankles clearly below the hips, and a
-       large vertical extent.
+    4. `sitting_up` -- torso upright, and either ankles not clearly below
+       the hips or visible knees with a level thigh.
+    5. `standing` -- torso upright, ankles clearly below the hips, a large
+       vertical extent, and no level thigh.
 
     Anything left over (torso not upright, not in the bed zone, not
     lying-and-low enough to be `on_floor`, e.g. bending over or a partial
@@ -563,7 +594,11 @@ def classify_pose(
     if torso_upright:
         ankles_below_hips = geometry.ankle_below_hip >= thresholds.ankle_below_hip_margin
         tall_enough = geometry.vertical_extent >= thresholds.standing_vertical_extent
-        if ankles_below_hips and tall_enough:
+        thigh_level = (
+            geometry.thigh_drop_ratio is not None
+            and geometry.thigh_drop_ratio < thresholds.sitting_thigh_ratio
+        )
+        if ankles_below_hips and tall_enough and not thigh_level:
             return "standing", pose.confidence
         return "sitting_up", pose.confidence
 
