@@ -1,123 +1,93 @@
-"""Tier 3: real infrared clips from the actual room. The real bench.
-
-Currently empty: no infrared recordings of consenting volunteers exist yet
-(HANDOFF.md section 8; this issue's brief). This module defines the
-fixture format whoever records them will follow -- see `RECORDING.md` next
-to this file for the recording protocol itself -- and loads a manifest of
-clips if one exists. When none does, `run_tier3` reports that plainly and
-returns a result with `accuracy=None` and `latency=None`, never raising,
-never fabricating a number.
+"""Tier 3: real infrared clips from the actual room, scored through
+`tools/video_eval` (see `docs/VIDEO_EVAL.md`, step A8). The real bench.
 
 Manifest format
 ----------------
 
 A YAML file (default `tests/perception_bench/fixtures/ir_manifest.yaml`,
-override with `--ir-manifest`) with this shape:
+override with `--ir-manifest`) that lives at the data root -- the directory
+that also holds `clips/`, the same root `tools/video_eval` reads and writes
+(`VIDEO_EVAL_DATA`, default `../data-ai-agent-dementia`):
 
 ```yaml
-zones:
-  bed: [[0.0, 0.2], [0.35, 0.2], [0.35, 0.85], [0.0, 0.85]]
-  door: [[0.85, 0.0], [1.0, 0.0], [1.0, 1.0], [0.85, 1.0]]
-  bathroom_path: [[0.35, 0.85], [0.85, 0.85], [0.85, 1.0], [0.35, 1.0]]
-
 clips:
-  - path: clips/2026-01-10_sit_up_to_walk.mp4   # relative to the manifest's own directory
-    frame_interval_s: 0.5                        # 1 / recording fps
-    timeline:
-      - {from_s: 0.0, to_s: 8.0, state: in_bed}
-      - {from_s: 8.0, to_s: 11.0, state: sitting_up}
-      - {from_s: 11.0, to_s: 14.0, state: standing}
-      - {from_s: 14.0, to_s: 22.0, state: walking}
-      - {from_s: 22.0, to_s: 30.0, state: absent}      # left the frame via the door
+  - clip_id: 2026-09-13_bedroom-sample-01
+    confirmed_by: Name        # copied from reference.yaml at confirm time
+    confirmed_at: 2026-09-15
 ```
 
-Fields:
+Each `clip_id` resolves to `<manifest dir>/clips/<clip_id>/`, the same
+layout `video_eval.paths.EvalPaths` uses. Zones, frames, predictions and the
+confirmed reference timeline all live under that clip directory -- this
+manifest only lists *which* clips tier 3 should score; it carries no zones,
+no timeline and no video path of its own (those belonged to the old,
+never-populated manifest format this replaces).
 
-- `zones`: the same polygon format as `config/zones.yaml` (see
-  `perceive.zones`), for *this* clip's room and camera placement. A
-  manifest may define zones once at the top level (used by every clip that
-  does not override it) and/or per clip under a `zones` key nested inside
-  that clip's mapping, for a manifest spanning more than one camera
-  position.
-- `clips[].path`: relative to the manifest file's own directory, so the
-  manifest and its clips can be moved together without editing paths.
-  Never a path under `data/` committed to git -- the clips themselves stay
-  local (HANDOFF.md rule 2, this issue's hard constraints).
-- `clips[].frame_interval_s`: seconds between frames as actually recorded
-  or sampled for scoring. Needed to convert the per-frame latency this
-  tier can measure (like tier 1) into seconds.
-- `clips[].timeline`: a per-interval expected-state timeline, `from_s`
-  inclusive to `to_s` exclusive, in the clip's own seconds from zero.
-  Intervals should be contiguous and covers the whole clip; a gap is
-  treated as "not scored" for those seconds rather than an error. This is
-  deliberately coarser than true per-frame annotation (labelling every
-  frame of a 20-minute recording by hand is not a reasonable ask) but
-  still carries a known transition *time* per boundary, which is what lets
-  this tier measure latency, unlike tier 2.
+`video_eval reconcile --confirm` appends/updates a clip's entry in this file
+automatically (see `video_eval.manifest`); nothing else needs to write it by
+hand. `confirmed_by`/`confirmed_at` here are informational, copied at
+confirm time -- the thing that actually gates scoring is a fresh read of
+that clip's own `labels/reference.yaml` (see `run_tier3` below), since the
+manifest entry could in principle go stale.
 
-This module reads the manifest and geometry; it does not decode video.
-Real video decoding (frame extraction at `frame_interval_s`) needs OpenCV
-or similar and is deliberately not implemented until a real manifest and
-real clips exist to test it against -- there is nothing to verify that
-code against today, and shipping unverified video-decoding code would be
-worse than being honest that this tier is a loader plus a documented
-format, waiting for data. See `RECORDING.md` for how to produce that data.
+An absent manifest is "skip cleanly" (exit 0, a plain `missing_reason`,
+never a fabricated number) -- currently always true, since no infrared
+recordings of consenting volunteers exist yet; see `RECORDING.md` next to
+this file for the recording protocol. A manifest that exists but is
+malformed (not a mapping, `clips` not a list, an entry with no `clip_id`)
+raises `ValueError` instead: unlike "no manifest at all", a broken manifest
+is something whoever is building this tier should hear about loudly
+(HANDOFF.md rule 4's "fail loud").
+
+Scoring itself is delegated entirely to `video_eval.score.score_clip`
+(reusing its up-to-date/force and report-writing behaviour) and, optionally,
+`video_eval.predict.predict_clip`. `video_eval` is a large, model-dependent
+package (MediaPipe/YOLOv8, `capture`, `perceive`) that `perception_bench`
+must keep working without -- see `run_tier3`'s lazy import.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import fnmatch
+import json
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
-from perceive.classify import PersonStateName
-from perceive.zones import Polygon, ZoneMap
+
+from perception_bench.scoring import ACCURACY_TARGET, LATENCY_TARGET_S
 
 DEFAULT_MANIFEST_PATH = Path("tests/perception_bench/fixtures/ir_manifest.yaml")
 
+# A prediction tag is `f"{backend}-{variant}-{sha[:8]}{'-g' if gated else ''}"`
+# (see `video_eval.predict.prediction_tag`) -- an 8-hex-digit short SHA with
+# an optional trailing `-g`. Stripping that suffix pools tags produced by the
+# same backend/variant across clips scored at different commits.
+_TAG_SHA_SUFFIX_RE = re.compile(r"-[0-9a-f]{7,40}(-g)?$")
+
+
+def tag_family(tag: str) -> str:
+    """`tag` with its trailing git-sha component (and optional `-g`) removed."""
+    return _TAG_SHA_SUFFIX_RE.sub("", tag)
+
 
 @dataclass(frozen=True)
-class TimelineInterval:
-    """One `[from_s, to_s)` interval of a clip's expected-state timeline."""
+class ManifestClip:
+    """One manifest-listed clip: its `video_eval` clip id, plus the
+    confirmer/date recorded at `reconcile --confirm` time."""
 
-    from_s: float
-    to_s: float
-    state: PersonStateName
-
-
-@dataclass(frozen=True)
-class IrClip:
-    """One manifest-listed infrared clip: where to find it, its zones, its
-    frame rate, and its expected-state timeline."""
-
-    path: Path
-    zones: ZoneMap
-    frame_interval_s: float
-    timeline: list[TimelineInterval]
+    clip_id: str
+    confirmed_by: str | None
+    confirmed_at: str | None
 
 
-def _parse_zones(raw: dict[str, Any]) -> ZoneMap:
-    polygons: dict[str, Polygon] = {}
-    for name in ("bed", "door", "bathroom_path"):
-        points = raw.get(name)
-        if points:
-            polygons[name] = [(float(p[0]), float(p[1])) for p in points]
-    return ZoneMap(polygons=polygons)
-
-
-def load_manifest(manifest_path: Path = DEFAULT_MANIFEST_PATH) -> list[IrClip]:
-    """Load `manifest_path` into a list of `IrClip`s. Returns an empty list
-    -- not an error -- if the file does not exist: an absent tier-3
-    manifest is the expected, documented state of this repository today
-    (see the module docstring), not a bench failure.
-
-    Raises `ValueError` for a manifest that exists but is malformed (a
-    typo'd state name, a clip missing a required field): unlike "no
-    manifest at all", a broken manifest is something the person who wrote
-    it should hear about loudly, per HANDOFF.md rule 4's "fail loud to the
-    caregiver" -- the equivalent audience here is whoever is building this
-    tier.
+def load_manifest(manifest_path: Path = DEFAULT_MANIFEST_PATH) -> list[ManifestClip]:
+    """Load `manifest_path` into a list of `ManifestClip`s. Returns an empty
+    list -- not an error -- if the file does not exist (see module
+    docstring). Raises `ValueError` for a manifest that exists but is
+    malformed.
     """
     if not manifest_path.exists():
         return []
@@ -128,56 +98,193 @@ def load_manifest(manifest_path: Path = DEFAULT_MANIFEST_PATH) -> list[IrClip]:
     if not isinstance(raw, dict):
         raise ValueError(f"{manifest_path} must contain a mapping with a 'clips' key")
 
-    default_zones = _parse_zones(raw.get("zones") or {})
     clips_raw = raw.get("clips") or []
     if not isinstance(clips_raw, list):
         raise ValueError(f"{manifest_path}: 'clips' must be a list")
 
-    clips: list[IrClip] = []
+    clips: list[ManifestClip] = []
     for entry in clips_raw:
-        if "path" not in entry:
-            raise ValueError(f"{manifest_path}: every clip needs a 'path'")
-        if "timeline" not in entry:
-            raise ValueError(f"{manifest_path}: clip {entry['path']!r} has no 'timeline'")
-
-        zones = _parse_zones(entry["zones"]) if "zones" in entry else default_zones
-        interval = float(entry.get("frame_interval_s", 0.5))
-        timeline = [
-            TimelineInterval(
-                from_s=float(row["from_s"]), to_s=float(row["to_s"]), state=row["state"]
-            )
-            for row in entry["timeline"]
-        ]
+        if not isinstance(entry, dict) or not entry.get("clip_id"):
+            raise ValueError(f"{manifest_path}: every clip needs a 'clip_id'")
         clips.append(
-            IrClip(
-                path=manifest_path.parent / entry["path"],
-                zones=zones,
-                frame_interval_s=interval,
-                timeline=timeline,
+            ManifestClip(
+                clip_id=str(entry["clip_id"]),
+                confirmed_by=entry.get("confirmed_by"),
+                confirmed_at=entry.get("confirmed_at"),
             )
         )
     return clips
 
 
 @dataclass(frozen=True)
+class ClipTagResult:
+    """One manifest clip scored against one prediction tag, read straight
+    out of `reports/<tag>.json` (see `video_eval.score.score_clip`)."""
+
+    clip_id: str
+    tag: str
+    frame_count: int
+    overall_accuracy: float | None
+    standing_recall: float | None
+    on_floor_recall: float | None
+    on_floor_latency_s: float | None
+    """Max on_floor detection delay in seconds (`gates.on_floor_delay.value_s`
+    in the report), `None` when no on_floor event was in the reference."""
+    gates: dict[str, Any]
+    """Exactly `report["gates"]` as `score.py` wrote it."""
+    confusion: dict[str, dict[str, int]] = field(repr=False)
+    """`report["frames"]["all"]["exact"]["confusion"]` -- the same frame view
+    `score.py` uses for its gates. Kept for tag-family pooling; not itself
+    part of the per-clip report table."""
+
+
+@dataclass(frozen=True)
+class PooledResult:
+    """One tag family's confusion counts summed across every clip scored
+    under it, and the recall/latency gates recomputed from that pooled
+    confusion (using `perception_bench.scoring`'s target constants)."""
+
+    tag_family: str
+    clip_ids: list[str]
+    frame_count: int
+    overall_accuracy: float | None
+    standing_recall: float | None
+    on_floor_recall: float | None
+    on_floor_latency_s: float | None
+    """Max on_floor latency across the pooled clips' own max latencies."""
+    gates: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class Tier3Result:
-    """What `run_tier3` produces. `accuracy`/`latency` are both `None` when
-    the manifest is absent or lists clips whose video files are not
-    present on disk -- this bench never fabricates a number for either."""
+    """What `run_tier3` produces. `missing_reason` is set (and everything
+    else empty) whenever there is nothing to score -- an absent manifest, no
+    `video_eval` installed, or every listed clip skipped -- so this bench
+    never fabricates a number for either."""
 
     clip_count: int
     missing_reason: str | None
+    clip_results: list[ClipTagResult] = field(default_factory=list)
+    pooled_results: list[PooledResult] = field(default_factory=list)
+    skipped: list[tuple[str, str]] = field(default_factory=list)
+    """`(clip_id, reason)` for every manifest clip that was not scored."""
 
 
-def run_tier3(manifest_path: Path = DEFAULT_MANIFEST_PATH) -> Tier3Result:
-    """Report tier 3's status. Returns `clip_count=0` and a `missing_reason`
-    when there is nothing to score -- currently always, since no infrared
-    recordings exist yet. Scoring real clips (decoding video at
-    `frame_interval_s`, running a `PoseBackend`, comparing against the
-    timeline the same way `synthetic.run_clip` compares against scripted
-    ground truth) is intentionally not implemented until there is a real
-    manifest and real footage to verify that code against; see the module
-    docstring.
+def _recall_from_confusion(confusion: dict[str, dict[str, int]], state: str) -> float | None:
+    row = confusion.get(state)
+    if not row:
+        return None
+    support = sum(row.values())
+    if support == 0:
+        return None
+    return row.get(state, 0) / support
+
+
+def _recall_gate(recall: float | None) -> dict[str, Any]:
+    return {
+        "measured": recall is not None,
+        "met": None if recall is None else recall >= ACCURACY_TARGET,
+        "value": recall,
+        "target": ACCURACY_TARGET,
+    }
+
+
+def _latency_gate(latency: float | None, *, measured: bool) -> dict[str, Any]:
+    return {
+        "measured": measured,
+        "met": None if not measured else (latency is not None and latency <= LATENCY_TARGET_S),
+        "value_s": latency,
+        "target_s": LATENCY_TARGET_S,
+    }
+
+
+def _clip_result_from_report(clip_id: str, tag: str, report: dict[str, Any]) -> ClipTagResult:
+    exact = report["frames"]["all"]["exact"]
+    per_state = exact["per_state"]
+    gates = report["gates"]
+    return ClipTagResult(
+        clip_id=clip_id,
+        tag=tag,
+        frame_count=exact["frame_count"],
+        overall_accuracy=exact["overall_accuracy"],
+        standing_recall=per_state.get("standing", {}).get("recall"),
+        on_floor_recall=per_state.get("on_floor", {}).get("recall"),
+        on_floor_latency_s=gates["on_floor_delay"]["value_s"],
+        gates=gates,
+        confusion=exact["confusion"],
+    )
+
+
+def _pool_by_tag_family(clip_results: list[ClipTagResult]) -> list[PooledResult]:
+    from perception_bench.scoring import STATE_NAMES
+
+    groups: dict[str, list[ClipTagResult]] = {}
+    for result in clip_results:
+        groups.setdefault(tag_family(result.tag), []).append(result)
+
+    pooled: list[PooledResult] = []
+    for family in sorted(groups):
+        rows = groups[family]
+        confusion: dict[str, dict[str, int]] = {}
+        for row in rows:
+            for actual, predicted_counts in row.confusion.items():
+                bucket = confusion.setdefault(actual, {})
+                for predicted, count in predicted_counts.items():
+                    bucket[predicted] = bucket.get(predicted, 0) + count
+
+        frame_count = sum(row.frame_count for row in rows)
+        overall_accuracy = None
+        if frame_count:
+            correct = sum(confusion.get(state, {}).get(state, 0) for state in STATE_NAMES)
+            overall_accuracy = correct / frame_count
+
+        standing_recall = _recall_from_confusion(confusion, "standing")
+        on_floor_recall = _recall_from_confusion(confusion, "on_floor")
+
+        latencies = [row.on_floor_latency_s for row in rows if row.on_floor_latency_s is not None]
+        on_floor_latency = max(latencies) if latencies else None
+        latency_measured = any(row.gates["on_floor_delay"]["measured"] for row in rows)
+
+        pooled.append(
+            PooledResult(
+                tag_family=family,
+                clip_ids=[row.clip_id for row in rows],
+                frame_count=frame_count,
+                overall_accuracy=overall_accuracy,
+                standing_recall=standing_recall,
+                on_floor_recall=on_floor_recall,
+                on_floor_latency_s=on_floor_latency,
+                gates={
+                    "standing_recall": _recall_gate(standing_recall),
+                    "on_floor_recall": _recall_gate(on_floor_recall),
+                    "on_floor_delay": _latency_gate(on_floor_latency, measured=latency_measured),
+                },
+            )
+        )
+    return pooled
+
+
+def run_tier3(
+    manifest_path: Path = DEFAULT_MANIFEST_PATH,
+    *,
+    tag_glob: str | None = None,
+    backend: str | None = None,
+    variant: str = "squash",
+    rescore: bool = False,
+) -> Tier3Result:
+    """Score every confirmed clip in `manifest_path` with `video_eval`.
+
+    - No manifest, or an empty `clips` list: clean skip (see module
+      docstring).
+    - `video_eval` not installed: clean skip naming the install command --
+      `perception_bench` must keep working without it (see module
+      docstring).
+    - Per clip: skipped with a reason if `labels/reference.yaml` is missing
+      or not confirmed (no `confirmed_by`), or if it has no prediction files
+      after `tag_glob` filtering. Otherwise scored per matching tag with
+      `video_eval.score.score_clip` (optionally preceded by
+      `video_eval.predict.predict_clip` when `backend` is given), then
+      pooled per tag family (see `tag_family`).
     """
     clips = load_manifest(manifest_path)
     if not clips:
@@ -191,21 +298,69 @@ def run_tier3(manifest_path: Path = DEFAULT_MANIFEST_PATH) -> Tier3Result:
             ),
         )
 
-    missing_files = [str(clip.path) for clip in clips if not clip.path.exists()]
-    if missing_files:
+    try:
+        from video_eval.paths import EvalPaths
+        from video_eval.score import score_clip
+    except ImportError:
         return Tier3Result(
             clip_count=len(clips),
             missing_reason=(
-                f"{manifest_path} lists {len(clips)} clip(s) but the video file(s) "
-                f"are not present on disk: {', '.join(missing_files)}"
+                f"{manifest_path} lists {len(clips)} clip(s) but tools/video_eval is "
+                "not installed in this environment -- install it (e.g. `pip install "
+                "-e tools/video_eval`) to score tier 3's confirmed clips"
             ),
         )
 
+    data_root = manifest_path.parent
+    clip_results: list[ClipTagResult] = []
+    skipped: list[tuple[str, str]] = []
+
+    for clip in clips:
+        paths = EvalPaths.for_clip(clip.clip_id, data_root)
+        reference_path = paths.labels / "reference.yaml"
+        if not reference_path.exists():
+            skipped.append((clip.clip_id, "labels/reference.yaml is missing"))
+            continue
+        reference_raw = yaml.safe_load(reference_path.read_text(encoding="utf-8")) or {}
+        if not reference_raw.get("confirmed_by"):
+            skipped.append(
+                (clip.clip_id, "labels/reference.yaml is not confirmed (no confirmed_by)")
+            )
+            continue
+
+        if backend is not None:
+            from video_eval.predict import predict_clip
+
+            predicted = predict_clip(
+                clip.clip_id,
+                root=data_root,
+                backend_name=backend,
+                variant=variant,
+                force=rescore,
+            )
+            tags = [predicted["tag"]]
+        else:
+            tags = [path.stem for path in sorted(paths.predictions.glob("*.jsonl"))]
+
+        if tag_glob:
+            tags = [tag for tag in tags if fnmatch.fnmatch(tag, tag_glob)]
+
+        if not tags:
+            skipped.append(
+                (clip.clip_id, "no prediction files found under predictions/ (after filtering)")
+            )
+            continue
+
+        for tag in tags:
+            score_clip(clip.clip_id, root=data_root, tag=tag, force=rescore)
+            report_path = paths.reports / f"{tag}.json"
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            clip_results.append(_clip_result_from_report(clip.clip_id, tag, report))
+
     return Tier3Result(
         clip_count=len(clips),
-        missing_reason=(
-            "clip files are present, but this bench does not yet decode video and "
-            "score tier 3 (see infrared.py's module docstring) -- report this as a "
-            "follow-up once real clips exist, rather than fabricating a result"
-        ),
+        missing_reason=None,
+        clip_results=clip_results,
+        pooled_results=_pool_by_tag_family(clip_results),
+        skipped=skipped,
     )

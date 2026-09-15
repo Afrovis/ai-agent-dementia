@@ -115,3 +115,19 @@ def test_reconcile_writes_draft_disagreements_and_confirmation(tmp_path):
     assert reference["confirmed_by"] == "Recorder"
     assert reference["confirmed_at"]
     assert read_jsonl(tmp_path / "clips" / "clip" / "labels" / "local.jsonl")
+
+    manifest = yaml.safe_load((tmp_path / "manifest.yaml").read_text())
+    assert manifest["clips"] == [
+        {
+            "clip_id": "clip",
+            "confirmed_by": reference["confirmed_by"],
+            "confirmed_at": reference["confirmed_at"],
+        }
+    ]
+
+    # Re-confirming is idempotent: it updates the manifest entry, never
+    # duplicates it.
+    reconcile_clip("clip", root=tmp_path, confirm=True, confirmer="Second Reviewer")
+    manifest_again = yaml.safe_load((tmp_path / "manifest.yaml").read_text())
+    assert len(manifest_again["clips"]) == 1
+    assert manifest_again["clips"][0]["confirmed_by"] == "Second Reviewer"

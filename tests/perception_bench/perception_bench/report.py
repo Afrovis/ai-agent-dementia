@@ -119,14 +119,62 @@ def _tier2_verdicts(tier2: Tier2Result) -> list[Verdict]:
     return verdicts
 
 
-def _tier3_verdicts(tier3: Tier3Result) -> list[Verdict]:
-    return [
-        Verdict(
-            label="tier3 infrared bench",
-            passed=None,
-            detail=tier3.missing_reason or f"{tier3.clip_count} clip(s) scored",
+_TIER3_GATE_LABELS = (
+    ("standing_recall", f"standing recall >= {ACCURACY_TARGET:.0%}"),
+    ("on_floor_recall", f"on_floor recall >= {ACCURACY_TARGET:.0%}"),
+    ("on_floor_delay", f"on_floor latency <= {LATENCY_TARGET_S:.0f}s"),
+)
+
+
+def _tier3_gate_detail(gate_name: str, gate: dict) -> str:
+    if not gate["measured"]:
+        return (
+            "not measured (no on_floor event)"
+            if gate_name == "on_floor_delay"
+            else ("not measured (no frames)")
         )
-    ]
+    if gate_name == "on_floor_delay":
+        return f"max {gate['value_s']:.2f}s"
+    return f"{gate['value']:.1%}"
+
+
+def _tier3_verdicts(tier3: Tier3Result) -> list[Verdict]:
+    """Tier 3's verdicts are advisory, like tier 1's -- see this issue's
+    "missing data is not a failing test" and the design decision to keep
+    tier 3's exit-code behaviour unchanged even now that it can measure
+    real numbers: only tier 2 gates the exit code today."""
+    if tier3.missing_reason is not None:
+        return [
+            Verdict(
+                label="tier3 infrared bench",
+                passed=None,
+                detail=tier3.missing_reason,
+                advisory=True,
+            )
+        ]
+
+    verdicts: list[Verdict] = []
+    for pooled in tier3.pooled_results:
+        for gate_name, label_suffix in _TIER3_GATE_LABELS:
+            gate = pooled.gates[gate_name]
+            verdicts.append(
+                Verdict(
+                    label=f"tier3 [{pooled.tag_family}] {label_suffix}",
+                    passed=gate["met"],
+                    detail=_tier3_gate_detail(gate_name, gate),
+                    advisory=True,
+                )
+            )
+    if not verdicts:
+        detail = (
+            f"{len(tier3.clip_results)} clip/tag row(s) scored, 0 pooled tag families"
+            if tier3.clip_results
+            else f"{tier3.clip_count} clip(s) in manifest, none scored (see skipped list)"
+        )
+        verdicts.append(
+            Verdict(label="tier3 infrared bench", passed=None, detail=detail, advisory=True)
+        )
+    return verdicts
 
 
 def build_report(
@@ -205,7 +253,43 @@ def print_report(report: BenchReport) -> None:
     if report.tier3.missing_reason:
         print(f"NOT MEASURED: {report.tier3.missing_reason}")
     else:
-        print(f"clips scored: {report.tier3.clip_count}")
+        print(f"clips in manifest: {report.tier3.clip_count}")
+        if report.tier3.clip_results:
+            print("per clip/tag:")
+            for row in report.tier3.clip_results:
+                acc = "n/a" if row.overall_accuracy is None else f"{row.overall_accuracy:.1%}"
+                standing = "n/a" if row.standing_recall is None else f"{row.standing_recall:.1%}"
+                floor = "n/a" if row.on_floor_recall is None else f"{row.on_floor_recall:.1%}"
+                latency = (
+                    "n/a" if row.on_floor_latency_s is None else f"{row.on_floor_latency_s:.2f}s"
+                )
+                print(
+                    f"  {row.clip_id} [{row.tag}] frames={row.frame_count} acc={acc} "
+                    f"standing_recall={standing} on_floor_recall={floor} "
+                    f"on_floor_latency={latency}"
+                )
+        if report.tier3.pooled_results:
+            print("pooled by tag family:")
+            for pooled in report.tier3.pooled_results:
+                acc = "n/a" if pooled.overall_accuracy is None else f"{pooled.overall_accuracy:.1%}"
+                standing = (
+                    "n/a" if pooled.standing_recall is None else f"{pooled.standing_recall:.1%}"
+                )
+                floor = "n/a" if pooled.on_floor_recall is None else f"{pooled.on_floor_recall:.1%}"
+                latency = (
+                    "n/a"
+                    if pooled.on_floor_latency_s is None
+                    else f"{pooled.on_floor_latency_s:.2f}s"
+                )
+                print(
+                    f"  {pooled.tag_family}: clips={len(pooled.clip_ids)} "
+                    f"frames={pooled.frame_count} acc={acc} standing_recall={standing} "
+                    f"on_floor_recall={floor} on_floor_latency={latency}"
+                )
+        if report.tier3.skipped:
+            print("skipped clips:")
+            for clip_id, reason in report.tier3.skipped:
+                print(f"  {clip_id}: {reason}")
 
     print("\nVerdicts")
     print("-" * 60)
@@ -274,6 +358,11 @@ def report_to_dict(report: BenchReport) -> dict:
             "measured": report.tier3.missing_reason is None,
             "missing_reason": report.tier3.missing_reason,
             "clip_count": report.tier3.clip_count,
+            "clip_results": [asdict(row) for row in report.tier3.clip_results],
+            "pooled_results": [asdict(pooled) for pooled in report.tier3.pooled_results],
+            "skipped": [
+                {"clip_id": clip_id, "reason": reason} for clip_id, reason in report.tier3.skipped
+            ],
         },
         "verdicts": [asdict(v) for v in report.verdicts],
         "exit_code": report.exit_code,
