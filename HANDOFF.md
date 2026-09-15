@@ -302,8 +302,8 @@ Run tests for one service: `cd services/agent && pytest`.
 
 | Question | Default until decided | Decider |
 |---|---|---|
-| Pose model: MediaPipe Pose vs YOLOv8-pose | MediaPipe, both backends built behind `PERCEIVE_POSE_BACKEND` in issue 8; the comparison now runs on the owner's RGB bedroom recordings through `tools/video_eval` (M5). A five-frame smoke test on 2026-09-13 had YOLO finding people in bed that MediaPipe missed at bridge resolution, so expect the default to be revisited | whoever does issue 51, with bench numbers |
-| Bridge frame format: 320 by 240 squashed vs letterboxed, and resolution | keep the current squash until issue 51 measures it; do not change `script.js` constants without numbers | issue 52 |
+| Pose model: MediaPipe Pose vs YOLOv8-pose | Decided with numbers: `PERCEIVE_POSE_BACKEND=yolo` with YOLO11s-pose at 640 input (PR #55, `docs/FLOOR_DETECTION_HANDOFF.md`). MediaPipe stays available behind the flag. Revisit on infrared clips (#11) | decided (#55); revisit with #11 |
+| Bridge frame format: 320 by 240 squashed vs letterboxed, and resolution | Decided with numbers: letterbox with source dimensions sent alongside (`docs/VIDEO_EVAL.md` section 7, #52), at 640x480 (#55) | decided (#52, #55) |
 | Local text model | `llama3.1:8b`, compare 3 on the dialogue bench in issue 17 | issue 17 |
 | Smart plug for path light in v1 | manual night light, plug behind a feature flag | project owner |
 | Morning summary contents | count, durations, what helped, faults | project owner after a caregiver interview |
@@ -317,4 +317,4 @@ Run tests for one service: `cd services/agent && pytest`.
     1. In `labels.py`, coerce common unambiguous non-bool representations (`"true"`/`"false"` strings, `1`/`0`) to bool before rejecting, instead of hard-failing on anything that is not already a Python `bool`.
     2. In `label_local.py`, constrain the Ollama call with a real JSON-schema `format` (Ollama supports structured outputs) instead of the bare `"format": "json"` string, so `person_visible` is constrained to boolean at generation time rather than policed after the fact.
   - Add a test to `tests/test_labellers.py` covering a non-bool `person_visible` (e.g. the string `"true"`) to confirm it either coerces cleanly or is retried and falls back to a `failed_label_record`, since no existing test exercises this path.
-  - Not yet implemented — flagged for whoever picks up label-local reliability work.
+  - Status: fixed. `labels.py` coerces only unambiguous spellings (`true`/`false` in any case, `1`/`0`) and rejects the rest; `label_local.py` sends `LABEL_SCHEMA` as the Ollama `format`. `tests/test_labellers.py` covers accepted and rejected `person_visible` values and the structured `format` in the request.

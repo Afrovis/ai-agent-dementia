@@ -6,8 +6,8 @@ from PIL import Image
 
 from video_eval.common import read_jsonl, write_jsonl
 from video_eval.label_codex import label_codex
-from video_eval.label_local import label_local
-from video_eval.labels import validate_label
+from video_eval.label_local import OllamaLabeller, label_local
+from video_eval.labels import LABEL_SCHEMA, validate_label
 
 VALID = {
     "person_visible": True,
@@ -16,6 +16,8 @@ VALID = {
     "confidence": 0.9,
     "note": "person is upright",
 }
+
+_MISSING = object()
 
 
 def _prepared_frames(root, count=1):
@@ -41,6 +43,62 @@ def test_label_validation_rejects_enum_and_long_note():
         validate_label({**VALID, "posture": "walking"})
     with pytest.raises(ValueError, match="15 words"):
         validate_label({**VALID, "note": " ".join(["word"] * 16)})
+
+
+@pytest.mark.parametrize(
+    ("person_visible", "expected"),
+    [
+        ("true", True),
+        ("FALSE", False),
+        (" True ", True),
+        (1, True),
+        (0, False),
+        (True, True),
+        (False, False),
+    ],
+)
+def test_label_validation_coerces_unambiguous_person_visible(person_visible, expected):
+    label = validate_label({**VALID, "person_visible": person_visible})
+
+    assert label.person_visible is expected
+
+
+@pytest.mark.parametrize(
+    "person_visible",
+    [
+        "yes",
+        "1",
+        2,
+        -1,
+        None,
+        1.0,
+        pytest.param(_MISSING, id="missing"),
+    ],
+)
+def test_label_validation_rejects_ambiguous_person_visible(person_visible):
+    raw = {key: value for key, value in VALID.items() if key != "person_visible"}
+    if person_visible is not _MISSING:
+        raw["person_visible"] = person_visible
+
+    with pytest.raises(ValueError, match="person_visible must be a boolean"):
+        validate_label(raw)
+
+
+def test_ollama_labeller_requests_structured_label_schema(monkeypatch):
+    labeller = OllamaLabeller(base_url="http://ollama.test", model="test-model")
+    seen = {}
+
+    def fake_post(path, payload):
+        seen.update(path=path, payload=payload)
+        return {"message": {"content": json.dumps(VALID)}}
+
+    monkeypatch.setattr(labeller, "_post", fake_post)
+
+    assert labeller.label(b"jpeg") == VALID
+    assert seen["path"] == "/api/chat"
+    assert isinstance(seen["payload"]["format"], dict)
+    assert seen["payload"]["format"] == LABEL_SCHEMA
+    assert seen["payload"]["format"] != "json"
 
 
 def test_local_retries_invalid_and_propagates_static_frames(tmp_path):

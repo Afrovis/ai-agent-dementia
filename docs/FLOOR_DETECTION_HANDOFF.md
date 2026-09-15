@@ -1,9 +1,10 @@
 # Floor detection: findings and handoff (2026-09-14)
 
-Status: investigation only. No code under `services/` has changed. This
-document records what was measured on the two bedroom recordings, what
-it means for `on_floor` detection, and what to build next. Read it
-together with [VIDEO_EVAL.md](VIDEO_EVAL.md).
+Status: written as an investigation handoff; its main recommendations
+have since shipped in PR #55 (see the status note at the top of
+section 9). This document records what was measured on the two bedroom
+recordings and what it means for `on_floor` detection. Read it together
+with [VIDEO_EVAL.md](VIDEO_EVAL.md).
 
 Privacy: every number here comes from local processing on the Mac mini.
 No frame was viewed outside the machine or sent to a hosted model; the
@@ -313,7 +314,25 @@ Not tested in this session. `transformers` is not installed in
 
 ## 9. Recommended next steps
 
-In order. Items 1-2 are well specified and suitable for the coder agent.
+Status after PR #55 (merged 2026-09-15):
+
+- Item 1: done. Online Theil-Sen ground line in `perceive`, height-ratio
+  rule confirmed over two detections, plus a fall-drop cue and a short
+  `floor_suspect` hold that suppresses a false `absent` after a fall.
+- Item 2: done, with a different model. Bridge frames are 640x480 and the
+  default backend is YOLO11s-pose at 640 input, not YOLOv8s, which locked
+  onto a static object on the bed in video 3.
+- Item 3: partly. A pose now counts as in the bed zone only when both the
+  landmark centroid and the box centre are inside it; the mattress-outline
+  drawing guidance still applies.
+- Item 4: done as an optional Ollama floor check outside the bed and door
+  zones, requiring two consecutive positives (settings in `.env.example`).
+- Item 5: open.
+- Item 6: done for the live detector as the calibrated phantom-box filter
+  (`perceive.calibrate_phantoms`, `PERCEIVE_PHANTOMS_FILE`); rotation TTA
+  was not pursued.
+
+The original recommendations follow, in order.
 
 1. **Implement fix 1 in `perceive`.**
    - Online ground-line calibration inside `StateTracker` from frames
