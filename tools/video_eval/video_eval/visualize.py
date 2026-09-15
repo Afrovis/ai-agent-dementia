@@ -163,13 +163,19 @@ def _current_manual(events: list[dict[str, Any]], t_s: float) -> dict[str, Any] 
 def _manual_state(action: str | None) -> str | None:
     if action is None:
         return None
-    if action in {"in_bed", "in_bed_above_blanket"}:
+    if action in {"in_bed", "in_bed_above_blanket", "under_blanket_in_bed", "lay_down_on_bed"}:
         return "in_bed"
-    if action in {"sitting_up", "sitting", "sitting_on_chair"}:
+    if action in {"sitting_up", "sitting", "sitting_on_chair", "sit_on_bed"}:
         return "sitting_up"
-    if action in {"floor", "sitting_on_floor"}:
+    if action in {
+        "floor",
+        "sitting_on_floor",
+        "sit_on_floor",
+        "lay_down_on_floor",
+        "lay_down_on_ground",
+    }:
         return "on_floor"
-    if action == "out_of_frame":
+    if action in {"out_of_frame", "leave_room", "leave_frame"}:
         return "absent"
     return "upright"
 
