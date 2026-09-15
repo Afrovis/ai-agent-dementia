@@ -242,16 +242,14 @@ async def broadcast_loop(
                             json.dumps(
                                 {
                                     "service": SERVICE_NAME,
-                                    "message": "caregiver voice clip unavailable; sending text only",
+                                    "message": "caregiver voice clip unavailable; text only",
                                     "clip_id": event.clip_id,
                                 }
                             )
                         )
                         message = _say_to_message(event)
                     else:
-                        message = _say_to_message(
-                            event, audio_url=f"/voice/{event.clip_id}.wav"
-                        )
+                        message = _say_to_message(event, audio_url=f"/voice/{event.clip_id}.wav")
                 elif isinstance(event, Say) and speech is not None:
                     try:
                         audio_id = await asyncio.to_thread(speech.synthesize, event.text)

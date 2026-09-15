@@ -657,9 +657,7 @@ class StrategyEngine:
             return None
         return duration + 15.0
 
-    def _log_clip_unavailable(
-        self, reason: str, clip_id: str | None, **fields: object
-    ) -> None:
+    def _log_clip_unavailable(self, reason: str, clip_id: str | None, **fields: object) -> None:
         """Log each familiar-voice rejection reason once per engine."""
         if reason in self._clip_unavailable_logged:
             return
