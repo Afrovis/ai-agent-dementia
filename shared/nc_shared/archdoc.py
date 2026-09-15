@@ -64,6 +64,12 @@ EXTERNAL_CONNECTIONS = (
     ),
     ExternalConnection(
         "embodiment",
+        "Consented family WAV clips under `data/voice-clips`",
+        "reads",
+        "services/embodiment/embodiment/app.py",
+    ),
+    ExternalConnection(
+        "embodiment",
         "Piper voice model and ephemeral generated WAV cache",
         "reads/writes",
         "services/embodiment/embodiment/tts.py",
@@ -101,6 +107,12 @@ EXTERNAL_CONNECTIONS = (
     ExternalConnection(
         "agent",
         "`config/strategies.yaml` at startup",
+        "reads",
+        "services/agent/agent/strategies.py",
+    ),
+    ExternalConnection(
+        "agent",
+        "Consented family WAV headers under `data/voice-clips`",
         "reads",
         "services/agent/agent/strategies.py",
     ),

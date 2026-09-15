@@ -1,12 +1,12 @@
 """The strategy catalogue and selection engine for `agent` (issue #14).
 
 HANDOFF.md section 7 and PLAN.md section 5.3 list ten strategies. This
-module implements strategies 1 to 5, 8, and 10:
+module implements strategies 1 to 6, 8, and 10:
 
 - `ambient_orient` (1), `soft_greeting` (2), `orient_time_place` (3),
-  `validate_and_redirect` (4), `guided_return` (5): the ordinary,
-  escalating-intrusiveness ladder HANDOFF.md's phase summary means by
-  "run strategies in configured order" while `ENGAGED`.
+  `validate_and_redirect` (4), `guided_return` (5), `familiar_voice` (6):
+  the ordinary, escalating-intrusiveness ladder HANDOFF.md's phase summary
+  means by "run strategies in configured order" while `ENGAGED`.
 - `path_light` (8): selected specifically when the `restroom` goal starts,
   and excluded from the ordinary return-to-bed ladder.
 - `escalate_phone` (10): the terminal strategy selected on `ESCALATED`,
@@ -15,9 +15,8 @@ module implements strategies 1 to 5, 8, and 10:
 
 Deliberately absent, and not faked:
 
-- `familiar_voice` (6) and `music_or_story` (7) need a caregiver-uploaded
-  voice clip or music track this system has no ingestion path for yet.
-  Out of scope for every current issue, not just this one.
+- `music_or_story` (7) needs a caregiver track-upload path that does not
+  exist yet. Out of scope for every current issue, not just this one.
 - `escalate_gentle` (9) needs in-home chime hardware PLAN.md marks v2.
   Out of scope for every current issue.
 
@@ -64,6 +63,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+import wave
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
@@ -83,6 +84,10 @@ logger = logging.getLogger(SERVICE_NAME)
 ESCALATE_PHONE_ID = "escalate_phone"
 PATH_LIGHT_ID = "path_light"
 GUIDED_RETURN_ID = "guided_return"
+FAMILIAR_VOICE_ID = "familiar_voice"
+
+DEFAULT_VOICE_CLIP_DIR = Path("/app/data/voice-clips")
+VOICE_CLIP_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 MAX_PROGRESS_DWELL_MULTIPLIER = 3.0
 """How far "progress" may stretch one strategy's dwell before the ladder
@@ -130,6 +135,7 @@ class StrategyDef:
     body_template: str
     say_template: str | None = None
     photo_id: str | None = None
+    clip_id: str | None = None
     goal_only: bool = False
     """Exclude this strategy from the ordinary ladder.
 
@@ -253,6 +259,21 @@ DEFAULT_STRATEGIES: tuple[StrategyDef, ...] = (
         headline_template="Let's head back to bed",
         body_template="Your bed is behind you.",
         say_template="Let's go back to bed now{name_vocative}.",
+    ),
+    StrategyDef(
+        id=FAMILIAR_VOICE_ID,
+        order=6,
+        enabled=False,
+        intrusiveness=3,
+        # Replaced with the WAV duration plus 15 seconds when selected.
+        dwell_seconds=15.0,
+        cooldown_seconds=300.0,
+        face="speaking",
+        brightness=0.6,
+        headline_template="A message from your family",
+        body_template="Here is a familiar voice for you.",
+        say_template="Here is a familiar voice for you.",
+        photo_id="demo_family",
     ),
     StrategyDef(
         id=PATH_LIGHT_ID,
@@ -432,9 +453,9 @@ def load_strategies(
     The yaml only ever *overrides* fields on a known strategy id
     (`order`, `enabled`, `cooldown_seconds`, `dwell_seconds`,
     `intrusiveness`, `headline`, `body`, `say`, `photo_id`, `brightness`,
-    `face`); an unknown id is logged and ignored rather than accepted as a
-    new, code-unaware strategy, and a strategy the yaml does not mention
-    at all keeps its code default untouched.
+    `face`, `clip_id`); an unknown id is logged and ignored rather than
+    accepted as a new, code-unaware strategy, and a strategy the yaml does
+    not mention at all keeps its code default untouched.
     """
     env = os.environ if env is None else env
     primary = (
@@ -511,6 +532,9 @@ def _apply_override(by_id: Mapping[str, StrategyDef], entry: object) -> Strategy
         overrides["say_template"] = None if entry["say"] is None else str(entry["say"])
     if "photo_id" in entry:
         overrides["photo_id"] = None if entry["photo_id"] is None else str(entry["photo_id"])
+    if "clip_id" in entry:
+        clip_id = "" if entry["clip_id"] is None else str(entry["clip_id"]).strip()
+        overrides["clip_id"] = clip_id or None
     if "brightness" in entry:
         overrides["brightness"] = float(entry["brightness"])
     if "face" in entry:
@@ -557,6 +581,9 @@ class StrategyEngine:
     """
 
     strategies: list[StrategyDef]
+    voice_clip_dir: Path = field(
+        default_factory=lambda: Path(os.environ.get("VOICE_CLIP_DIR") or DEFAULT_VOICE_CLIP_DIR)
+    )
 
     _by_id: dict[str, StrategyDef] = field(init=False, repr=False)
     _cooldown_until: dict[str, datetime] = field(default_factory=dict, init=False, repr=False)
@@ -566,6 +593,7 @@ class StrategyEngine:
     # `note_progress` never moves this, so it is the fixed reference the
     # `MAX_PROGRESS_DWELL_MULTIPLIER` cap is measured against.
     _selected_at: datetime | None = field(default=None, init=False, repr=False)
+    _clip_unavailable_logged: set[str] = field(default_factory=set, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._by_id = {s.id: s for s in self.strategies}
@@ -594,7 +622,57 @@ class StrategyEngine:
         strategy = self._by_id[strategy_id]
         on_cooldown = now < self._cooldown_until.get(strategy_id, now)
         disabled = (not strategy.enabled) or on_cooldown
-        return validate_strategy(strategy_id, disabled=disabled).accepted
+        if not validate_strategy(strategy_id, disabled=disabled).accepted:
+            return False
+        if strategy.id == FAMILIAR_VOICE_ID:
+            dwell_seconds = self._familiar_voice_dwell(strategy)
+            if dwell_seconds is None:
+                return False
+            self._by_id[strategy_id] = replace(strategy, dwell_seconds=dwell_seconds)
+        return True
+
+    def _familiar_voice_dwell(self, strategy: StrategyDef) -> float | None:
+        """Return clip duration plus its 15-second visual dwell, if usable."""
+        clip_id = strategy.clip_id
+        if not clip_id:
+            self._log_clip_unavailable("no clip configured", clip_id)
+            return None
+        if (
+            "/" in clip_id
+            or "\\" in clip_id
+            or ".." in clip_id
+            or VOICE_CLIP_ID_RE.fullmatch(clip_id) is None
+        ):
+            self._log_clip_unavailable("unsafe clip id", clip_id)
+            return None
+        path = self.voice_clip_dir / f"{clip_id}.wav"
+        if not path.is_file():
+            self._log_clip_unavailable("clip missing", clip_id)
+            return None
+        try:
+            with wave.open(str(path), "rb") as clip:
+                duration = clip.getnframes() / clip.getframerate()
+        except (EOFError, OSError, wave.Error, ZeroDivisionError) as exc:
+            self._log_clip_unavailable("clip WAV header unreadable", clip_id, error=str(exc))
+            return None
+        return duration + 15.0
+
+    def _log_clip_unavailable(self, reason: str, clip_id: str | None, **fields: object) -> None:
+        """Log each familiar-voice rejection reason once per engine."""
+        if reason in self._clip_unavailable_logged:
+            return
+        self._clip_unavailable_logged.add(reason)
+        logger.warning(
+            json.dumps(
+                {
+                    "service": SERVICE_NAME,
+                    "message": "familiar_voice unavailable; skipping strategy",
+                    "reason": reason,
+                    "clip_id": clip_id,
+                    **fields,
+                }
+            )
+        )
 
     def _first_available_id(self, now: datetime, *, after_id: str | None = None) -> str | None:
         ids = self._ordered_ids()
@@ -758,3 +836,4 @@ class StrategyEngine:
         self._started_at = None
         self._selected_at = None
         self._cooldown_until.clear()
+        self._clip_unavailable_logged.clear()

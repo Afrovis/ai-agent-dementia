@@ -227,6 +227,12 @@ Demo photos ship in `services/embodiment/embodiment/demo_photos` and resolve
 at `/photos/demo_family` and `/photos/demo_room`. Caregiver uploads under
 `PHOTO_DIR` shadow a demo photo of the same id.
 
+`familiar_voice` is disabled by default. Upload a consented PCM WAV on the
+dashboard Media page, copy its displayed id into that strategy's `clip_id`,
+enable it, and restart `agent`; both `agent` and `embodiment` must use the same
+`VOICE_CLIP_DIR` (the compose default is `/app/data/voice-clips`). It never
+falls back to Piper or cloned speech when the configured clip is unavailable.
+
 `data/` is gitignored. Certificates, the SQLite database and recordings all
 live there and none of them belong in a commit.
 

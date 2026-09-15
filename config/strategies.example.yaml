@@ -8,17 +8,16 @@
 # crashing `agent` -- logged as a warning, never fatal, exactly like
 # `perceive`'s `zones.yaml`.
 #
-# HANDOFF.md section 7 / PLAN.md section 5.3 list ten strategies. Seven are
-# implemented, and only those seven may appear below:
+# HANDOFF.md section 7 / PLAN.md section 5.3 list ten strategies. Eight are
+# implemented, and only those eight may appear below:
 #
 #   1  ambient_orient          2  soft_greeting        3  orient_time_place
-#   4  validate_and_redirect   5  guided_return        8  path_light
+#   4  validate_and_redirect   5  guided_return        6  familiar_voice
+#   8  path_light
 #   10 escalate_phone
 #
 # Deliberately absent, and not a bug:
 #
-#   6  familiar_voice   caregiver voice-clip upload exists in the dashboard,
-#                        but playback/strategy selection is not implemented.
 #   7  music_or_story   track ingestion and playback are not implemented.
 #   9  escalate_gentle  needs in-home chime hardware PLAN.md marks v2.
 #
@@ -62,6 +61,8 @@
 #                     Looked up the same way `Show.photo_id` always is
 #                     (caregiver uploads under PHOTO_DIR, falling back to
 #                     the `demo_room`/`demo_family` bundled examples).
+#   clip_id           for `familiar_voice` only: the exact id of a consented
+#                     WAV uploaded on the dashboard Media page.
 #
 # `{name}` and `{caregiver_name}` in any headline/body/say interpolate the
 # person profile (issue #16); when unavailable both fall back to
@@ -155,6 +156,24 @@ strategies:
     headline: "Let's head back to bed"
     body: "Your bed is behind you."
     say: "Let's go back to bed now{name_vocative}."
+
+  # Upload a consented family WAV on the dashboard Media page, copy the clip
+  # id shown there into `clip_id`, set `enabled: true`, then restart `agent`.
+  # The dwell below is ignored: selection reads the WAV header and uses the
+  # clip's duration plus 15 seconds.
+  - id: familiar_voice
+    order: 6
+    enabled: false
+    clip_id: ""
+    dwell_seconds: 15
+    cooldown_seconds: 300
+    intrusiveness: 3
+    face: speaking
+    brightness: 0.6
+    headline: "A message from your family"
+    body: "Here is a familiar voice for you."
+    say: "Here is a familiar voice for you."
+    photo_id: demo_family
 
   # Goal-specific: `agent` selects this immediately for a confirmed door
   # approach or interpreted restroom need; it is never part of the ordinary

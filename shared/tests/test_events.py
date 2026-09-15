@@ -170,6 +170,19 @@ def test_say_roundtrip():
     assert copy.text == "Let's head back to bed."
     assert copy.strategy == "guided_return"
     assert copy.interruptible is True
+    assert copy.clip_id is None
+
+
+def test_say_roundtrip_with_caregiver_clip_id():
+    event = Say(
+        source="agent",
+        text="Here is a familiar voice for you.",
+        strategy="familiar_voice",
+        interruptible=True,
+        clip_id="toms-message",
+    )
+
+    assert _roundtrip(event).clip_id == "toms-message"
 
 
 def test_show_roundtrip():
