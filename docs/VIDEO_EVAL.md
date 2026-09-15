@@ -419,13 +419,54 @@ Turns per-frame labels plus the scenario card into a reference timeline.
 4. Write `e2e/<date>/report.md`. Stop the stack, and delete
    `frames_raw`, `frames` and any speech cache afterwards.
 
-### A8. Wire into `perception_bench` tier 3
+### A8. Wire into `perception_bench` tier 3 (implemented)
 
-Fill in `tests/perception_bench/perception_bench/infrared.py` so that
-`python -m perception_bench --ir-manifest ../data-ai-agent-dementia/manifest.yaml`
-scores every confirmed clip using the `predict` and `score` code above, and
-`reconcile --confirm` appends the clip to that manifest. Tier 3 still skips
-cleanly when the manifest is absent, so CI stays green.
+`tests/perception_bench/perception_bench/infrared.py` scores every
+confirmed clip in a tier-3 manifest via `video_eval.score.score_clip`
+(imported lazily, so `perception_bench` keeps working -- and its own tests
+keep passing -- without `tools/video_eval` installed at all). The manifest
+is a small YAML file at the `video_eval` data root (the directory
+containing `clips/`) that only lists which clips to score:
+
+```yaml
+clips:
+  - clip_id: 2026-09-13_bedroom-sample-01
+    confirmed_by: Name        # copied from reference.yaml at confirm time
+    confirmed_at: 2026-09-15
+```
+
+`video_eval reconcile --confirm` keeps this file in sync automatically
+(`video_eval.manifest.upsert_clip`: idempotent, preserves other entries,
+atomic write) -- nothing else needs to touch it by hand. Zones, frames,
+predictions and the confirmed reference timeline all still live under each
+clip's own directory; only the *list of clips* lives in the manifest.
+
+```sh
+.venv-video-eval/bin/python -m perception_bench \
+  --ir-manifest ../data-ai-agent-dementia/manifest.yaml --skip-daylight
+```
+
+Per clip, tier 3 re-reads that clip's own `labels/reference.yaml` (not just
+the manifest's copy) and skips with a reason if it is missing or not
+confirmed. By default it scores whichever `predictions/*.jsonl` files
+already exist; `--ir-tag PATTERN` (an `fnmatch` glob) restricts which tags
+are scored and reported, and `--ir-backend NAME` (with `--ir-variant`) runs
+`video_eval.predict.predict_clip` first and scores the resulting tag.
+`--ir-rescore` forces re-running predict/score instead of reusing existing
+reports. Per-clip/tag rows (frame count, accuracy, `standing`/`on_floor`
+recall, `on_floor` latency, gate verdicts) are pooled per **tag family** --
+the prediction tag with its trailing git-sha removed, keeping any `-g` so
+gated and ungated runs never pool -- so the same backend/variant scored
+across clips, or at different commits, still tells one story. A reference
+`on_floor` event the prediction never reaches counts as missed and fails
+the latency gate, per clip and pooled. Tier 3's verdicts stay advisory, like tier 1's: a
+missed gate is reported honestly but does not fail the process, since a
+handful of confirmed clips is not yet the statistical evidence PLAN.md
+section 12's >=95%/<=2s targets assume.
+
+Tier 3 still skips cleanly (exit 0, a plain `missing_reason`, never a
+fabricated number) when the manifest is absent or empty, so CI stays
+green.
 
 ### A9. Zones per camera placement
 

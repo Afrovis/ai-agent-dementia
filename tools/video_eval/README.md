@@ -48,13 +48,25 @@ and allow the Codex labeller to run:
 
 Reconcile both labellers with the scenario card, inspect the draft and every
 local path in the disagreement report, then explicitly confirm it. Scoring
-refuses to use an unconfirmed draft:
+refuses to use an unconfirmed draft. Confirming also adds/updates this
+clip's entry in `<data root>/manifest.yaml` (idempotent -- re-confirming
+updates the entry in place rather than duplicating it), which is the file
+`tests/perception_bench`'s tier 3 reads (`docs/VIDEO_EVAL.md` step A8):
 
 ```sh
 .venv-video-eval/bin/python -m video_eval reconcile --clip 2026-09-13_sample
 .venv-video-eval/bin/python -m video_eval reconcile \
   --clip 2026-09-13_sample --confirm --by "Recorder name"
 .venv-video-eval/bin/python -m video_eval score --clip 2026-09-13_sample
+```
+
+Run the perception bench's tier 3 against every confirmed clip the manifest
+now lists (skips cleanly, exit 0, if the manifest is absent or a clip is not
+yet confirmed):
+
+```sh
+.venv-video-eval/bin/python -m perception_bench \
+  --ir-manifest ../data-ai-agent-dementia/manifest.yaml --skip-daylight
 ```
 
 After choosing one offline prediction tag, run the same bridge frames through
