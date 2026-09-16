@@ -309,19 +309,36 @@ Both produce the same record per frame:
 upright | on_floor | absent), location (bed | door | bathroom_path | other),
 confidence, note`.
 
-`label-local` posts each review frame to Ollama `/api/chat` with
-`format: "json"`, temperature 0, model from `--model` defaulting to
-`qwen3-vl:8b` (`--fast` switches to `gemma4:e4b-mlx`), and the prompt
-below. Validate every field against its enum; retry once on invalid JSON
-or an out-of-enum value, then record `posture: null`. Budget about 20 s per
-frame with Qwen, so a 4-minute clip at 2 fps is close to three hours.
-Default to `--adaptive`: label every frame while the review frames show
-motion (reuse `capture.motion.frame_signature` and `motion_score` with the
-gate's threshold) and every tenth frame during still stretches, then
-propagate a still stretch's label across it. That brings the sample to
-roughly 40 minutes. Run it in the background. Unload the model when done
-with `curl localhost:11434/api/generate -d '{"model":"qwen3-vl:8b","keep_alive":0}'`
-so the Docker stack has its memory back.
+`label-local` posts each review frame to a local VLM with a JSON schema
+constraint, temperature 0, model from `--model`, and the prompt below.
+Validate every field against its enum; retry once on invalid JSON or an
+out-of-enum value, then record `posture: null`. Default to `--adaptive`:
+label every frame while the review frames show motion (reuse
+`capture.motion.frame_signature` and `motion_score` with the gate's
+threshold) and every tenth frame during still stretches, then propagate a
+still stretch's label across it.
+
+Two backends, selected with `--backend`:
+
+- `ollama` (default): posts to Ollama's `/api/chat` with `format: "json"`,
+  model defaulting to `qwen3-vl:8b` (`--fast` switches to `gemma4:e4b-mlx`).
+  Budget about 20 s per frame with Qwen, so a 4-minute clip at 2 fps is close
+  to three hours on every frame, roughly 40 minutes with `--adaptive`. Unload
+  the model when done with
+  `curl localhost:11434/api/generate -d '{"model":"qwen3-vl:8b","keep_alive":0}'`
+  so the Docker stack has its memory back.
+- `mlx` (needs `tools/video_eval[mlx]`, Apple Silicon only): runs the model
+  natively through `mlx-vlm` instead of Ollama's HTTP API, with JSON-schema
+  constrained decoding via `llguidance` giving the same structured-output
+  guarantee as Ollama's `format` parameter. Defaults to
+  `mlx-community/Qwen3-VL-8B-Instruct-8bit`. Measured on recorded clips: about
+  6x faster per frame than the same model size through Ollama (roughly 3.5 to
+  5.5 s per queried frame for the 8-bit 8B checkpoint) with zero request
+  timeouts, versus Ollama occasionally timing out mid-run. A quick 4B-vs-8B
+  accuracy pass across four clips found 8B noticeably more accurate overall
+  (about 75% vs 68% posture accuracy against hand-annotated timelines), so 8B
+  is the default despite the extra latency -- labelling is async, so the
+  latency difference rarely matters. `--fast` is Ollama-only.
 
 ```
 You label bedroom monitoring frames for a fall and wandering safety system.
@@ -638,7 +655,8 @@ stays under two hours each.
 | prepare (ffmpeg, 4K source) | about 1 to 2 minutes |
 | predict, one backend | under 1 minute |
 | blur and sheets | about 1 minute |
-| label-local, qwen3-vl 8b | about 3 hours on every frame, about 40 minutes with `--adaptive`; gemma4 e4b is roughly twice as fast and less accurate |
+| label-local, qwen3-vl 8b (ollama) | about 3 hours on every frame, about 40 minutes with `--adaptive`; gemma4 e4b is roughly twice as fast and less accurate |
+| label-local, Qwen3-VL-8B-Instruct-8bit (mlx) | roughly 6x faster per frame than the same size through Ollama; still budget minutes to tens of minutes with `--adaptive` depending on clip length |
 | label-codex | about 55 calls, roughly 6 minutes, about 300k tokens |
 | replay | real time, 4 minutes plus stack rebuild |
 

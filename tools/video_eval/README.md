@@ -79,8 +79,13 @@ frame streams, and stops the stack even if replay fails:
   --clip 2026-09-13_sample --tag mediapipe-squash-0123abcd-g
 ```
 
-`label-local` defaults to adaptive sampling with `qwen3-vl:8b`; use `--fast`
-for `gemma4:e4b-mlx` or `--all-frames` to disable still-frame propagation.
+`label-local` defaults to `--backend ollama` with adaptive sampling and
+`qwen3-vl:8b`; use `--fast` for `gemma4:e4b-mlx` or `--all-frames` to disable
+still-frame propagation. `--backend mlx` runs the VLM natively through
+`mlx-vlm` (install with `tools/video_eval[mlx]`) instead of Ollama's HTTP
+API, defaulting to `mlx-community/Qwen3-VL-8B-Instruct-8bit`; measured ~6x
+faster per frame with no request timeouts, so prefer it when the model is
+available as an MLX checkpoint. `--fast` only applies to the Ollama backend.
 Invalid local JSON is retried once, then retained as a null label for human
 reconciliation. `label-codex` can read only files listed beneath the clip's
 `sheets/` directory and refuses to start without the human-review marker.

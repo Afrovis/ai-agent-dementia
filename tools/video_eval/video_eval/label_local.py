@@ -1,9 +1,11 @@
-"""Private per-frame labelling through the host's local Ollama VLM."""
+"""Private per-frame labelling through a local VLM, either Ollama's HTTP API
+or mlx-vlm running natively on Apple Silicon."""
 
 from __future__ import annotations
 
 import base64
 import json
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -25,6 +27,9 @@ from video_eval.paths import EvalPaths
 
 DEFAULT_MODEL = "qwen3-vl:8b"
 FAST_MODEL = "gemma4:e4b-mlx"
+# 8-bit rather than 4-bit: measured more accurate at native-MLX speed, and
+# labelling is async so the extra latency over 4-bit doesn't matter.
+DEFAULT_MLX_MODEL = "mlx-community/Qwen3-VL-8B-Instruct-8bit"
 
 
 class LocalLabeller(Protocol):
@@ -77,6 +82,113 @@ class OllamaLabeller:
         self._post("/api/generate", {"keep_alive": 0, "model": self.model})
 
 
+def _mlx_load(model_id: str):
+    """Load an mlx-vlm model plus everything needed to run one JSON-schema
+    constrained generation per frame. Imported lazily so mlx-vlm stays an
+    optional dependency for hosts that only ever use the Ollama backend."""
+    from mlx_vlm import load
+    from mlx_vlm.prompt_utils import apply_chat_template
+    from mlx_vlm.structured import build_json_schema_logits_processor
+    from mlx_vlm.utils import load_config
+
+    model, processor = load(model_id)
+    config = load_config(model_id)
+    prompt = apply_chat_template(processor, config, LABEL_PROMPT, num_images=1)
+    tokenizer = getattr(processor, "tokenizer", processor)
+    eos_token_id = tokenizer.eos_token_id
+    if isinstance(eos_token_id, list):
+        eos_token_id = eos_token_id[0]
+    schema_processor = build_json_schema_logits_processor(tokenizer, LABEL_SCHEMA)
+    return model, processor, prompt, eos_token_id, schema_processor
+
+
+def _mlx_generate(model, processor, prompt: str, image_path: str, logits_processor) -> str:
+    from mlx_vlm import generate
+
+    result = generate(
+        model,
+        processor,
+        prompt,
+        [image_path],
+        max_tokens=200,
+        temperature=0.0,
+        verbose=False,
+        logits_processors=[logits_processor],
+    )
+    return result.text if hasattr(result, "text") else str(result)
+
+
+class _StoppingJsonProcessor:
+    """Wraps mlx-vlm's llguidance JSON-schema logits processor. Once the
+    grammar is satisfied, llguidance raises if generation is pushed past the
+    closing brace instead of ending cleanly; catch that and force EOS so a
+    valid response never turns into a crashed call."""
+
+    def __init__(self, inner, eos_token_id: int) -> None:
+        self._inner = inner
+        self._eos_token_id = eos_token_id
+        self._done = False
+
+    def __call__(self, input_ids, logits):
+        if self._done:
+            return self._forced_eos(logits)
+        try:
+            return self._inner(input_ids, logits)
+        except ValueError:
+            self._done = True
+            return self._forced_eos(logits)
+
+    def _forced_eos(self, logits):
+        import mlx.core as mx
+        import numpy as np
+
+        arr = np.full(tuple(logits.shape), -1e9, dtype=np.float32)
+        arr[..., self._eos_token_id] = 0.0
+        return mx.array(arr, dtype=logits.dtype)
+
+
+class MlxLabeller:
+    """Labelling through mlx-vlm running natively on Apple Silicon, instead
+    of through Ollama's HTTP API. Measured roughly 6x faster per frame than
+    the same model size through Ollama, with no request timeouts (see
+    docs/VIDEO_EVAL.md)."""
+
+    def __init__(
+        self,
+        *,
+        model: str = DEFAULT_MLX_MODEL,
+        loader: Callable[[str], tuple] = _mlx_load,
+        generator: Callable[..., str] = _mlx_generate,
+    ) -> None:
+        self.model = model
+        self._generate = generator
+        (
+            self._model,
+            self._processor,
+            self._prompt,
+            self._eos_token_id,
+            self._schema_processor,
+        ) = loader(model)
+
+    def label(self, image: bytes) -> Any:
+        with tempfile.NamedTemporaryFile(suffix=".jpg") as handle:
+            handle.write(image)
+            handle.flush()
+            logits_processor = _StoppingJsonProcessor(
+                self._schema_processor.clone(), self._eos_token_id
+            )
+            text = self._generate(
+                self._model, self._processor, self._prompt, handle.name, logits_processor
+            )
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError("mlx-vlm returned invalid JSON content") from exc
+
+    def close(self) -> None:
+        pass
+
+
 def adaptive_indices(frames: list[dict[str, Any]], root: Path, threshold: float) -> set[int]:
     """Select all moving frames and one in ten consecutive still frames."""
     selected: set[int] = set()
@@ -110,7 +222,8 @@ def label_local(
     clip_id: str,
     *,
     root: Path | None = None,
-    model: str = DEFAULT_MODEL,
+    backend: str = "ollama",
+    model: str | None = None,
     ollama_url: str = "http://localhost:11434",
     adaptive: bool = True,
     motion_threshold: float = 0.02,
@@ -118,11 +231,14 @@ def label_local(
     labeller_factory: Callable[[], LocalLabeller] | None = None,
 ) -> dict[str, object]:
     started = time.monotonic()
+    if model is None:
+        model = DEFAULT_MLX_MODEL if backend == "mlx" else DEFAULT_MODEL
     paths = EvalPaths.for_clip(clip_id, root)
     output = paths.labels / "local.jsonl"
     meta_path = paths.labels / "local.meta.json"
     parameters = {
         "adaptive": adaptive,
+        "backend": backend,
         "clip_id": clip_id,
         "model": model,
         "motion_threshold": motion_threshold,
@@ -136,9 +252,15 @@ def label_local(
         if adaptive
         else set(range(len(frames)))
     )
-    labeller = (
-        labeller_factory() if labeller_factory else OllamaLabeller(base_url=ollama_url, model=model)
-    )
+    if labeller_factory:
+        labeller = labeller_factory()
+    elif backend == "mlx":
+        labeller = MlxLabeller(model=model)
+    elif backend == "ollama":
+        labeller = OllamaLabeller(base_url=ollama_url, model=model)
+    else:
+        raise ValueError(f"unknown backend: {backend!r}")
+    labeller_tag = f"{backend}:{model}"
     records: list[dict[str, Any]] = []
     last_record: dict[str, Any] | None = None
     calls = 0
@@ -162,7 +284,7 @@ def label_local(
                     record = failed_label_record(
                         frame_index=int(frame["frame_index"]),
                         t_s=float(frame["t_s"]),
-                        labeller=f"ollama:{model}",
+                        labeller=labeller_tag,
                         reason=error or "invalid",
                     )
                 else:
@@ -170,7 +292,7 @@ def label_local(
                         label,
                         frame_index=int(frame["frame_index"]),
                         t_s=float(frame["t_s"]),
-                        labeller=f"ollama:{model}",
+                        labeller=labeller_tag,
                     )
                 last_record = record
             records.append(record)
@@ -187,7 +309,7 @@ def label_local(
         command="label-local",
         parameters=parameters,
         started_at=started,
-        versions=("pillow", "ollama"),
+        versions=("pillow", backend),
     )
     update_index(paths.root, clip_id, "label_local", "complete")
     return {"status": "complete", "frames": len(records), "model": model, "model_calls": calls}
