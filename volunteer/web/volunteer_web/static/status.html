@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Your recording status</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <main class="status-page">
+    <h1>Your recording</h1>
+    <p id="status-text">Checking status...</p>
+    <p id="error-text" class="error"></p>
+
+    <section id="download-section" hidden>
+      <a id="download-link" class="button">Download your analysis video</a>
+    </section>
+
+    <section>
+      <button id="delete-button">Delete my video</button>
+      <p id="delete-confirmed" hidden>Your video has been deleted.</p>
+    </section>
+  </main>
+
+  <script src="/crypto.js"></script>
+  <script src="/status.js"></script>
+</body>
+</html>

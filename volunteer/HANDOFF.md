@@ -343,7 +343,7 @@ docker compose up -d
 # Tests, per package
 docker compose run --rm --no-deps web sh -c "pip install -q -e '.[dev]' && pytest -q && ruff check . && ruff format --check ."
 docker compose run --rm --no-deps worker sh -c "pip install -q -e '/app/volunteer/worker[dev]' && pytest -q /app/volunteer/worker /app/volunteer/common"
-docker run --rm -v "$PWD":/v -w /v node:22-slim node --test web/tests/js
+docker run --rm -v "$PWD":/v -w /v node:22-slim node --test "web/tests/js/*.test.cjs"
 
 # Demo assets (V9)
 docker compose run --rm --no-deps -v "$EVAL_DATA_DIR":/eval:ro worker \
@@ -415,4 +415,69 @@ Gotchas:
 ## 12. Fixes
 
 Running list of problems found during implementation, with date and item.
-Empty so far.
+
+- 2026-09-16, V1: `mediapipe==0.10.21`, pinned in section 4 for `worker`'s
+  Dockerfile, has no `linux/arm64` wheel on PyPI (only up to 0.10.18 there).
+  Dropped the explicit pin; `worker` now takes whatever
+  `services/perceive[mediapipe]`'s `mediapipe>=0.10,<1.0` resolves to on the
+  build platform, same as `services/perceive/Dockerfile` itself does.
+- 2026-09-16, V3: a Cloudflare Tunnel connector token (`cloudflared tunnel run
+  --token`) is not a scoped API token and cannot authenticate
+  `scripts/setup_cloudflare.py`'s REST calls. Mathias prefers his existing
+  manual tunnel workflow, so the supported path is now either
+  `scripts/setup_cloudflare.py` with a real scoped API token (section 7), or
+  manual setup: create the tunnel and its `upload.mathiasvissers.com` public
+  hostname in the Zero Trust dashboard (this also creates the DNS CNAME), and
+  a Turnstile widget in the dashboard, then paste the resulting
+  `CLOUDFLARE_TUNNEL_TOKEN`, `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY`
+  into `.env` directly. `CLOUDFLARE_API_TOKEN` stays blank on the manual path.
+- 2026-09-16, V4: `node --test web/tests/js` (a bare directory) throws
+  `MODULE_NOT_FOUND` on Node 22 rather than discovering test files in it.
+  Needs an explicit glob: `node --test "web/tests/js/*.test.cjs"`. Test
+  files are named `*.test.cjs` (CommonJS) so `static/crypto.js` can stay a
+  plain script with no bundler and still be `require()`-able from the test.
+- 2026-09-16, V6: built without a real camera or a cached headless browser
+  on this machine, so this is unverified against V6's own acceptance
+  criteria: Turnstile's interaction-only behavior, an actual recording in
+  Chrome and Safari, the refused-camera-permission message, and a devtools
+  network check that nothing leaves the page except self and Turnstile.
+  script.json's `walking`/`standing` markers fall through to `upright` in
+  `tools/video_eval/video_eval/visualize.py`'s `_manual_state` (only
+  `in_bed`/`sitting_up`/`on_floor`/`absent` are mapped there) -- harmless for
+  now since markers are stored metadata, not live-rendered, but worth fixing
+  in `_manual_state` before any future `clip.yaml` actually uses them.
+- 2026-09-16, V7: `worker/Dockerfile` was missing `COPY shared/` and
+  `pip install -e /app/shared`. `video_eval.predict` imports
+  `capture.main`, which imports `nc_shared.bus` even though `worker` never
+  opens a Redis connection -- `python -m video_eval predict` failed with
+  `ModuleNotFoundError: No module named 'nc_shared'` until this was added.
+  `--data-root` is also a top-level `video_eval` flag and must precede the
+  subcommand (`--data-root X predict ...`, not `predict --data-root X`);
+  `pipeline.run` initially built the command the other way round. Found by
+  actually running a synthetic clip through the built image end to end
+  (V7's own acceptance test), not by reading `video_eval`'s source.
+- 2026-09-16, V7: installing `torch` alone from the CPU wheel index, then
+  letting `ultralytics` (a `perceive[yolo]` dependency) pull in `torchvision`
+  from default PyPI separately, gives a `torchvision` built against a
+  different `torch` ABI: `RuntimeError: operator torchvision::nms does not
+  exist` on the first real YOLO inference. Fixed by installing
+  `torch torchvision` together from the same
+  `https://download.pytorch.org/whl/cpu` index in one command.
+  `services/perceive/Dockerfile` has the same latent bug (installs `torch`
+  alone before `perceive[yolo]`) -- worth a matching fix there, since this
+  was never exercised end to end until `worker`'s build did.
+- 2026-09-16, V7: `tools/video_eval/video_eval/visualize.py`'s
+  `_render_frame` hardcoded `item["bridge_letterbox_path"]`, but
+  `prepare_video` only ever writes the manifest key for whichever
+  `--variant` was actually prepared (`bridge_path` for `squash`,
+  `bridge_letterbox_640_path` for `letterbox640`) -- so `visualize --mode
+  pipeline` raised `KeyError` for every variant except `letterbox` itself,
+  including the `letterbox640` variant this project uses throughout.
+  Fixed in `visualize.py` to look up whichever bridge key the frame record
+  actually has, via `video_eval.paths.BRIDGE_VARIANTS`. This is a bug in
+  shared tooling, not `volunteer/`, so it may also affect other callers of
+  `visualize --mode pipeline` with a non-`letterbox` variant. Confirmed
+  fixed with a full end-to-end run: a synthetic `ffmpeg testsrc` clip,
+  encrypted into chunks and pushed through `run_once` in the real built
+  `worker` image, reached `ready` and decrypted into a valid, ffprobe-
+  playable MP4 -- V7's stated acceptance test.

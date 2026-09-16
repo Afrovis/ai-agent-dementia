@@ -1,0 +1,66 @@
+[
+  {
+    "step_id": "stand_still",
+    "text": "Walk into view and stand still",
+    "seconds": 10,
+    "expected_state": "standing",
+    "optional": false
+  },
+  {
+    "step_id": "walk_around",
+    "text": "Walk slowly around the room",
+    "seconds": 20,
+    "expected_state": "walking",
+    "optional": false
+  },
+  {
+    "step_id": "sit_edge",
+    "text": "Sit on the edge of the bed or sofa",
+    "seconds": 15,
+    "expected_state": "sitting_up",
+    "optional": false
+  },
+  {
+    "step_id": "lie_down",
+    "text": "Lie down on the bed or sofa",
+    "seconds": 20,
+    "expected_state": "in_bed",
+    "optional": false
+  },
+  {
+    "step_id": "sit_up",
+    "text": "Sit up",
+    "seconds": 10,
+    "expected_state": "sitting_up",
+    "optional": false
+  },
+  {
+    "step_id": "leave_view",
+    "text": "Stand up and walk out of view",
+    "seconds": 15,
+    "expected_state": "absent",
+    "optional": false
+  },
+  {
+    "step_id": "come_back",
+    "text": "Come back and stand still",
+    "seconds": 10,
+    "expected_state": "standing",
+    "optional": false
+  },
+  {
+    "step_id": "floor",
+    "text": "Slowly lower yourself to sit or lie on the floor, only if comfortable",
+    "seconds": 20,
+    "expected_state": "on_floor",
+    "optional": true,
+    "safety_note": "Skip this step if getting to the floor and back up is not comfortable for you. There is no penalty for skipping it."
+  },
+  {
+    "step_id": "walk_back",
+    "text": "Get up and walk back to the laptop",
+    "seconds": 15,
+    "expected_state": "walking",
+    "optional": false
+  }
+]

@@ -21,7 +21,7 @@ import yaml
 from PIL import Image, ImageDraw, ImageFont
 
 from video_eval.common import read_jsonl, write_meta
-from video_eval.paths import EvalPaths
+from video_eval.paths import BRIDGE_VARIANTS, EvalPaths
 
 VisualizationMode = Literal["manual", "pipeline", "vision"]
 
@@ -354,11 +354,25 @@ def _draw_timeline(
     _text(draw, (x + width - end_width - 10, y + 4), end, 13, color=MUTED)
 
 
+def _bridge_manifest_key(item: dict[str, Any]) -> str:
+    """The one bridge-frame key `prepare` actually wrote for this clip.
+
+    `frames.jsonl` records only carry the manifest key for whichever bridge
+    variant was prepared (`prepare_video` only sets a variant's key when its
+    file exists on disk), so the key name depends on the `--variant` a clip
+    was prepared with, not a single fixed name.
+    """
+    for spec in BRIDGE_VARIANTS.values():
+        if spec.manifest_key in item:
+            return spec.manifest_key
+    raise KeyError("frame record has no bridge-frame path for any known variant")
+
+
 def _render_frame(inputs: RenderInputs, mode: VisualizationMode, index: int) -> Image.Image:
     item = inputs.frames[index]
     t_s = float(item["t_s"])
     source_path = inputs.root / item["review_path"]
-    runtime_path = inputs.root / item["bridge_letterbox_path"]
+    runtime_path = inputs.root / item[_bridge_manifest_key(item)]
     source = _fit(Image.open(source_path).convert("RGB"), (900, 506))
     runtime = _fit(Image.open(runtime_path).convert("RGB"), (288, 216))
     canvas = Image.new("RGB", CANVAS, (7, 13, 24))
