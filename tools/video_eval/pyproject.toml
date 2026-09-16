@@ -17,6 +17,9 @@ models = [
     "mediapipe>=0.10,<1.0",
     "ultralytics>=8.1",
 ]
+mlx = [
+    "mlx-vlm>=0.7",
+]
 dev = [
     "pytest",
     "ruff",

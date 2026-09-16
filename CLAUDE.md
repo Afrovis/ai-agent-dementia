@@ -258,6 +258,16 @@ or offline against prepared frames (`--frames-dir DIR` instead of
 afterwards to pick up the file. Do this again, and re-run it, any time the
 camera or the room's static furniture changes.
 
+To debug what's actually in a single recorded frame (e.g. is a suspected
+phantom box really a static object, or the bed with a person on it) without
+sending anything off-machine, use `tools/video_eval/scripts/ask_frame.py`.
+It asks a free-form question about one `frame_index` in one clip, optionally
+with a detection box drawn on it first, through the local MLX VLM (not
+Ollama -- same model family, ~6x faster per call, no request timeouts).
+Install with `pip install 'tools/video_eval[mlx]'`. Everything stays local,
+so it is safe to point at raw, unblurred `review_path` frames, unlike
+`label-codex`.
+
 The bed zone decides most in-bed versus out-of-bed readings, and a
 hand-drawn rectangle is usually wrong in both directions: it takes in the
 wall above the headboard and the floor in front of the bed, and misses the
