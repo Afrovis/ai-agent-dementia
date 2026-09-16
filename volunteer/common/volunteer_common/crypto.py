@@ -121,18 +121,28 @@ def decrypt_result(key: bytes, submission_id: str, data: bytes) -> bytes:
     return bytes(plaintext)
 
 
-def encrypt_result(key: bytes, submission_id: str, plaintext: bytes, *, iv_source) -> bytes:
+def encrypt_result(
+    key: bytes,
+    submission_id: str,
+    plaintext: bytes,
+    *,
+    iv_source,
+    block_size: int = RESULT_BLOCK_BYTES,
+) -> bytes:
     """Encrypt plaintext into the length-prefixed block stream `worker` serves.
 
     `iv_source` is a zero-argument callable returning `GCM_IV_BYTES` random
-    bytes, injected so tests can supply deterministic IVs.
+    bytes, injected so tests can supply deterministic IVs. `block_size`
+    defaults to the real 4 MiB plaintext block size; tests and the committed
+    two-block vector (`scripts/make_vector.mjs`) pass a tiny one so a
+    multi-block fixture does not require multi-megabyte plaintext.
     """
     out = bytearray()
     total = len(plaintext)
-    block_count = max(1, (total + RESULT_BLOCK_BYTES - 1) // RESULT_BLOCK_BYTES)
+    block_count = max(1, (total + block_size - 1) // block_size)
     for index in range(block_count):
-        start = index * RESULT_BLOCK_BYTES
-        end = min(start + RESULT_BLOCK_BYTES, total)
+        start = index * block_size
+        end = min(start + block_size, total)
         block_plaintext = plaintext[start:end]
         is_last = index == block_count - 1
         iv = iv_source()

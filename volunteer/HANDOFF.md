@@ -343,7 +343,7 @@ docker compose up -d
 # Tests, per package
 docker compose run --rm --no-deps web sh -c "pip install -q -e '.[dev]' && pytest -q && ruff check . && ruff format --check ."
 docker compose run --rm --no-deps worker sh -c "pip install -q -e '/app/volunteer/worker[dev]' && pytest -q /app/volunteer/worker /app/volunteer/common"
-docker run --rm -v "$PWD":/v -w /v node:22-slim node --test web/tests/js
+docker run --rm -v "$PWD":/v -w /v node:22-slim node --test "web/tests/js/*.test.cjs"
 
 # Demo assets (V9)
 docker compose run --rm --no-deps -v "$EVAL_DATA_DIR":/eval:ro worker \
@@ -421,3 +421,18 @@ Running list of problems found during implementation, with date and item.
   Dropped the explicit pin; `worker` now takes whatever
   `services/perceive[mediapipe]`'s `mediapipe>=0.10,<1.0` resolves to on the
   build platform, same as `services/perceive/Dockerfile` itself does.
+- 2026-09-16, V3: a Cloudflare Tunnel connector token (`cloudflared tunnel run
+  --token`) is not a scoped API token and cannot authenticate
+  `scripts/setup_cloudflare.py`'s REST calls. Mathias prefers his existing
+  manual tunnel workflow, so the supported path is now either
+  `scripts/setup_cloudflare.py` with a real scoped API token (section 7), or
+  manual setup: create the tunnel and its `upload.mathiasvissers.com` public
+  hostname in the Zero Trust dashboard (this also creates the DNS CNAME), and
+  a Turnstile widget in the dashboard, then paste the resulting
+  `CLOUDFLARE_TUNNEL_TOKEN`, `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY`
+  into `.env` directly. `CLOUDFLARE_API_TOKEN` stays blank on the manual path.
+- 2026-09-16, V4: `node --test web/tests/js` (a bare directory) throws
+  `MODULE_NOT_FOUND` on Node 22 rather than discovering test files in it.
+  Needs an explicit glob: `node --test "web/tests/js/*.test.cjs"`. Test
+  files are named `*.test.cjs` (CommonJS) so `static/crypto.js` can stay a
+  plain script with no bundler and still be `require()`-able from the test.
