@@ -126,7 +126,7 @@ A session is the unit of interaction. It starts when the person leaves the `in_b
 ### 5.1 Session lifecycle
 
 ```
-IDLE ──(sitting_up or standing at night)──▶ OBSERVING
+IDLE ──(sitting_up/standing/walking at night)──▶ OBSERVING
 OBSERVING ──(still up after 20 s, or speaks)──▶ ENGAGED
 OBSERVING ──(back in bed)──▶ IDLE
 ENGAGED ──(goal reached)──▶ COOLDOWN ──(5 min calm)──▶ IDLE

@@ -41,6 +41,16 @@ def test_sitting_up_starts_observing_inside_the_window():
     assert session.session_id == transition.session_id
 
 
+def test_walking_starts_observing_inside_the_window():
+    # perceive can confirm a bed exit straight into `walking`, skipping a
+    # confirmed `standing` frame; that must still start a session.
+    session = make_session()
+    transition = session.on_person_state("walking", "other", NIGHT)
+    assert transition is not None
+    assert transition.phase == Phase.OBSERVING
+    assert transition.reason == "person_walking"
+
+
 def test_observing_times_out_to_engaged_after_20s():
     session = make_session(observe_seconds=20.0)
     session.on_person_state("standing", "other", NIGHT)

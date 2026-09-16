@@ -29,7 +29,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     predict = commands.add_parser("predict", help="run capture/perception offline")
     predict.add_argument("--clip", required=True)
-    predict.add_argument("--backend", choices=("mediapipe", "yolo"), default="mediapipe")
+    predict.add_argument(
+        "--backend", choices=("mediapipe", "yolo", "yolo26mlx"), default="mediapipe"
+    )
     predict.add_argument("--variant", choices=tuple(BRIDGE_VARIANTS), default="squash")
     predict.add_argument("--no-gate", action="store_true")
     predict.add_argument("--force", action="store_true")
@@ -57,10 +59,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="record that a human spot-checked the generated sheets",
     )
 
-    local = commands.add_parser("label-local", help="label review frames with Ollama")
+    local = commands.add_parser("label-local", help="label review frames with a local VLM")
     local.add_argument("--clip", required=True)
-    local.add_argument("--model", default="qwen3-vl:8b")
-    local.add_argument("--fast", action="store_true", help="use gemma4:e4b-mlx")
+    local.add_argument("--backend", choices=("ollama", "mlx"), default="ollama")
+    local.add_argument(
+        "--model",
+        default=None,
+        help="defaults to qwen3-vl:8b (ollama) or mlx-community/Qwen3-VL-8B-Instruct-8bit (mlx)",
+    )
+    local.add_argument("--fast", action="store_true", help="ollama only: use gemma4:e4b-mlx")
     local.add_argument("--ollama-url", default="http://localhost:11434")
     adaptive = local.add_mutually_exclusive_group()
     adaptive.add_argument("--adaptive", action="store_true", dest="adaptive", default=True)
@@ -103,7 +110,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
     if args.command == "prepare":
         result = prepare_video(
             args.video,
@@ -153,9 +161,12 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "label-local":
         from video_eval.label_local import FAST_MODEL, label_local
 
+        if args.fast and args.backend != "ollama":
+            parser.error("--fast is only supported with --backend ollama")
         result = label_local(
             args.clip,
             root=args.data_root,
+            backend=args.backend,
             model=FAST_MODEL if args.fast else args.model,
             ollama_url=args.ollama_url,
             adaptive=args.adaptive,

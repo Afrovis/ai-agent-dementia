@@ -33,9 +33,25 @@ loads `zones.yaml`. A candidate is excluded only if it overlaps a known
 phantom box closely (`IoU >= MATCH_IOU`) *and* its own confidence is below
 `PERCEIVE_PHANTOM_MAX_CONFIDENCE` -- a real person who happens to walk
 through that exact box, or a strong, confident detection there, is never
-suppressed. There is no cross-frame state, so a sleeping person's track can
-never be mistaken for a phantom by anything that happens elsewhere in the
-frame.
+suppressed. There is no cross-frame state driving exclusion, so a sleeping
+person's track can never be mistaken for a phantom by anything that happens
+elsewhere in the frame.
+
+2026-09-15 evidence (a bedroom clip, `yolo26l-pose` backend) found the
+"trust a strong score" override itself has a failure mode: a calibrated
+phantom (a painting) can score consistently *above*
+`PERCEIVE_PHANTOM_MAX_CONFIDENCE` for a run of frames, while the real
+person mid-fall -- an inherently harder pose to classify -- scores lower in
+those same frames, present as a second candidate but narrowly losing the
+argmax. `KnownPhantoms.select` now carries one small, intentionally scoped
+piece of cross-call state to catch exactly this: the last confirmed
+(non-phantom) box and how long ago it was confirmed. It only ever changes
+the outcome when the raw top pick itself matches a *known, pre-calibrated*
+phantom box and another candidate in the same frame sits close to that
+recent track -- never a general "prefer whatever's near the last
+detection" bias, which would risk suppressing a genuinely new detection
+elsewhere in frame. See `KnownPhantoms.select` and
+`_rescue_from_confident_phantom`.
 """
 
 from __future__ import annotations
@@ -67,6 +83,30 @@ DEFAULT_MAX_CONFIDENCE = 0.7
 phantom box is only excluded below this confidence. A strong detection in
 that exact box is trusted over the calibration -- the filter is a guard
 against a weak, ambiguous score, not a blanket ban on the location."""
+
+MAX_TRACK_GAP_CALLS = 15
+"""How many `select()` calls a previously confirmed (non-phantom) detection
+stays eligible to rescue a real person from a *high-confidence* phantom
+override (see `KnownPhantoms.select`). `perceive` calls `detect`/`select`
+once per frame `capture` republishes, at `CAPTURE_FPS` (2fps while the room
+has motion, dropping to `CAPTURE_IDLE_FPS`, 0.5fps by default, once it has
+been still for `CAPTURE_STATIC_SECONDS` -- see CLAUDE.md). 15 calls is
+7.5-30s of gap at those rates: generous enough to bridge a stretch where a
+falling person's own confidence dips call after call (the validated
+2026-09-15 case: 12 consecutive frames losing to a painting), short enough
+that a track from a much earlier, unrelated presence in the room cannot
+reach across a real absence-then-return."""
+
+TRACK_PROXIMITY_RADIUS = 0.3
+"""How close, in normalised centre distance, another surviving candidate
+must be to the last confirmed box to count as "the same person, still
+moving" rather than "some other object elsewhere in frame" (see
+`KnownPhantoms.select`). The 2026-09-15 bedroom evidence measured a real
+person's own frame-to-frame centre drift at ~0.10 and the distance from an
+unrelated calibrated phantom (a painting) to that same track at ~0.49; 0.3
+sits with wide margin on both sides of that gap, so it accepts a genuinely
+fast movement (e.g. the fall itself) while still rejecting a static object
+clear across the room."""
 
 
 @dataclass
@@ -112,6 +152,16 @@ def center(box: Box) -> tuple[float, float]:
     return (x_min + x_max) / 2.0, (y_min + y_max) / 2.0
 
 
+def center_distance(a: Box, b: Box) -> float:
+    """Euclidean distance between the normalised centres of two boxes, used
+    by `KnownPhantoms.select`'s track-continuity check -- proximity of the
+    box as a whole, not overlap, since a moving person's box legitimately
+    shifts between calls."""
+    ax, ay = center(a)
+    bx, by = center(b)
+    return ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+
+
 def _log_fallback(reason: str, path: str) -> None:
     logger.warning(
         json.dumps(
@@ -129,36 +179,119 @@ class KnownPhantoms:
     """A short list of calibrated phantom boxes, and the exclusion rule that
     uses them.
 
-    Stateless per call -- `select` never remembers anything about previous
-    frames -- so nothing here can accumulate the kind of wrong, permanent
-    judgement about one specific track the old runtime-learning design
-    could reach. An empty list (the default when `PERCEIVE_PHANTOMS_FILE`
-    is unset, missing, or malformed) makes `select` behave exactly like the
-    old "take the most confident candidate" rule.
+    Almost stateless per call: `select` still never remembers *rejected*
+    candidates or uses anything from outside its own known-phantom list to
+    exclude a box, so nothing here can accumulate the kind of wrong,
+    permanent judgement about one specific track the old runtime-learning
+    design could reach. An empty list (the default when
+    `PERCEIVE_PHANTOMS_FILE` is unset, missing, or malformed) makes `select`
+    behave exactly like the old "take the most confident candidate" rule.
+
+    It does keep one small piece of cross-call state: the last *confirmed*
+    (selected, not matching a known phantom box) detection's box, and how
+    many calls have passed since then. That exists for exactly one narrow
+    purpose -- see `select` -- and is instance-scoped, living as long as the
+    backend that owns this `KnownPhantoms` does (one instance per running
+    `perceive`, the same lifetime the calibrated box list already has).
     """
 
     def __init__(self, boxes: list[Box], *, max_confidence: float = DEFAULT_MAX_CONFIDENCE) -> None:
         self._boxes = boxes
         self._max_confidence = max_confidence
+        self._last_confirmed_box: Box | None = None
+        self._calls_since_confirmed: int = 0
 
     @property
     def boxes(self) -> list[Box]:
         return list(self._boxes)
+
+    def matches_known_phantom_box(self, box: Box) -> bool:
+        """Whether `box` sits almost exactly on a known phantom box
+        (`IoU >= MATCH_IOU`), independent of any confidence -- the geometric
+        half of `is_excluded`, exposed on its own because `select`'s
+        track-continuity rescue (below) needs to ask this about the raw
+        top-confidence pick even when its confidence is too high for
+        `is_excluded` to have dropped it."""
+        return any(iou(box, known) >= MATCH_IOU for known in self._boxes)
 
     def is_excluded(self, candidate: Candidate) -> bool:
         """A candidate is excluded only if it sits almost exactly on a known
         phantom box *and* is not confident enough to override that."""
         if candidate.confidence >= self._max_confidence:
             return False
-        return any(iou(candidate.box, known) >= MATCH_IOU for known in self._boxes)
+        return self.matches_known_phantom_box(candidate.box)
+
+    def _rescue_from_confident_phantom(
+        self, top: Candidate, live: list[Candidate]
+    ) -> Candidate | None:
+        """If `top` only survived because its confidence cleared
+        `max_confidence` while still sitting on a known phantom box (2026-09-15
+        bedroom evidence: a calibrated painting box scoring 0.75-0.85, just
+        above the 0.7 default, while the real person mid-fall scored 0.53-0.61
+        in the same frames), prefer a nearby recently-confirmed real
+        detection instead, when one is available.
+
+        Deliberately narrow: this only ever fires when `top` itself matches a
+        *pre-calibrated* phantom box. It is not a general "prefer whatever is
+        near the last track" bias -- a broad version of that would risk
+        suppressing a genuinely new detection elsewhere in frame, which is
+        dangerous in a fall-detection app. Returns `None` (meaning "no
+        rescue, use `top` as normal") unless all three conditions hold: a
+        recent confirmed track exists (`MAX_TRACK_GAP_CALLS`), `top` matches
+        a known phantom box, and some *other* surviving candidate's box
+        centre is within `TRACK_PROXIMITY_RADIUS` of that track. Among any
+        such candidates, the closest one wins.
+        """
+        if self._last_confirmed_box is None:
+            return None
+        if self._calls_since_confirmed > MAX_TRACK_GAP_CALLS:
+            return None
+        if not self.matches_known_phantom_box(top.box):
+            return None
+
+        nearby = [
+            c
+            for c in live
+            if c is not top
+            and center_distance(c.box, self._last_confirmed_box) <= TRACK_PROXIMITY_RADIUS
+        ]
+        if not nearby:
+            return None
+        return min(nearby, key=lambda c: center_distance(c.box, self._last_confirmed_box))
 
     def select(self, candidates: list[Candidate]) -> Candidate | None:
         """Return the highest-confidence candidate that isn't excluded, or
-        `None` if every candidate in this frame is."""
+        `None` if every candidate in this frame is.
+
+        Ordinarily this is a plain argmax over the surviving candidates,
+        exactly as before. The one exception is `_rescue_from_confident_phantom`:
+        when the argmax pick itself sits on a known phantom box (only
+        possible when its confidence is too high for `is_excluded` to have
+        dropped it) and a recently confirmed track nearby suggests the real
+        person is one of the other candidates in this same frame, that
+        nearby candidate is selected instead.
+
+        Either way, the selected candidate's box becomes the new "last
+        confirmed" track *unless* it is itself the phantom box (i.e. the
+        rescue didn't find anything to rescue to) -- a phantom-box selection
+        must never seed or extend a track, or it could go on to wrongly
+        rescue a future phantom pick of its own.
+        """
         live = [c for c in candidates if not self.is_excluded(c)]
         if not live:
+            self._calls_since_confirmed += 1
             return None
-        return max(live, key=lambda c: c.confidence)
+
+        top = max(live, key=lambda c: c.confidence)
+        rescued = self._rescue_from_confident_phantom(top, live)
+        selected = rescued if rescued is not None else top
+
+        if self.matches_known_phantom_box(selected.box):
+            self._calls_since_confirmed += 1
+        else:
+            self._last_confirmed_box = selected.box
+            self._calls_since_confirmed = 0
+        return selected
 
     @classmethod
     def load(
