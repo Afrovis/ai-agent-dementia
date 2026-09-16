@@ -30,6 +30,10 @@ mediapipe = [
 yolo = [
     "ultralytics>=8.1",
 ]
+yolo26mlx = [
+    "mlx>=0.30.3,<0.31",
+    "yolo26mlx @ git+https://github.com/thewebAI/yolo-mlx.git",
+]
 dev = [
     "pytest",
     "ruff",
