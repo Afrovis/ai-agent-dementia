@@ -69,6 +69,51 @@ def iou(a: list[float], b: list[float]) -> float:
     return inter / union if union > 0 else 0.0
 
 
+def _center(box: list[float]) -> tuple[float, float]:
+    x1, y1, x2, y2 = box
+    return (x1 + x2) / 2.0, (y1 + y2) / 2.0
+
+
+def _center_distance(a: list[float], b: list[float]) -> float:
+    ax, ay = _center(a)
+    bx, by = _center(b)
+    return ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+
+
+def select_argmax(dets: list[dict], _last_box: list[float] | None, _gap: int) -> dict:
+    """Today's rule_replay/live-backend default absent phantom filtering:
+    the single highest-confidence candidate, no memory of prior frames."""
+    return max(dets, key=lambda d: d["conf"])
+
+
+def select_track(
+    dets: list[dict],
+    last_box: list[float] | None,
+    gap: int,
+    *,
+    proximity_radius: float = 0.3,
+    max_track_gap: int = 15,
+) -> dict:
+    """Prefer the candidate closest to the last selected box over the one
+    with the highest raw confidence, as long as the track is still fresh --
+    the same continuity idea as `KnownPhantoms._rescue_from_confident_phantom`
+    in perceive/phantom.py, generalised to every frame rather than only the
+    narrow case where the argmax pick sits on a known phantom box. A person
+    moving through the room keeps winning because their box stays close to
+    where they just were; an unrelated high-confidence object elsewhere only
+    wins once the track has gone stale (gap > max_track_gap) or nothing is
+    within `proximity_radius`, exactly like a real re-acquire after the
+    person actually left frame."""
+    if last_box is not None and gap <= max_track_gap:
+        in_range = [d for d in dets if _center_distance(d["bbox"], last_box) <= proximity_radius]
+        if in_range:
+            return min(in_range, key=lambda d: _center_distance(d["bbox"], last_box))
+    return max(dets, key=lambda d: d["conf"])
+
+
+SELECTORS = {"argmax": select_argmax, "track": select_track}
+
+
 def replay(
     cache_rows: list[dict],
     gate: dict[int, bool],
@@ -79,16 +124,25 @@ def replay(
     model_floor: float,
     gated: bool,
     confirm_frames: int = 3,
+    select: str = "argmax",
 ) -> list[dict]:
     tracker = StateTracker(thresholds=thresholds, confirm_frames=confirm_frames)
+    selector = SELECTORS[select]
     rows = []
+    last_box: list[float] | None = None
+    calls_since_confirmed = 0
     for row in cache_rows:
         admitted = gate[row["frame_index"]] or not gated
         pose = None
         if admitted and not row.get("skipped"):
             dets = [d for d in row["dets"] if d["conf"] >= model_floor]
             if dets:
-                pose = to_pose(max(dets, key=lambda d: d["conf"]), mediapipe)
+                chosen = selector(dets, last_box, calls_since_confirmed)
+                pose = to_pose(chosen, mediapipe)
+                last_box = list(chosen["bbox"])
+                calls_since_confirmed = 0
+            else:
+                calls_since_confirmed += 1
             zone = zone_for_pose(zones, pose) if pose is not None else "other"
             tracker.update(pose, zone, row["t_s"])
         snap = tracker.snapshot()
@@ -204,6 +258,13 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="score against clips/<clip>/labels/local.jsonl under this root instead",
     )
+    parser.add_argument(
+        "--select",
+        choices=sorted(SELECTORS),
+        default="argmax",
+        help="candidate-selection strategy: argmax (today's default) or track (prefer "
+        "proximity to the last selected box)",
+    )
     args = parser.parse_args(argv)
 
     thresholds = replace(ClassifyThresholds(), **parse_sets(args.set))
@@ -245,6 +306,7 @@ def main(argv: list[str] | None = None) -> int:
                     mediapipe=model.startswith("mediapipe"),
                     model_floor=0.0 if model.startswith("mediapipe") else args.model_floor,
                     gated=not args.no_gate,
+                    select=args.select,
                 )
                 result = score(rows, frame_reference, script)
                 cells = " ".join(
