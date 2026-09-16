@@ -415,4 +415,9 @@ Gotchas:
 ## 12. Fixes
 
 Running list of problems found during implementation, with date and item.
-Empty so far.
+
+- 2026-09-16, V1: `mediapipe==0.10.21`, pinned in section 4 for `worker`'s
+  Dockerfile, has no `linux/arm64` wheel on PyPI (only up to 0.10.18 there).
+  Dropped the explicit pin; `worker` now takes whatever
+  `services/perceive[mediapipe]`'s `mediapipe>=0.10,<1.0` resolves to on the
+  build platform, same as `services/perceive/Dockerfile` itself does.
