@@ -10,7 +10,7 @@ from typing import Any
 
 from capture.main import CaptureConfig, build_gate
 from perceive.backends import PoseBackend, build_backend
-from perceive.classify import zone_for_pose
+from perceive.classify import ground_zone_for_pose, zone_for_pose
 from perceive.main import PerceiveConfig, build_tracker
 from perceive.zones import load_zones
 
@@ -115,7 +115,8 @@ def predict_clip(
                 pose = backend.detect(jpeg)
                 backend_ms = (time.perf_counter() - before) * 1000.0
                 zone = zone_for_pose(zones, pose) if pose is not None else "other"
-                published = tracker.update(pose, zone, t_s) is not None
+                ground_zone = ground_zone_for_pose(zones, pose) if pose is not None else None
+                published = tracker.update(pose, zone, t_s, ground_zone=ground_zone) is not None
             snapshot = tracker.snapshot()
             records.append(
                 {
