@@ -129,9 +129,65 @@ class ClassifyThresholds:
     Enable it together with that calibration. `PERCEIVE_SITTING_THIGH_RATIO`."""
 
     walk_displacement_threshold: float = 0.15
-    """A `standing` person's centroid moving at least this much (normalised
-    frame width) across the tracker's recent-frame window counts as
-    `walking` rather than standing in place. `PERCEIVE_WALK_THRESHOLD`."""
+    """`walk_mode="legacy"`: a `standing` person's centroid moving at least
+    this much (normalised frame width) across the tracker's recent-frame
+    window counts as `walking` rather than standing in place.
+    `PERCEIVE_WALK_THRESHOLD`."""
+
+    walk_mode: str = "legacy"
+    """How `StateTracker` tells `walking` from `standing`.
+
+    - `"legacy"`: horizontal centroid range over the last
+      `StateTracker.centroid_history_len` frames (above).
+    - `"ground"`: the ground point (`_ground_point`'s ankle row with the
+      ankles' mean x, else the box bottom centre) tracked over the last
+      `walk_window_seconds` of *time*, its 2D range divided by the person's
+      box height, plus the log change in box height (walking towards or away
+      from the camera barely moves x but changes size). Fixes the legacy
+      rule's blind spots: horizontal-only, frame-width units that shrink
+      with distance, a centroid that jumps when a keypoint drops out, and a
+      frame-count window the motion gate stretches.
+
+    On the 2026-09-13/14 references neither mode separates the two well,
+    because the labelled `standing` spans include moving about (see
+    docs/WALKING_BED_OCCUPANCY_PLAN.md section 4), so `"legacy"` stays the
+    default until finer labels exist. `PERCEIVE_WALK_MODE`."""
+
+    walk_motion_threshold: float = 0.35
+    """`walk_mode="ground"`: ground-point range plus box-height log change,
+    in body heights, over `walk_window_seconds`, at or above which an
+    upright person counts as `walking`. `PERCEIVE_WALK_MOTION_THRESHOLD`."""
+
+    walk_window_seconds: float = 2.0
+    """`walk_mode="ground"`: how much recent time the motion is measured
+    over. Upright samples older than this are dropped; a gap in upright
+    frames shorter than this (a mid-stride `sitting_up` misread, a dropped
+    frame) no longer wipes the history. `PERCEIVE_WALK_WINDOW_SECONDS`."""
+
+    upright_zone_from_feet: bool = False
+    """Report a `standing`/`walking` person's zone from their feet
+    (`ground_zone_for_pose`) instead of their body centroid. Someone walking
+    between the camera and the bed covers the bed in the image, so the
+    centroid rule calls them `bed`: that reads as bed-side "progress" to the
+    agent, and a person lost there is then held as `in_bed` by
+    `bed_vanish_hold`. Seated and lying people keep the centroid zone. On
+    the 2026-09-13/14 clips with segmented bed zones this cut upright frames
+    reported in the bed zone, while the person was off it, from 86 to 20;
+    the rest have their ankles hidden behind the bed, so the box bottom
+    stands in for the feet (docs/WALKING_BED_OCCUPANCY_PLAN.md section 4).
+    `PERCEIVE_UPRIGHT_ZONE_FROM_FEET`."""
+
+    bed_latch: bool = False
+    """Sticky bed occupancy: once `in_bed` is confirmed, a person stays in
+    bed until there is evidence they left it. While latched, an upright
+    (`standing`) frame whose *ground point* is still inside the bed zone and
+    that shows no walking motion reports `sitting_up` instead -- the agent
+    still sees them wake and sit up, but a bed-edge sit misread as standing,
+    or a bed zone that reaches the wall behind the bed, no longer reads as a
+    bed exit. The latch releases on an upright frame with the feet outside
+    the bed zone, measurable walking, a door or bathroom zone, or
+    `on_floor` (never suppressed). Needs a bed zone that covers the
+    mattress, ideally from `perceive.calibrate_bed`. `PERCEIVE_BED_LATCH`."""
 
     floor_top_y: float = 1.01
     """Outside the bed zone, a confident detection whose bounding box *top*
@@ -376,6 +432,33 @@ def _ground_point(
     if knee_ys:
         return max(knee_ys), False
     return None, False
+
+
+def ground_xy(pose: PoseResult) -> tuple[float, float]:
+    """Where `pose` stands on the floor, as a 2D point: the ankle row from
+    `_ground_point` (ankles only) at the visible ankles' mean x, else the
+    bounding box's bottom centre. Unlike `centroid_of` it never switches
+    between two very different points as keypoints come and go, and it is
+    what a zone test should use to ask "are their feet on the bed?"."""
+    x_min, _, x_max, y_max = pose.bbox
+    ankles = [
+        lm
+        for name in ("left_ankle", "right_ankle")
+        if (lm := pose.landmarks.get(name)) is not None and lm.visibility >= _GROUND_VISIBILITY
+    ]
+    if ankles:
+        ground_y = max(lm.y for lm in ankles)
+        if _ground_point_in_box(pose, ground_y):
+            return sum(lm.x for lm in ankles) / len(ankles), ground_y
+    return (x_min + x_max) / 2.0, y_max
+
+
+def ground_zone_for_pose(zones: ZoneMap, pose: PoseResult) -> ZoneName:
+    """The zone `pose`'s feet (`ground_xy`) are in -- `StateTracker`'s
+    `bed_latch` uses it to tell someone sitting up on the bed from someone
+    standing beside it, where the body centroid can land on the same zone."""
+    x, y = ground_xy(pose)
+    return zones.zone_for_point(x, y)
 
 
 def _ground_point_in_box(pose: PoseResult, ground_y: float) -> bool:
@@ -714,6 +797,12 @@ class StateTracker:
     `floor_suspect` from it -- see `update()`."""
     _floor_suspect_since: float | None = field(default=None, init=False, repr=False)
     _last_height_ratio: float | None = field(default=None, init=False, repr=False)
+    _motion_samples: deque[tuple[float, float, float, float]] = field(
+        default_factory=deque, init=False, repr=False
+    )
+    """`(now, ground_x, ground_y, box_height)` of recent upright detections,
+    at most `thresholds.walk_window_seconds` old -- see `_ground_motion`."""
+    _bed_latched: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.confirm_frames = max(1, self.confirm_frames)
@@ -796,7 +885,7 @@ class StateTracker:
         """
         if self._current == "on_floor":
             return None
-        self._current = "on_floor"
+        self._set_current("on_floor")
         self._last_confidence = confidence
         self._pending = None
         return "on_floor", confidence
@@ -961,22 +1050,68 @@ class StateTracker:
             return True
         return (now - self._undetected_since) < self.bed_hold_seconds
 
+    def _record_motion(self, pose: PoseResult, now: float) -> None:
+        x, y = ground_xy(pose)
+        height = max(pose.bbox[3] - pose.bbox[1], 0.05)
+        self._motion_samples.append((now, x, y, height))
+        self._prune_motion(now)
+
+    def _prune_motion(self, now: float) -> None:
+        window = self.thresholds.walk_window_seconds
+        while self._motion_samples and now - self._motion_samples[0][0] > window:
+            self._motion_samples.popleft()
+
+    def _ground_motion(self) -> float:
+        """How far an upright person moved over the recent window, in body
+        heights: the 2D range of the ground point divided by the latest box
+        height, plus the net log change in box height (moving towards or
+        away from the camera). `0.0` with fewer than two samples."""
+        if len(self._motion_samples) < 2:
+            return 0.0
+        xs = [s[1] for s in self._motion_samples]
+        ys = [s[2] for s in self._motion_samples]
+        first_height = self._motion_samples[0][3]
+        height = self._motion_samples[-1][3]
+        ground_range = math.hypot(max(xs) - min(xs), max(ys) - min(ys)) / height
+        return ground_range + abs(math.log(height / first_height))
+
+    def _latch_holds(self, zone: ZoneName, ground_zone: ZoneName, moving: bool) -> bool:
+        """Whether `bed_latch` turns this upright frame into `sitting_up`:
+        latched, feet still on the bed, not in a door/bathroom zone, and not
+        visibly walking -- see `ClassifyThresholds.bed_latch`."""
+        return (
+            self.thresholds.bed_latch
+            and self._bed_latched
+            and ground_zone == "bed"
+            and zone not in ("door", "bathroom_path")
+            and not moving
+        )
+
+    def _set_current(self, state: PersonStateName) -> None:
+        self._current = state
+        if state == "in_bed":
+            self._bed_latched = True
+        elif state in ("standing", "walking", "on_floor", "absent"):
+            self._bed_latched = False
+
     def update(
         self,
         pose: PoseResult | None,
         zone: ZoneName,
-        now: float,  # noqa: ARG002 - accepted for parity with capture.gate's injected-clock convention
+        now: float,
+        ground_zone: ZoneName | None = None,
     ) -> tuple[PersonStateName, float] | None:
         """Classify one frame and return `(state, confidence)` if this update
         should be published, or `None` if hysteresis is still waiting on
         more agreeing frames (or nothing changed at all).
 
-        `now` is accepted but not currently used for the confirm-frame
-        count itself -- hysteresis here counts *frames*, not wall-clock
-        time, since `perceive`'s frame rate already varies with
-        `capture`'s motion gate -- kept for interface symmetry with the
-        rest of the codebase's explicit-clock convention, and because a
-        future time-windowed walk detector would need it.
+        Hysteresis counts *frames*, not wall-clock time, since `perceive`'s
+        frame rate already varies with `capture`'s motion gate; `now` drives
+        the time-based rules (absence, fall drop, `walk_mode="ground"`).
+
+        `ground_zone` is the zone of the person's feet
+        (`ground_zone_for_pose`); only `thresholds.bed_latch` reads it, and
+        it defaults to `zone` when the caller does not supply it.
 
         Fix 1/Fix 3 (docs/FLOOR_DETECTION_HANDOFF.md section 9) layer two
         more ways to reach `on_floor` on top of `classify_pose`'s own
@@ -1100,7 +1235,10 @@ class StateTracker:
             if self.thresholds.hold_floor and self._current == "on_floor":
                 return None
             if (
-                self.thresholds.bed_vanish_hold
+                (
+                    self.thresholds.bed_vanish_hold
+                    or (self.thresholds.bed_latch and self._bed_latched)
+                )
                 and self._last_seen_zone == "bed"
                 # Someone walking through the bed zone is more likely leaving
                 # the frame than getting under the covers.
@@ -1111,18 +1249,44 @@ class StateTracker:
                 return None
         else:
             self._undetected_since = None
-            self._last_seen_zone = zone
-
-        self._last_confidence = confidence
-        self._last_zone = zone
 
         if state == "standing" and pose is not None:
-            centroid_x, _ = centroid_of(pose)
-            self._centroid_x_history.append(centroid_x)
-            if self._is_walking():
+            self._record_motion(pose, now)
+            moving = self._ground_motion() >= self.thresholds.walk_motion_threshold
+            if self.thresholds.walk_mode == "legacy":
+                centroid_x, _ = centroid_of(pose)
+                self._centroid_x_history.append(centroid_x)
+                if self.thresholds.bed_latch:
+                    moving = moving or self._is_walking()
+            if self._latch_holds(zone, ground_zone or zone, moving):
+                # Latched in bed with the feet still on it and no walking:
+                # sat up, not out of bed yet.
+                state = "sitting_up"
+            elif self.thresholds.walk_mode == "ground":
+                if moving:
+                    state = "walking"
+            elif self._is_walking():
                 state = "walking"
         else:
             self._centroid_x_history.clear()
+            if pose is not None:
+                # A non-upright detection ages the motion window but does
+                # not wipe it: one mid-stride misread must not restart it.
+                self._prune_motion(now)
+
+        if (
+            self.thresholds.upright_zone_from_feet
+            and ground_zone is not None
+            and state in ("standing", "walking")
+        ):
+            # An upright person is where their feet are. From a camera at
+            # the foot of the bed, someone walking past it covers the bed in
+            # the image while standing on the floor in front of it.
+            zone = ground_zone
+        if pose is not None:
+            self._last_seen_zone = zone
+        self._last_confidence = confidence
+        self._last_zone = zone
 
         if state in self.IMMEDIATE_STATES:
             if pose is not None:
@@ -1132,7 +1296,7 @@ class StateTracker:
                 self._pending = None
             if state == self._current:
                 return None
-            self._current = state
+            self._set_current(state)
             return state, confidence
 
         if state == self._current:
@@ -1146,7 +1310,7 @@ class StateTracker:
             self._pending = _PendingChange(state=state, confidence=confidence, count=1)
 
         if self._pending.count >= self.confirm_frames:
-            self._current = state
+            self._set_current(state)
             confirmed_confidence = self._pending.confidence
             self._pending = None
             return state, confirmed_confidence

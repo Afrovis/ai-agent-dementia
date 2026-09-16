@@ -500,7 +500,9 @@ class Session:
             return rule5
 
         if self.phase == Phase.IDLE:
-            if state in ("sitting_up", "standing") and self.config.in_night_window(now):
+            # `walking` too: a bed exit can confirm straight into `walking`
+            # without a confirmed `standing` frame in between.
+            if state in ("sitting_up", "standing", "walking") and self.config.in_night_window(now):
                 self._observing_since = now
                 return self._apply(Phase.OBSERVING, reason=f"person_{state}", now=now)
             return None
