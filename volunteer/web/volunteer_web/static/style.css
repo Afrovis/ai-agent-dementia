@@ -1,7 +1,95 @@
+:root {
+  --ink: #1a1a1a;
+  --muted: #5a6472;
+  --accent: #1a6fd6;
+  --border: #d8dee6;
+  --bg: #ffffff;
+}
+
 body {
   font-family: system-ui, sans-serif;
   max-width: 40rem;
-  margin: 4rem auto;
-  padding: 0 1rem;
-  color: #1a1a1a;
+  margin: 3rem auto;
+  padding: 0 1.25rem;
+  color: var(--ink);
+  background: var(--bg);
+  line-height: 1.5;
+}
+
+h1 {
+  font-size: 1.6rem;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.error {
+  color: #b3261e;
+}
+
+.checklist {
+  padding-left: 1.25rem;
+}
+
+button,
+.button {
+  display: inline-block;
+  font-size: 1rem;
+  padding: 0.7rem 1.4rem;
+  margin: 0.4rem 0.4rem 0.4rem 0;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border);
+  background: var(--accent);
+  color: white;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+button:disabled {
+  background: var(--border);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+#consent-form label {
+  display: block;
+  margin: 0.6rem 0;
+}
+
+#setup-preview {
+  width: 100%;
+  max-width: 32rem;
+  border-radius: 0.5rem;
+  background: black;
+  display: block;
+  margin: 1rem 0;
+}
+
+.prompt-text {
+  font-size: 2.2rem;
+  font-weight: 600;
+  text-align: center;
+  margin: 3rem 0 0.5rem;
+}
+
+.prompt-safety {
+  text-align: center;
+  color: var(--muted);
+}
+
+#turnstile-container {
+  margin: 1rem 0;
+  min-height: 1px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #e7ecf3;
+    --muted: #9aa7b6;
+    --accent: #4c9bff;
+    --border: #333d4a;
+    --bg: #14181f;
+  }
 }

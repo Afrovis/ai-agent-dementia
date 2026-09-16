@@ -436,3 +436,13 @@ Running list of problems found during implementation, with date and item.
   Needs an explicit glob: `node --test "web/tests/js/*.test.cjs"`. Test
   files are named `*.test.cjs` (CommonJS) so `static/crypto.js` can stay a
   plain script with no bundler and still be `require()`-able from the test.
+- 2026-09-16, V6: built without a real camera or a cached headless browser
+  on this machine, so this is unverified against V6's own acceptance
+  criteria: Turnstile's interaction-only behavior, an actual recording in
+  Chrome and Safari, the refused-camera-permission message, and a devtools
+  network check that nothing leaves the page except self and Turnstile.
+  script.json's `walking`/`standing` markers fall through to `upright` in
+  `tools/video_eval/video_eval/visualize.py`'s `_manual_state` (only
+  `in_bed`/`sitting_up`/`on_floor`/`absent` are mapped there) -- harmless for
+  now since markers are stored metadata, not live-rendered, but worth fixing
+  in `_manual_state` before any future `clip.yaml` actually uses them.

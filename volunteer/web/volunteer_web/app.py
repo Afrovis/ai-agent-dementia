@@ -221,12 +221,21 @@ def create_app(
             raise HTTPException(403, str(exc)) from exc
         return Response(status_code=204)
 
-    app.mount(
-        "/sample", StaticFiles(directory=data_root / "sample", check_dir=False), name="sample"
-    )
-    app.mount(
-        "/prompts", StaticFiles(directory=data_root / "prompts", check_dir=False), name="prompts"
-    )
+    @app.get("/record")
+    def record_page() -> FileResponse:
+        return FileResponse(STATIC_DIR / "record.html")
+
+    @app.get("/s/{submission_id}")
+    def status_page(submission_id: str) -> FileResponse:
+        return FileResponse(STATIC_DIR / "status.html")
+
+    # StaticFiles re-checks the directory exists on every request even with
+    # check_dir=False (that flag only skips the constructor-time check), so
+    # these must exist before the first request rather than only at mount time.
+    (data_root / "sample").mkdir(parents=True, exist_ok=True)
+    (data_root / "prompts").mkdir(parents=True, exist_ok=True)
+    app.mount("/sample", StaticFiles(directory=data_root / "sample"), name="sample")
+    app.mount("/prompts", StaticFiles(directory=data_root / "prompts"), name="prompts")
 
     if STATIC_DIR.exists():
         app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
