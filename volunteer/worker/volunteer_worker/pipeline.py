@@ -19,9 +19,14 @@ class DisallowedSubcommand(Exception):
 
 
 def run(subcommand: str, args: list[str], *, data_root: str, python: str = "python") -> str:
-    """Run `python -m video_eval <subcommand> --data-root <data_root> <args>`.
+    """Run `python -m video_eval --data-root <data_root> <subcommand> <args>`.
 
-    Returns captured stdout. Raises `subprocess.CalledProcessError` (with
+    `--data-root` is declared on video_eval's top-level parser, before the
+    subparsers, so it must precede the subcommand -- argparse treats
+    anything after the subcommand name as belonging to that subcommand only.
+
+    Returns captured stdout (the subcommand's `json.dumps(result)` line, per
+    `video_eval.__main__.main`). Raises `subprocess.CalledProcessError` (with
     stderr on the exception) on a non-zero exit, so the caller can put it in
     `error_detail` without a plaintext video ever reaching a message the
     volunteer sees.
@@ -30,6 +35,6 @@ def run(subcommand: str, args: list[str], *, data_root: str, python: str = "pyth
         raise DisallowedSubcommand(
             f"{subcommand!r} is not on the allowlist {sorted(ALLOWED_SUBCOMMANDS)}"
         )
-    command = [python, "-m", "video_eval", subcommand, "--data-root", data_root, *args]
+    command = [python, "-m", "video_eval", "--data-root", data_root, subcommand, *args]
     result = subprocess.run(command, capture_output=True, text=True, check=True)
     return result.stdout

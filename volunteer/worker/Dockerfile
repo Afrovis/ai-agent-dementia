@@ -12,6 +12,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
+COPY shared/ /app/shared/
 COPY services/perceive/ /app/services/perceive/
 COPY services/capture/ /app/services/capture/
 COPY tools/video_eval/ /app/tools/video_eval/
@@ -22,7 +23,13 @@ COPY volunteer/worker/ /app/volunteer/worker/
 # wheel on PyPI (only up to 0.10.18 there); services/perceive/Dockerfile
 # does not pin it either, for the same reason, and takes whatever
 # `mediapipe>=0.10,<1.0` resolves to on the build platform.
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
+#
+# nc_shared (shared/) is required transitively: capture.main imports
+# nc_shared.bus, and video_eval.predict imports capture.main even though
+# `worker` never opens a Redis connection -- discovered by running the
+# real pipeline end to end, not by reading the import graph.
+RUN pip install --no-cache-dir -e /app/shared \
+    && pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu \
     && pip install --no-cache-dir -e "/app/services/perceive[mediapipe,yolo]" \
     && pip install --no-cache-dir -e /app/services/capture -e /app/tools/video_eval \
     && pip install --no-cache-dir -e /app/volunteer/common \

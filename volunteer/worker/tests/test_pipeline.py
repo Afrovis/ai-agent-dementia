@@ -29,9 +29,9 @@ def test_allowed_subcommand_builds_the_expected_command(monkeypatch) -> None:
         "python3.12",
         "-m",
         "video_eval",
-        "predict",
         "--data-root",
         "/data",
+        "predict",
         "--clip",
         "abc",
     ]

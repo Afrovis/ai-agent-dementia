@@ -446,3 +446,38 @@ Running list of problems found during implementation, with date and item.
   `in_bed`/`sitting_up`/`on_floor`/`absent` are mapped there) -- harmless for
   now since markers are stored metadata, not live-rendered, but worth fixing
   in `_manual_state` before any future `clip.yaml` actually uses them.
+- 2026-09-16, V7: `worker/Dockerfile` was missing `COPY shared/` and
+  `pip install -e /app/shared`. `video_eval.predict` imports
+  `capture.main`, which imports `nc_shared.bus` even though `worker` never
+  opens a Redis connection -- `python -m video_eval predict` failed with
+  `ModuleNotFoundError: No module named 'nc_shared'` until this was added.
+  `--data-root` is also a top-level `video_eval` flag and must precede the
+  subcommand (`--data-root X predict ...`, not `predict --data-root X`);
+  `pipeline.run` initially built the command the other way round. Found by
+  actually running a synthetic clip through the built image end to end
+  (V7's own acceptance test), not by reading `video_eval`'s source.
+- 2026-09-16, V7: installing `torch` alone from the CPU wheel index, then
+  letting `ultralytics` (a `perceive[yolo]` dependency) pull in `torchvision`
+  from default PyPI separately, gives a `torchvision` built against a
+  different `torch` ABI: `RuntimeError: operator torchvision::nms does not
+  exist` on the first real YOLO inference. Fixed by installing
+  `torch torchvision` together from the same
+  `https://download.pytorch.org/whl/cpu` index in one command.
+  `services/perceive/Dockerfile` has the same latent bug (installs `torch`
+  alone before `perceive[yolo]`) -- worth a matching fix there, since this
+  was never exercised end to end until `worker`'s build did.
+- 2026-09-16, V7: `tools/video_eval/video_eval/visualize.py`'s
+  `_render_frame` hardcoded `item["bridge_letterbox_path"]`, but
+  `prepare_video` only ever writes the manifest key for whichever
+  `--variant` was actually prepared (`bridge_path` for `squash`,
+  `bridge_letterbox_640_path` for `letterbox640`) -- so `visualize --mode
+  pipeline` raised `KeyError` for every variant except `letterbox` itself,
+  including the `letterbox640` variant this project uses throughout.
+  Fixed in `visualize.py` to look up whichever bridge key the frame record
+  actually has, via `video_eval.paths.BRIDGE_VARIANTS`. This is a bug in
+  shared tooling, not `volunteer/`, so it may also affect other callers of
+  `visualize --mode pipeline` with a non-`letterbox` variant. Confirmed
+  fixed with a full end-to-end run: a synthetic `ffmpeg testsrc` clip,
+  encrypted into chunks and pushed through `run_once` in the real built
+  `worker` image, reached `ready` and decrypted into a valid, ffprobe-
+  playable MP4 -- V7's stated acceptance test.
