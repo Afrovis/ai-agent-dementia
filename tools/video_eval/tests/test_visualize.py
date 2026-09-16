@@ -3,7 +3,13 @@ import json
 import yaml
 
 from video_eval.common import write_jsonl
-from video_eval.visualize import _current_manual, _load_inputs, _manual_state, _runtime_to_source
+from video_eval.visualize import (
+    _current_manual,
+    _fitted_rect,
+    _load_inputs,
+    _manual_state,
+    _runtime_to_source,
+)
 
 
 def test_manual_markers_hold_until_the_next_timestamp():
@@ -42,8 +48,22 @@ def test_manual_actions_include_extended_recorder_script_names():
 
 
 def test_runtime_letterbox_coordinates_map_back_to_source_image():
-    assert _runtime_to_source((0.5, 0.125)) == (0.5, 0.0)
-    assert _runtime_to_source((0.5, 0.875)) == (0.5, 1.0)
+    assert _runtime_to_source((0.5, 0.125), 16 / 9) == (0.5, 0.0)
+    assert _runtime_to_source((0.5, 0.875), 16 / 9) == (0.5, 1.0)
+
+
+def test_runtime_coordinates_follow_the_source_aspect():
+    # A 3:2 camera letterboxed into 4:3 has 1/18 bars top and bottom.
+    x, y = _runtime_to_source((0.5, 1 / 18), 3 / 2)
+    assert (x, round(y, 9)) == (0.5, 0.0)
+    # A portrait camera is pillarboxed instead.
+    x, y = _runtime_to_source((0.25, 0.3), 2 / 3)
+    assert (round(x, 9), y) == (0.0, 0.3)
+
+
+def test_fitted_rect_matches_where_the_frame_is_pasted():
+    assert _fitted_rect((24, 92, 900, 506), 16 / 9) == (24, 92, 900, 506)
+    assert _fitted_rect((24, 92, 900, 506), 3 / 2) == (94, 92, 759, 506)
 
 
 def test_pipeline_visualization_uses_pose_data_from_prediction(tmp_path):

@@ -78,6 +78,8 @@ class RenderInputs:
     zones: dict[str, Any]
     pipeline_tag: str
     pipeline_backend: str
+    reference: list[str | None]
+    label: str | None = None
 
 
 def _font(size: int, *, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -98,7 +100,35 @@ def _font(size: int, *, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFon
     return ImageFont.load_default()
 
 
-def _load_inputs(root: Path, clip_id: str, pipeline_tag: str | None) -> RenderInputs:
+def _reference_states(clip_dir: Path, frames: list[dict[str, Any]]) -> list[str | None]:
+    """Per-frame state from the confirmed `labels/reference.yaml`, or `[]`."""
+    path = clip_dir / "labels" / "reference.yaml"
+    if not path.exists():
+        return []
+    timeline = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("timeline") or []
+    states: list[str | None] = []
+    for frame in frames:
+        t_s = float(frame["t_s"])
+        states.append(
+            next(
+                (
+                    str(span["state"])
+                    for span in timeline
+                    if float(span["from_s"]) <= t_s < float(span["to_s"])
+                ),
+                None,
+            )
+        )
+    return states
+
+
+def _load_inputs(
+    root: Path,
+    clip_id: str,
+    pipeline_tag: str | None,
+    zones_path: Path | None = None,
+    label: str | None = None,
+) -> RenderInputs:
     clip_dir = root / "clips" / clip_id
     clip = yaml.safe_load((clip_dir / "clip.yaml").read_text(encoding="utf-8"))
     frames = read_jsonl(clip_dir / "frames.jsonl")
@@ -128,8 +158,12 @@ def _load_inputs(root: Path, clip_id: str, pipeline_tag: str | None) -> RenderIn
     # New predictions carry the canonical pose geometry needed by their own
     # visualization.  Keep the old raw-detection cache as a compatibility
     # source for predictions produced before that field existed.
-    poses = read_jsonl(cache_path) if cache_path.exists() else pipeline
-    zones_path = clip_dir / "zones.yaml"
+    # Replayed predictions (`scripts/state_sweep.py --predictions-tag`) carry
+    # the exact detection they were classified from; prefer it to a cache that
+    # may be a different input size.
+    carries_pose = any("dets" in record for record in pipeline)
+    poses = read_jsonl(cache_path) if cache_path.exists() and not carries_pose else pipeline
+    zones_path = zones_path or clip_dir / "zones.yaml"
     zones = yaml.safe_load(zones_path.read_text(encoding="utf-8")) if zones_path.exists() else {}
 
     count = len(frames)
@@ -148,6 +182,8 @@ def _load_inputs(root: Path, clip_id: str, pipeline_tag: str | None) -> RenderIn
         zones,
         pipeline_tag,
         pipeline_backend,
+        _reference_states(clip_dir, frames),
+        label,
     )
 
 
@@ -181,17 +217,40 @@ def _manual_state(action: str | None) -> str | None:
 
 
 def _fit(image: Image.Image, size: tuple[int, int]) -> Image.Image:
+    # Scale up as well as down: the overlays are drawn over the whole target
+    # rectangle, so a 640-wide review frame left at its own size would sit
+    # inside a black border with every box and zone misplaced around it.
     result = Image.new("RGB", size, (0, 0, 0))
-    copy = image.copy()
-    copy.thumbnail(size, Image.Resampling.LANCZOS)
+    scale = min(size[0] / image.width, size[1] / image.height)
+    fitted = (max(1, round(image.width * scale)), max(1, round(image.height * scale)))
+    copy = image.resize(fitted, Image.Resampling.LANCZOS)
     result.paste(copy, ((size[0] - copy.width) // 2, (size[1] - copy.height) // 2))
     return result
 
 
-def _runtime_to_source(point: tuple[float, float]) -> tuple[float, float]:
-    """Map normalized 4:3 runtime coordinates through its 16:9 letterbox."""
+RUNTIME_ASPECT = 4 / 3
+
+
+def _runtime_to_source(point: tuple[float, float], aspect: float) -> tuple[float, float]:
+    """Map normalized 4:3 runtime coordinates back onto a source frame of
+    `aspect` (width / height): through the letterbox bars for a wider camera
+    (16:9 gives the 0.125 bars), or the pillarbox bars for a narrower one."""
     x, y = point
-    return x, (y - 0.125) / 0.75
+    if aspect >= RUNTIME_ASPECT:
+        content = RUNTIME_ASPECT / aspect
+        return x, (y - (1 - content) / 2) / content
+    content = aspect / RUNTIME_ASPECT
+    return (x - (1 - content) / 2) / content, y
+
+
+def _fitted_rect(rect: tuple[int, int, int, int], aspect: float) -> tuple[int, int, int, int]:
+    """Where `_fit` places an image of `aspect` inside `rect`."""
+    x, y, width, height = rect
+    if aspect >= width / height:
+        fitted_height = round(width / aspect)
+        return x, y + (height - fitted_height) // 2, width, fitted_height
+    fitted_width = round(height * aspect)
+    return x + (width - fitted_width) // 2, y, fitted_width, height
 
 
 def _point(rect: tuple[int, int, int, int], normalized: tuple[float, float]) -> tuple[int, int]:
@@ -204,7 +263,7 @@ def _draw_pose(
     pose_record: dict[str, Any],
     rect: tuple[int, int, int, int],
     *,
-    source_mapping: bool,
+    source_mapping: float | None,
 ) -> None:
     detections = pose_record.get("dets") or []
     if detections:
@@ -245,7 +304,7 @@ def _draw_pose(
     for raw_x, raw_y, visibility in keypoints:
         normalized = (float(raw_x), float(raw_y))
         if source_mapping:
-            normalized = _runtime_to_source(normalized)
+            normalized = _runtime_to_source(normalized, source_mapping)
         mapped.append(_point(rect, normalized) if visibility >= 0.3 else None)
     for first, second in edges:
         if first < len(mapped) and second < len(mapped) and mapped[first] and mapped[second]:
@@ -261,11 +320,31 @@ def _draw_pose(
 
     x1, y1, x2, y2 = detection["bbox"]
     if source_mapping:
-        x1, y1 = _runtime_to_source((x1, y1))
-        x2, y2 = _runtime_to_source((x2, y2))
+        x1, y1 = _runtime_to_source((x1, y1), source_mapping)
+        x2, y2 = _runtime_to_source((x2, y2), source_mapping)
     left, top = _point(rect, (x1, y1))
     right, bottom = _point(rect, (x2, y2))
     draw.rectangle((left, top, right, bottom), outline=(39, 236, 208), width=3)
+
+
+def _draw_ground(
+    draw: ImageDraw.ImageDraw,
+    record: dict[str, Any],
+    rect: tuple[int, int, int, int],
+    *,
+    source_mapping: float | None,
+) -> None:
+    """The feet point `perceive` tests against zones: magenta when on the bed."""
+    ground = record.get("ground")
+    if not ground:
+        return
+    normalized = (float(ground[0]), float(ground[1]))
+    if source_mapping:
+        normalized = _runtime_to_source(normalized, source_mapping)
+    x, y = _point(rect, normalized)
+    color = (255, 64, 200) if record.get("ground_zone") == "bed" else (255, 255, 255)
+    draw.line((x - 9, y, x + 9, y), fill=color, width=3)
+    draw.line((x, y - 9, x, y + 9), fill=color, width=3)
 
 
 def _draw_zone(
@@ -273,13 +352,13 @@ def _draw_zone(
     points: list[list[float]],
     rect: tuple[int, int, int, int],
     *,
-    source_mapping: bool,
+    source_mapping: float | None,
 ) -> None:
     mapped = []
     for raw in points:
         normalized = (float(raw[0]), float(raw[1]))
         if source_mapping:
-            normalized = _runtime_to_source(normalized)
+            normalized = _runtime_to_source(normalized, source_mapping)
         mapped.append(_point(rect, normalized))
     if len(mapped) >= 3:
         draw.line(mapped + [mapped[0]], fill=(255, 196, 79), width=3)
@@ -334,20 +413,30 @@ def _timeline_values(inputs: RenderInputs, mode: VisualizationMode) -> list[str 
 
 
 def _draw_timeline(
-    draw: ImageDraw.ImageDraw, values: list[str | None], index: int, duration_s: float
+    draw: ImageDraw.ImageDraw,
+    values: list[str | None],
+    index: int,
+    duration_s: float,
+    reference: list[str | None] | None = None,
 ) -> None:
     x, y, width, height = 24, 636, 1232, 54
     draw.rounded_rectangle((x, y, x + width, y + height), radius=9, fill=PANEL)
-    bar_y, bar_h = y + 24, 12
-    for pixel in range(width):
-        record_index = min(len(values) - 1, math.floor(pixel / width * len(values)))
-        state = values[record_index]
-        draw.line(
-            (x + pixel, bar_y, x + pixel, bar_y + bar_h),
-            fill=STATE_COLORS.get(state or "", (73, 83, 101)),
-        )
+    rows = [(values, y + 24, 12)]
+    if reference:
+        # Pipeline on top, confirmed reference underneath.
+        rows = [(values, y + 21, 12), (reference, y + 37, 12)]
+        _text(draw, (x + 60, y + 4), "pipeline (top) vs reference (bottom)", 13, color=MUTED)
+    for series, bar_y, bar_h in rows:
+        for pixel in range(width):
+            record_index = min(len(series) - 1, math.floor(pixel / width * len(series)))
+            state = series[record_index]
+            draw.line(
+                (x + pixel, bar_y, x + pixel, bar_y + bar_h),
+                fill=STATE_COLORS.get(state or "", (73, 83, 101)),
+            )
+    top, bottom = rows[0][1], rows[-1][1] + rows[-1][2]
     marker_x = x + round(index / max(1, len(values) - 1) * width)
-    draw.line((marker_x, bar_y - 5, marker_x, bar_y + bar_h + 5), fill=(255, 255, 255), width=3)
+    draw.line((marker_x, top - 5, marker_x, bottom + 3), fill=(255, 255, 255), width=3)
     _text(draw, (x + 10, y + 4), "0:00", 13, color=MUTED)
     end = f"{int(duration_s) // 60}:{int(duration_s) % 60:02d}"
     end_width = draw.textbbox((0, 0), end, font=_font(13))[2]
@@ -380,7 +469,8 @@ def _render_frame(inputs: RenderInputs, mode: VisualizationMode, index: int) -> 
         "pipeline": f"{inputs.pipeline_backend} → zone → rules → temporal tracker",
         "vision": "Qwen3-VL:8b • semantic whole-frame classification",
     }
-    _text(draw, (24, 20), titles[mode], 29, color=accent, bold=True)
+    title = titles[mode] + (f" • {inputs.label.upper()}" if inputs.label else "")
+    _text(draw, (24, 20), title, 29, color=accent, bold=True)
     _text(draw, (24, 55), subtitles[mode], 17, color=MUTED)
     clock = f"{int(t_s) // 60:02d}:{t_s % 60:04.1f}"
     _text(draw, (1150, 27), clock, 22, bold=True)
@@ -389,14 +479,17 @@ def _render_frame(inputs: RenderInputs, mode: VisualizationMode, index: int) -> 
     draw.rectangle((958, 122, 1246, 338), outline=(71, 86, 108), width=2)
     _text(draw, (966, 313), "letterboxed", 12, color=(186, 197, 213), bold=True)
 
-    main_rect = (24, 92, 900, 506)
+    source_image = Image.open(source_path)
+    aspect = source_image.width / source_image.height
+    main_rect = _fitted_rect((24, 92, 900, 506), aspect)
     inset_rect = (958, 122, 288, 216)
     if mode == "pipeline":
         if inputs.zones.get("bed"):
-            _draw_zone(draw, inputs.zones["bed"], main_rect, source_mapping=True)
-            _draw_zone(draw, inputs.zones["bed"], inset_rect, source_mapping=False)
-        _draw_pose(draw, inputs.poses[index], main_rect, source_mapping=True)
-        _draw_pose(draw, inputs.poses[index], inset_rect, source_mapping=False)
+            _draw_zone(draw, inputs.zones["bed"], main_rect, source_mapping=aspect)
+            _draw_zone(draw, inputs.zones["bed"], inset_rect, source_mapping=None)
+        _draw_pose(draw, inputs.poses[index], main_rect, source_mapping=aspect)
+        _draw_pose(draw, inputs.poses[index], inset_rect, source_mapping=None)
+        _draw_ground(draw, inputs.pipeline[index], main_rect, source_mapping=aspect)
     elif mode == "vision":
         draw.rectangle((30, 98, 918, 592), outline=accent, width=4)
         _text(draw, (39, 106), "WHOLE FRAME → LOCAL VLM", 15, color=accent, bold=True)
@@ -457,6 +550,20 @@ def _render_frame(inputs: RenderInputs, mode: VisualizationMode, index: int) -> 
             bold=True,
         )
         note = f"Backend {record.get('backend_ms', 0):.1f} ms • tag {inputs.pipeline_tag}"
+        if inputs.reference:
+            truth = inputs.reference[index]
+            upright = {"standing", "walking"}
+            if truth is None:
+                verdict, color = "", MUTED
+            elif truth == state:
+                verdict, color = "  ✓ match", (74, 222, 128)
+            elif truth in upright and state in upright:
+                verdict, color = "  ~ both upright", (250, 204, 82)
+            else:
+                verdict, color = "  ✗ differs", (255, 95, 95)
+            reference_label = (truth or "unlabelled").replace("_", " ")
+            _text(draw, (panel_x, 551), f"reference: {reference_label}{verdict}", 15, color=color)
+            note = f"tag {inputs.pipeline_tag}"
     else:
         record = inputs.vision[index]
         state = record.get("posture")
@@ -489,10 +596,16 @@ def _render_frame(inputs: RenderInputs, mode: VisualizationMode, index: int) -> 
             _text(draw, (38, 605 + line_index * 16), line, 13, color=MUTED)
     else:
         for line_index, line in enumerate(note_lines[:2]):
-            _text(draw, (panel_x, 561 + line_index * 16), line, 12, color=MUTED)
+            _text(draw, (panel_x, 572 + line_index * 14), line, 12, color=MUTED)
 
     duration_s = float(inputs.clip["video"]["duration_s"])
-    _draw_timeline(draw, _timeline_values(inputs, mode), index, duration_s)
+    _draw_timeline(
+        draw,
+        _timeline_values(inputs, mode),
+        index,
+        duration_s,
+        inputs.reference if mode == "pipeline" else None,
+    )
     return canvas
 
 
@@ -504,17 +617,20 @@ def render_visualization(
     output_dir: Path | None = None,
     pipeline_tag: str | None = None,
     force: bool = False,
+    zones_path: Path | None = None,
+    label: str | None = None,
 ) -> dict[str, Any]:
     """Render one silent H.264 visualization and return its provenance summary."""
     started_at = time.monotonic()
     root = EvalPaths.for_clip(clip_id, root).root
-    inputs = _load_inputs(root, clip_id, pipeline_tag)
+    inputs = _load_inputs(root, clip_id, pipeline_tag, zones_path, label)
     if mode == "vision" and len(inputs.vision) != len(inputs.frames):
         raise FileNotFoundError(
             f"local vision labels are incomplete for {clip_id}; run label-local first"
         )
     output_dir = output_dir or root / "analysis"
-    output = output_dir / f"{clip_id}__{mode}.mp4"
+    suffix = f"__{label}" if label else ""
+    output = output_dir / f"{clip_id}__{mode}{suffix}.mp4"
     meta_path = output.with_suffix(".meta.json")
     parameters = {
         "clip_id": clip_id,
@@ -522,6 +638,8 @@ def render_visualization(
         "fps": FPS,
         "canvas": list(CANVAS),
         "pipeline_tag": inputs.pipeline_tag,
+        "zones": str(zones_path) if zones_path else None,
+        "label": label,
         "audio": False,
     }
     if output.exists() and not force:

@@ -133,6 +133,37 @@ Findings:
    Pooled over all clips, the best config still reads 27 walking frames as
    `absent` and 51 standing frames as `sitting_up`.
 
+### Visual check
+
+Side-by-side review videos for clips 01-04 live in
+`data-ai-agent-dementia/analysis/walking-bed-2026-09-16/`
+(`<clip>__pipeline__baseline.mp4`, `<clip>__pipeline__improved.mp4`). The
+segmented zones they use are in its `zones/` folder. "Baseline" is
+`perceive.main`'s production defaults with the clips' own zones; "improved" is
+the last-but-one config in the table above. Each frame shows the reference
+state next to the pipeline state (match / both upright / differs), the feet
+point as a cross (magenta when on the bed), and a two-row timeline (pipeline
+above, reference below). To regenerate:
+
+```bash
+python tools/video_eval/scripts/state_sweep.py --data-root ../data-ai-agent-dementia \
+    --zones-dir ../data-ai-agent-dementia/analysis/walking-bed-2026-09-16/zones \
+    --set bed_vanish_hold=true --set sitting_thigh_ratio=0.55 \
+    --set absent_confirm_seconds=3 --set hold_floor=true \
+    --set walk_displacement_threshold=0.08 --set confirm_frames=2 \
+    --set upright_zone_from_feet=true \
+    --predictions-tag replay_yolo11s-pose-letterbox640-improved
+python -m video_eval --data-root ../data-ai-agent-dementia visualize \
+    --clip <clip> --mode pipeline \
+    --pipeline-tag replay_yolo11s-pose-letterbox640-improved \
+    --zones ../data-ai-agent-dementia/analysis/walking-bed-2026-09-16/zones/<clip>.yaml \
+    --label improved --output-dir ../data-ai-agent-dementia/analysis/walking-bed-2026-09-16
+```
+
+Rendering these exposed two renderer bugs, fixed here: the review frame was
+never scaled up to its panel, so every overlay was misplaced, and the overlay
+mapping assumed a 16:9 camera (clip 04 is 3:2).
+
 ## 5. Recommendations
 
 1. Run `perceive.calibrate_bed` in the real room and turn on

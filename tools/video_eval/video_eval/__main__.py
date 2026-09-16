@@ -101,6 +101,12 @@ def build_parser() -> argparse.ArgumentParser:
     visualize.add_argument("--output-dir", type=Path)
     visualize.add_argument("--pipeline-tag")
     visualize.add_argument("--force", action="store_true")
+    visualize.add_argument(
+        "--zones", type=Path, help="zones YAML to draw instead of the clip's zones.yaml"
+    )
+    visualize.add_argument(
+        "--label", help="short name shown in the title and appended to the file name"
+    )
     return parser
 
 
@@ -207,6 +213,8 @@ def main(argv: list[str] | None = None) -> int:
             output_dir=args.output_dir,
             pipeline_tag=args.pipeline_tag,
             force=args.force,
+            zones_path=args.zones,
+            label=args.label,
         )
     print(json.dumps(result, sort_keys=True))
     return 0

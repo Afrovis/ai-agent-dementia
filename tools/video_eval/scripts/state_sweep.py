@@ -33,6 +33,7 @@ import yaml
 from perceive.classify import (
     ClassifyThresholds,
     StateTracker,
+    ground_xy,
     ground_zone_for_pose,
     zone_for_pose,
 )
@@ -88,23 +89,62 @@ def replay(
     rows = []
     for row in cache_rows:
         index = int(row["frame_index"])
-        admitted = gate.get(index, True)
-        if admitted and not row.get("skipped"):
+        admitted = gate.get(index, True) and not row.get("skipped")
+        chosen = pose = ground_zone = None
+        published = False
+        if admitted:
             dets = [d for d in row["dets"] if d["conf"] >= model_floor]
-            pose = to_pose(max(dets, key=lambda d: d["conf"]), mediapipe) if dets else None
+            chosen = max(dets, key=lambda d: d["conf"]) if dets else None
+            pose = to_pose(chosen, mediapipe) if chosen else None
             zone = zone_for_pose(zones, pose) if pose is not None else "other"
             ground_zone = ground_zone_for_pose(zones, pose) if pose is not None else None
-            tracker.update(pose, zone, float(row["t_s"]), ground_zone=ground_zone)
+            published = (
+                tracker.update(pose, zone, float(row["t_s"]), ground_zone=ground_zone) is not None
+            )
         snap = tracker.snapshot()
         rows.append(
             {
                 "frame_index": index,
                 "t_s": float(row["t_s"]),
                 "state": snap[0] if snap else None,
+                "state_confidence": snap[1] if snap else None,
                 "zone": snap[2] if snap else None,
+                # The rest is what `video_eval visualize --mode pipeline` draws.
+                "gated": not admitted,
+                "published": published,
+                "detected": pose is not None,
+                "detect_confidence": pose.confidence if pose is not None else None,
+                "backend_ms": float(row.get("ms") or 0.0),
+                "dets": [chosen] if chosen else [],
+                "ground": list(ground_xy(pose)) if pose is not None else None,
+                "ground_zone": ground_zone,
             }
         )
     return rows
+
+
+def write_predictions(clip: dict, rows: list[dict], tag: str, args, config: dict) -> Path:
+    """Write `rows` where `video_eval visualize --pipeline-tag <tag>` reads them."""
+    predictions = args.data_root.resolve() / "clips" / clip["id"] / "predictions"
+    predictions.mkdir(parents=True, exist_ok=True)
+    path = predictions / f"{tag}.jsonl"
+    with path.open("w") as handle:
+        for row in rows:
+            handle.write(json.dumps(row) + "\n")
+    meta = {
+        "command": "state_sweep",
+        "parameters": {
+            "backend": "mediapipe" if args.model.startswith("mediapipe") else "yolo",
+            "yolo_model": args.model,
+            "variant": args.variant,
+            "gated": not args.no_gate,
+            "zones_dir": str(args.zones_dir) if args.zones_dir else None,
+            "replayed_from": f"cache/{args.model}-{args.variant}.jsonl",
+            "config": config,
+        },
+    }
+    path.with_suffix(".meta.json").write_text(json.dumps(meta, indent=1, default=str))
+    return path
 
 
 def predicted_exits(rows: list[dict]) -> list[float]:
@@ -316,6 +356,8 @@ def run_config(clips: list[dict], config: dict[str, Any], args: argparse.Namespa
             mediapipe=args.model.startswith("mediapipe"),
         )
         per_clip[clip["id"]] = clip_counts(rows, clip["reference"], clip["timeline"])
+        if args.predictions_tag:
+            write_predictions(clip, rows, args.predictions_tag, args, config)
         if args.dump:
             args.dump.mkdir(parents=True, exist_ok=True)
             with (args.dump / f"{clip['id']}.jsonl").open("w") as handle:
@@ -386,6 +428,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--confusion", action="store_true", help="standing/walking confusion")
     parser.add_argument("--dump", type=Path, help="write replayed rows (single config only)")
     parser.add_argument("--json", type=Path, help="write every config's metrics here")
+    parser.add_argument(
+        "--predictions-tag",
+        help="write clips/<clip>/predictions/<tag>.jsonl for `video_eval visualize` "
+        "(single config only)",
+    )
     args = parser.parse_args(argv)
     # The tracker logs every fall drop; across a grid that drowns the table.
     logging.getLogger("perceive").setLevel(logging.WARNING)
@@ -408,8 +455,8 @@ def main(argv: list[str] | None = None) -> int:
         {**fixed, **dict(zip([k for k, _ in axes], combo, strict=True))}
         for combo in itertools.product(*[values for _, values in axes])
     ]
-    if args.dump and len(configs) > 1:
-        raise SystemExit("--dump needs a single config (no --grid)")
+    if (args.dump or args.predictions_tag) and len(configs) > 1:
+        raise SystemExit("--dump and --predictions-tag need a single config (no --grid)")
 
     clips = load_clips(
         args.data_root.resolve(), args.clip, args.model, args.variant, args.zones_dir
