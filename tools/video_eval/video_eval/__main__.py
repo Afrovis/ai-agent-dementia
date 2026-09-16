@@ -29,7 +29,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     predict = commands.add_parser("predict", help="run capture/perception offline")
     predict.add_argument("--clip", required=True)
-    predict.add_argument("--backend", choices=("mediapipe", "yolo"), default="mediapipe")
+    predict.add_argument(
+        "--backend", choices=("mediapipe", "yolo", "yolo26mlx"), default="mediapipe"
+    )
     predict.add_argument("--variant", choices=tuple(BRIDGE_VARIANTS), default="squash")
     predict.add_argument("--no-gate", action="store_true")
     predict.add_argument("--force", action="store_true")

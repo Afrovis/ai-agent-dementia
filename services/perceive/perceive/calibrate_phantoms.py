@@ -33,7 +33,7 @@ import redis
 import yaml
 from nc_shared.bus import Bus
 
-from perceive.backends import YoloPoseBackend, build_backend
+from perceive.backends import Yolo26MlxPoseBackend, YoloPoseBackend, build_backend
 from perceive.main import PerceiveConfig
 from perceive.phantom import Box, cluster_static_boxes
 
@@ -84,8 +84,10 @@ def calibrate(
         # the stale-result-hiding-new-results bug recalibrating must avoid.
         phantoms_file="",
     )
-    if not isinstance(backend, YoloPoseBackend):
-        raise ValueError("phantom calibration requires PERCEIVE_POSE_BACKEND=yolo")
+    if not isinstance(backend, (YoloPoseBackend, Yolo26MlxPoseBackend)):
+        raise ValueError(
+            "phantom calibration requires PERCEIVE_POSE_BACKEND=yolo or yolo26mlx"
+        )
 
     boxes: list[list[Box]] = []
     for jpeg in jpegs:
