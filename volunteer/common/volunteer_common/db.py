@@ -121,6 +121,7 @@ def get_submission(conn: sqlite3.Connection, submission_id: str) -> sqlite3.Row 
 def record_chunk(
     conn: sqlite3.Connection, submission_id: str, *, bytes_written: int, now: str
 ) -> None:
+    """Record a *new* chunk: advances `chunk_count` as well as `bytes`."""
     with transaction(conn):
         conn.execute(
             """
@@ -132,6 +133,25 @@ def record_chunk(
             WHERE id = ? AND status = 'recording'
             """,
             (bytes_written, now, now, submission_id),
+        )
+
+
+def adjust_chunk_bytes(
+    conn: sqlite3.Connection, submission_id: str, *, bytes_delta: int, now: str
+) -> None:
+    """Adjust `bytes` for a re-PUT of an already-recorded chunk (HANDOFF.md
+    5.5: "Re-putting the same n overwrites it") without advancing
+    `chunk_count`, which only counts distinct chunk indices."""
+    with transaction(conn):
+        conn.execute(
+            """
+            UPDATE submissions
+            SET bytes = bytes + ?,
+                last_chunk_at = ?,
+                updated_at = ?
+            WHERE id = ? AND status = 'recording'
+            """,
+            (bytes_delta, now, now, submission_id),
         )
 
 
