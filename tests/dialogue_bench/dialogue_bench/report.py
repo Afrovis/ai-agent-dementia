@@ -17,6 +17,7 @@ def result_to_dict(result: ModelResult, *, include_text: bool = False) -> dict[s
             "intent_correct": item.intent_correct,
             "composition_safe": item.composition_safe,
             "composition_failure": item.composition_failure,
+            "composition_copies_template": item.composition_copies_template,
             "interpret_latency_seconds": item.interpret_latency_seconds,
             "compose_latency_seconds": item.compose_latency_seconds,
         }
@@ -37,6 +38,8 @@ def result_to_dict(result: ModelResult, *, include_text: bool = False) -> dict[s
         "mean_compose_latency_seconds": result.mean_compose_latency_seconds,
         "max_compose_latency_seconds": result.max_compose_latency_seconds,
         "composition_failures_by_reason": result.failures_by_reason,
+        "template_copies": result.template_copies,
+        "distinct_compositions": result.distinct_compositions,
         "scenarios": scenarios,
     }
 
@@ -61,6 +64,10 @@ def print_report(results: list[ModelResult]) -> None:
             f"max {result.max_interpret_latency_seconds:.3f}s; "
             f"compose mean {result.mean_compose_latency_seconds:.3f}s, "
             f"max {result.max_compose_latency_seconds:.3f}s"
+        )
+        print(
+            f"  composition variety: {result.distinct_compositions} distinct, "
+            f"{result.template_copies} copied the caregiver phrase"
         )
         for reason, count in sorted(result.failures_by_reason.items()):
             print(f"  composition failures ({count}): {reason}")

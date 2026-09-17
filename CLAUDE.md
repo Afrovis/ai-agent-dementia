@@ -116,8 +116,17 @@ unit tests need no Ollama; the actual comparison command calls local Ollama:
 ```sh
 pip install -e services/agent -e tests/dialogue_bench[dev]
 pytest tests/dialogue_bench/tests
-python -m dialogue_bench --model llama3.1:8b --model qwen2.5:7b
+python -m dialogue_bench --model gemma4:e4b-mlx --model llama3.1:8b
 ```
+
+The agent can also use an MLX model served on the host by `mlx_lm.server`
+(`AGENT_LLM_BACKEND=openai`, see `.env.example`). The bench takes the same
+switch: `--backend openai --base-url http://127.0.0.1:11435`.
+`tools/llm_speedtest/` holds a one-turn latency comparison
+(`speedtest.py`) and `run_bench.sh`, which starts one MLX server per model and
+runs the bench against it. MLX servers cannot constrain output to a JSON
+schema, so the schema is sent in the prompt and replies are validated as
+strictly as Ollama's.
 
 Evaluating perception and the agent against recorded bedroom videos is
 described in [docs/VIDEO_EVAL.md](docs/VIDEO_EVAL.md): a one-time tooling

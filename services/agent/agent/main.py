@@ -75,7 +75,8 @@ from nc_shared.events import (
 
 from agent.config import AgentConfig
 from agent.goals import GOALS
-from agent.llm import ClaudeLLM, FallbackLLM, LLMClient, OllamaLLM
+from agent.llm import ClaudeLLM, FallbackLLM, LLMClient
+from agent.llm import local_llm as build_local_llm
 from agent.profile import DEFAULT_PROFILE, PersonProfile, load_profile
 from agent.rules import Phase, validate_say
 from agent.session import Session, Transition
@@ -249,11 +250,13 @@ def _maybe_publish_say(
     if llm is not None and strategy.id == "validate_and_redirect":
         composition = llm.compose(
             strategy.id,
-            strategy.say_template,
+            # The rendered phrase, so the model never sees a raw placeholder.
+            text,
             _profile_for_llm(profile),
             time_as_words(now),
             session.last_scene_note,
             session.recent_utterances[-1] if session.recent_utterances else None,
+            session.goal,
         )
         # A model failure cannot replace the caregiver's known-safe phrase.
         # The rendered template still passes the same deterministic Say gate.
@@ -643,8 +646,13 @@ def run() -> None:
     bus.ensure_group(PERSON_STREAM, PERSON_GROUP)
     bus.ensure_group(UTTERANCE_STREAM, UTTERANCE_GROUP)
     session = Session(config=config, strategies=strategies)
-    local_llm = OllamaLLM(
-        ollama_url=os.environ.get("OLLAMA_URL", "http://host.docker.internal:11434"),
+    local_llm = build_local_llm(
+        config.llm_backend,
+        url=(
+            os.environ.get("OLLAMA_URL", "http://host.docker.internal:11434")
+            if config.llm_backend == "ollama"
+            else config.llm_url
+        ),
         model=config.llm_model,
         timeout_seconds=config.llm_timeout_seconds,
     )

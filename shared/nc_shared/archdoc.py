@@ -124,6 +124,12 @@ EXTERNAL_CONNECTIONS = (
     ),
     ExternalConnection(
         "agent",
+        "OpenAI-compatible local server on the host (e.g. `mlx_lm.server`), opt-in",
+        "calls",
+        "services/agent/agent/llm.py",
+    ),
+    ExternalConnection(
+        "agent",
         "Anthropic Messages API, text-only and opt-in",
         "calls",
         "services/agent/agent/llm.py",

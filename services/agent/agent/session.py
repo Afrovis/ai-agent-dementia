@@ -98,6 +98,10 @@ from agent.strategies import (
 
 DEFAULT_GOAL = ROOT_GOAL
 
+INTENT_GOALS = {"need_restroom": RESTROOM_GOAL, "pain": COMFORT_GOAL}
+"""The only interpreted intents with a clear goal-tree meaning; every other
+intent is inert and leaves the goal where it is."""
+
 
 def _new_session_id() -> str:
     """A short, opaque session id. Not a UUID's full length: `SessionState`
@@ -707,11 +711,7 @@ class Session:
                 ),
             )
 
-        intent_goals = {
-            "need_restroom": RESTROOM_GOAL,
-            "pain": COMFORT_GOAL,
-        }
-        target_goal = intent_goals.get(intent)
+        target_goal = INTENT_GOALS.get(intent)
         if target_goal is None:
             return None
         return self.propose_goal(target_goal, f"interpreted_{intent}", now)

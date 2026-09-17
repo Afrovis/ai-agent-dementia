@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -9,6 +10,7 @@ from time import perf_counter
 
 from agent.llm import Intent, LLMClient
 from agent.rules import validate_say
+from agent.session import DEFAULT_GOAL, INTENT_GOALS
 
 from dialogue_bench.scenarios import DialogueScenario
 
@@ -22,6 +24,7 @@ class ScenarioResult:
     composition_text: str | None
     composition_safe: bool
     composition_failure: str | None
+    composition_copies_template: bool
     interpret_latency_seconds: float
     compose_latency_seconds: float
 
@@ -50,6 +53,17 @@ class ModelResult:
     @property
     def composition_pass_rate(self) -> float | None:
         return self.safe_compositions / self.scenario_count if self.scenario_count else None
+
+    @property
+    def template_copies(self) -> int:
+        """Replies that just repeat the caregiver phrase, ignoring the utterance."""
+        return sum(item.composition_copies_template for item in self.scenarios)
+
+    @property
+    def distinct_compositions(self) -> int:
+        return len(
+            {_words(item.composition_text) for item in self.scenarios if item.composition_text}
+        )
 
     @property
     def mean_interpret_latency_seconds(self) -> float | None:
@@ -117,14 +131,20 @@ def run_model(
         interpret_started = clock()
         interpretation = client.interpret(scenario.utterance, scenario.turns, scenario.profile)
         interpret_latency = clock() - interpret_started
+        # The goal the agent would hold after this interpretation.
+        goal = DEFAULT_GOAL
+        if interpretation is not None:
+            goal = INTENT_GOALS.get(interpretation.intent.value, DEFAULT_GOAL)
+        template = render_phrase(scenario.caregiver_phrase_template, scenario.profile)
         compose_started = clock()
         composition = client.compose(
             "validate_and_redirect",
-            scenario.caregiver_phrase_template,
+            template,
             scenario.profile,
             scenario.time_words,
             scenario.scene_note,
             scenario.utterance,
+            goal,
         )
         compose_latency = clock() - compose_started
         actual_intent = interpretation.intent if interpretation is not None else None
@@ -148,8 +168,20 @@ def run_model(
                 composition_text=composition_text,
                 composition_safe=composition_safe,
                 composition_failure=composition_failure,
+                composition_copies_template=composition_text is not None
+                and _words(composition_text) == _words(template),
                 interpret_latency_seconds=interpret_latency,
                 compose_latency_seconds=compose_latency,
             )
         )
     return ModelResult(model=model_name, scenarios=tuple(results))
+
+
+def render_phrase(template: str, profile: dict[str, object]) -> str:
+    """Fill the name placeholders the way ``agent.strategies.render_template`` does."""
+    name = str(profile.get("preferred_address") or profile.get("name") or "")
+    return template.replace("{name_vocative}", f", {name}" if name else "").replace("{name}", name)
+
+
+def _words(text: str | None) -> str:
+    return " ".join(re.findall(r"[a-z]+", (text or "").lower()))

@@ -3,6 +3,8 @@ across midnight."""
 
 from datetime import datetime, time
 
+import pytest
+
 from agent.config import AgentConfig
 
 
@@ -20,8 +22,10 @@ def test_from_env_defaults():
     assert config.strategies_path is None
     assert config.person_path is None
     assert config.say_min_gap_seconds == 8.0
-    assert config.llm_model == "llama3.1:8b"
+    assert config.llm_model == "gemma4:e4b-mlx"
     assert config.llm_timeout_seconds == 10.0
+    assert config.llm_backend == "ollama"
+    assert config.llm_url == "http://host.docker.internal:11435"
 
 
 def test_from_env_reads_every_key():
@@ -40,6 +44,8 @@ def test_from_env_reads_every_key():
         "AGENT_SAY_MIN_GAP_SECONDS": "10",
         "AGENT_LLM_MODEL": "qwen2.5:7b",
         "AGENT_LLM_TIMEOUT_SECONDS": "4.5",
+        "AGENT_LLM_BACKEND": "OpenAI",
+        "AGENT_LLM_URL": "http://mlx:8080",
     }
     config = AgentConfig.from_env(env)
     assert config.night_start == time(22, 30)
@@ -56,15 +62,23 @@ def test_from_env_reads_every_key():
     assert config.say_min_gap_seconds == 10.0
     assert config.llm_model == "qwen2.5:7b"
     assert config.llm_timeout_seconds == 4.5
+    assert config.llm_backend == "openai"
+    assert config.llm_url == "http://mlx:8080"
 
 
 def test_blank_optional_llm_values_use_safe_defaults():
     config = AgentConfig.from_env(
         {"AGENT_LLM_MODEL": "", "AGENT_LLM_TIMEOUT_SECONDS": "", "PERSON_PATH": ""}
     )
-    assert config.llm_model == "llama3.1:8b"
+    assert config.llm_model == "gemma4:e4b-mlx"
     assert config.llm_timeout_seconds == 10.0
+    assert config.llm_backend == "ollama"
     assert config.person_path is None
+
+
+def test_unknown_llm_backend_fails_at_startup():
+    with pytest.raises(ValueError, match="AGENT_LLM_BACKEND"):
+        AgentConfig.from_env({"AGENT_LLM_BACKEND": "vllm"})
 
 
 def test_night_window_wraps_midnight_default():
