@@ -103,3 +103,68 @@ def test_compose_gets_the_interpreted_goal_and_copies_are_counted():
     assert [item.composition_copies_template for item in result.scenarios] == [False, True]
     assert result.template_copies == 1
     assert result.distinct_compositions == 2
+
+
+def test_run_model_scores_prompt_rule_assertions():
+    scenarios = [
+        DialogueScenario(
+            id="clean",
+            utterance="hello",
+            expected_intent=Intent.FINE,
+            profile={"preferred_address": "Jean"},
+            must=("addresses_by_name",),
+            must_not=("conjunction_but", "avoid_terms"),
+            avoid_terms=("hospital",),
+        ),
+        DialogueScenario(
+            id="violates_but_and_missing_name",
+            utterance="hello",
+            expected_intent=Intent.FINE,
+            profile={"preferred_address": "Jean"},
+            must=("addresses_by_name",),
+            must_not=("conjunction_but", "avoid_terms"),
+            avoid_terms=("hospital",),
+        ),
+        DialogueScenario(
+            id="no_checks_configured",
+            utterance="hello",
+            expected_intent=Intent.FINE,
+        ),
+        DialogueScenario(
+            id="missing_composition",
+            utterance="hello",
+            expected_intent=Intent.FINE,
+            must=("addresses_by_name",),
+        ),
+    ]
+    client = FakeLLM(
+        interpretations=[
+            Interpretation(intent=Intent.FINE, distress=0),
+            Interpretation(intent=Intent.FINE, distress=0),
+            Interpretation(intent=Intent.FINE, distress=0),
+            Interpretation(intent=Intent.FINE, distress=0),
+        ],
+        compositions=[
+            Composition(text="Jean, everything is settled now."),
+            Composition(text="Everything is settled now, but rest well."),
+            Composition(text="Everything is settled now."),
+            None,
+        ],
+    )
+
+    result = run_model("fake", client, scenarios)
+
+    clean, violating, no_checks, missing = result.scenarios
+    assert clean.assertions_passed
+    assert clean.assertion_failures == ()
+    assert not violating.assertions_passed
+    assert {outcome.name for outcome in violating.assertion_failures} == {
+        "addresses_by_name",
+        "conjunction_but",
+    }
+    assert no_checks.check_outcomes == ()
+    assert missing.check_outcomes == ()
+
+    assert result.scenarios_with_assertions == 2
+    assert result.assertion_pass_rate == 0.5
+    assert result.violations_by_check == {"addresses_by_name": 1, "conjunction_but": 1}

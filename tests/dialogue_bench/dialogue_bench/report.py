@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+from dialogue_bench.checks import CheckStatus
 from dialogue_bench.scoring import ModelResult
 
 
@@ -21,6 +22,13 @@ def result_to_dict(result: ModelResult, *, include_text: bool = False) -> dict[s
             "interpret_latency_seconds": item.interpret_latency_seconds,
             "compose_latency_seconds": item.compose_latency_seconds,
         }
+        check_failures: list[dict[str, object]] = []
+        for outcome in item.assertion_failures:
+            failure: dict[str, object] = {"name": outcome.name}
+            if include_text:
+                failure["detail"] = outcome.detail
+            check_failures.append(failure)
+        row["check_failures"] = check_failures
         if include_text:
             row["composition_text"] = item.composition_text
         scenarios.append(row)
@@ -40,6 +48,9 @@ def result_to_dict(result: ModelResult, *, include_text: bool = False) -> dict[s
         "composition_failures_by_reason": result.failures_by_reason,
         "template_copies": result.template_copies,
         "distinct_compositions": result.distinct_compositions,
+        "scenarios_with_assertions": result.scenarios_with_assertions,
+        "assertion_pass_rate": result.assertion_pass_rate,
+        "violations_by_check": result.violations_by_check,
         "scenarios": scenarios,
     }
 
@@ -71,6 +82,15 @@ def print_report(results: list[ModelResult]) -> None:
         )
         for reason, count in sorted(result.failures_by_reason.items()):
             print(f"  composition failures ({count}): {reason}")
+        applicable = result.scenarios_with_assertions
+        passed = sum(
+            item.assertions_passed
+            for item in result.scenarios
+            if any(outcome.status != CheckStatus.SKIP for outcome in item.check_outcomes)
+        )
+        print(f"  prompt-rule assertions: {passed}/{applicable} passed")
+        for name, count in sorted(result.violations_by_check.items()):
+            print(f"  assertion violations ({count}): {name}")
 
 
 def print_json_report(results: list[ModelResult], *, include_text: bool = False) -> None:
