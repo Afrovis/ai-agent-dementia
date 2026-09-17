@@ -20,7 +20,7 @@ A person with dementia wakes at night and gets up. A local agent notices, opens 
 | Bedside device (MVP) | A MacBook running the embodiment page in a fullscreen browser tab. The tab supplies screen, speaker, mic, and webcam. |
 | Perception | Person detection plus pose classification on CPU on every frame. Vision LLM through Ollama only on state change. Frames are never stored. |
 | Speech | faster-whisper `small.en` for STT. Piper for TTS. English only. |
-| Text LLM | Ollama, 7B to 8B instruct model, 4-bit. Model name is config, default `llama3.1:8b`. |
+| Text LLM | Local 4-bit instruct model served by MLX on the host (`mlx_lm.server`, OpenAI-compatible API). Model name and backend are config, default `mlx-community/gemma-4-e4b-it-4bit`; Ollama remains a supported backend (`AGENT_LLM_BACKEND=ollama`). |
 | Cloud fallback | Claude Opus 5, model id `claude-opus-5`, via the official `anthropic` Python SDK. Text only, never images. Off by default. |
 | Notifications | ntfy by default. Backend interface allows Pushover and Telegram later. |
 | Embodiment | Animated face plus very large text. No realistic human face, no voice clones. |
@@ -264,7 +264,7 @@ Dependency notes:
 
 ## 9. Local development
 
-Prerequisites on the host: Docker Desktop, Ollama with `ollama pull llama3.1:8b` and `ollama pull moondream`, `mkcert` for the LAN certificate.
+Prerequisites on the host: Docker Desktop, Ollama with `ollama pull moondream` and `ollama pull gemma4:e4b-mlx` for perception, the MLX text model server (`python3.12 -m venv .venv-mlx && .venv-mlx/bin/pip install mlx-lm`, then keep `tools/mlx_server/serve.sh` running), `mkcert` for the LAN certificate.
 
 ```
 cp .env.example .env
@@ -305,7 +305,7 @@ Run tests for one service: `cd services/agent && pytest`.
 |---|---|---|
 | Pose model: MediaPipe Pose vs YOLOv8-pose | Decided with numbers: `PERCEIVE_POSE_BACKEND=yolo` with YOLO11s-pose at 640 input (PR #55, `docs/FLOOR_DETECTION_HANDOFF.md`). MediaPipe stays available behind the flag. Revisit on infrared clips (#11) | decided (#55); revisit with #11 |
 | Bridge frame format: 320 by 240 squashed vs letterboxed, and resolution | Decided with numbers: letterbox with source dimensions sent alongside (`docs/VIDEO_EVAL.md` section 7, #52), at 640x480 (#55) | decided (#52, #55) |
-| Local text model | `llama3.1:8b`, compare 3 on the dialogue bench in issue 17 | issue 17 |
+| Local text model | Decided 2026-09-16 on the dialogue bench: `mlx-community/gemma-4-e4b-it-4bit` on MLX (see `tools/llm_speedtest`) | issue 17 |
 | Smart plug for path light in v1 | manual night light, plug behind a feature flag | project owner |
 | Morning summary contents | count, durations, what helped, faults | project owner after a caregiver interview |
 
