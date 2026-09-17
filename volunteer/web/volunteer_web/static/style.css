@@ -58,7 +58,8 @@ button:disabled {
   margin: 0.6rem 0;
 }
 
-#setup-preview {
+#setup-preview,
+#recording-preview {
   width: 100%;
   max-width: 32rem;
   border-radius: 0.5rem;

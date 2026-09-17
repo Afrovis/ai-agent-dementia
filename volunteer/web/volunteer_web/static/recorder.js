@@ -21,6 +21,7 @@
     consentSubmit: document.getElementById("consent-submit"),
     bookmarkLink: document.getElementById("bookmark-link"),
     setupPreview: document.getElementById("setup-preview"),
+    recordingPreview: document.getElementById("recording-preview"),
     testPromptsButton: document.getElementById("test-prompts-button"),
     startRecordingButton: document.getElementById("start-recording-button"),
     promptText: document.getElementById("prompt-text"),
@@ -223,6 +224,7 @@
 
     async function startRecording() {
       show(els.recordingSection);
+      els.recordingPreview.srcObject = previewStream;
       const scriptResponse = await fetch("/script.json");
       const steps = await scriptResponse.json();
 
