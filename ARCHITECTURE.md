@@ -177,6 +177,7 @@ against the files that implement them.
 | `agent` | `config/strategies.yaml` at startup | reads | `services/agent/agent/strategies.py` |
 | `agent` | Consented family WAV headers under `data/voice-clips` | reads | `services/agent/agent/strategies.py` |
 | `agent` | Ollama `/api/generate` on the host | calls | `services/agent/agent/llm.py` |
+| `agent` | OpenAI-compatible local server on the host (e.g. `mlx_lm.server`), opt-in | calls | `services/agent/agent/llm.py` |
 | `agent` | Anthropic Messages API, text-only and opt-in | calls | `services/agent/agent/llm.py` |
 | `notify` | ntfy topic, or the log when `NTFY_URL` is empty | calls | `services/notify/notify/backends.py` |
 | `light` | Shelly Gen2+ smart plug on the local LAN, optional | calls | `services/light/light/backends.py` |

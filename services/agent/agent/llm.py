@@ -5,7 +5,8 @@ propose a strategy/goal.  It never changes a session itself: callers must
 run a plan through ``Session.propose_goal``/the rule layer and must run a
 composition through ``rules.validate_say`` before publishing it.
 
-Ollama remains the default. ``FallbackLLM`` can additionally route only the
+Ollama remains the default; ``OpenAICompatibleLLM`` is an opt-in local
+alternative for an MLX server on the host. ``FallbackLLM`` can additionally route only the
 two explicitly approved fallback cases to Claude: a second consecutive local
 ``unclear`` interpretation, or a local plan below 0.4 confidence. Composition
 never leaves the device. Failures and invalid model JSON become ``None`` so a
@@ -16,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Callable, Mapping, Sequence
 from enum import StrEnum
 from typing import Any, Protocol
@@ -135,23 +137,8 @@ def _prompt(task: str, payload: Mapping[str, Any]) -> str:
     )
 
 
-class OllamaLLM:
-    """Synchronous local Ollama implementation of :class:`LLMClient`.
-
-    The caller's control loop owns scheduling; this class has a bounded
-    request timeout and otherwise no retries or fallback endpoint.
-    """
-
-    def __init__(
-        self,
-        *,
-        ollama_url: str = "http://host.docker.internal:11434",
-        model: str = "llama3.1:8b",
-        timeout_seconds: float = 2.0,
-    ) -> None:
-        self._ollama_url = ollama_url.rstrip("/")
-        self._model = model
-        self._timeout_seconds = timeout_seconds
+class _LocalLLM:
+    """The prompts shared by every local backend; subclasses own transport."""
 
     def interpret(
         self, utterance: str, turns: Sequence[str], profile: Mapping[str, object]
@@ -194,6 +181,42 @@ class OllamaLLM:
         )
 
     def _call(self, task: str, payload: Mapping[str, Any], output_type: type[_StrictOutput]):
+        raise NotImplementedError
+
+    @staticmethod
+    def _failure(reason: str, **fields: object) -> None:
+        # Do not log utterances, profiles, prompt text, or model response.
+        logger.warning(
+            json.dumps(
+                {
+                    "service": SERVICE_NAME,
+                    "message": "local llm call failed",
+                    "reason": reason,
+                    **fields,
+                }
+            )
+        )
+
+
+class OllamaLLM(_LocalLLM):
+    """Synchronous local Ollama implementation of :class:`LLMClient`.
+
+    The caller's control loop owns scheduling; this class has a bounded
+    request timeout and otherwise no retries or fallback endpoint.
+    """
+
+    def __init__(
+        self,
+        *,
+        ollama_url: str = "http://host.docker.internal:11434",
+        model: str = "llama3.1:8b",
+        timeout_seconds: float = 2.0,
+    ) -> None:
+        self._ollama_url = ollama_url.rstrip("/")
+        self._model = model
+        self._timeout_seconds = timeout_seconds
+
+    def _call(self, task: str, payload: Mapping[str, Any], output_type: type[_StrictOutput]):
         try:
             body = json.dumps(
                 {
@@ -228,19 +251,91 @@ class OllamaLLM:
             self._failure("request or response rejected")
         return None
 
-    @staticmethod
-    def _failure(reason: str, **fields: object) -> None:
-        # Do not log utterances, profiles, prompt text, or model response.
-        logger.warning(
-            json.dumps(
+
+class OpenAICompatibleLLM(_LocalLLM):
+    """Local OpenAI-compatible server, e.g. ``mlx_lm.server`` on the host.
+
+    Such servers cannot constrain decoding to a schema, so the schema goes in
+    the prompt and the reply is validated exactly as strictly as Ollama's.
+    Thinking is switched off through ``chat_template_kwargs``.
+    """
+
+    def __init__(
+        self,
+        *,
+        base_url: str = "http://host.docker.internal:8080",
+        model: str,
+        timeout_seconds: float = 2.0,
+        max_tokens: int = 256,
+    ) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._model = model
+        self._timeout_seconds = timeout_seconds
+        self._max_tokens = max_tokens
+
+    def _call(self, task: str, payload: Mapping[str, Any], output_type: type[_StrictOutput]):
+        schema = json.dumps(output_type.model_json_schema(), separators=(",", ":"))
+        try:
+            body = json.dumps(
                 {
-                    "service": SERVICE_NAME,
-                    "message": "local llm call failed",
-                    "reason": reason,
-                    **fields,
-                }
+                    "model": self._model,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": f"{_prompt(task, payload)}\nJSON schema: {schema}",
+                        }
+                    ],
+                    "temperature": 0,
+                    "max_tokens": self._max_tokens,
+                    "stream": False,
+                    "chat_template_kwargs": {"enable_thinking": False},
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+            request = Request(
+                f"{self._base_url}/v1/chat/completions",
+                data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
             )
-        )
+            with urlopen(  # noqa: S310 - URL is configuration, not model output
+                request, timeout=self._timeout_seconds
+            ) as response:
+                if response.status != 200:
+                    self._failure("non-200 response", status_code=response.status)
+                    return None
+                response_body = json.loads(response.read().decode("utf-8"))
+            raw = _json_object(response_body["choices"][0]["message"]["content"])
+            if raw is None:
+                self._failure("response had no usable text")
+                return None
+            return output_type.model_validate_json(raw, strict=True)
+        except Exception:  # noqa: BLE001 - all local-model faults fail quiet
+            self._failure("request or response rejected")
+        return None
+
+
+def _json_object(text: object) -> str | None:
+    """The outermost ``{...}`` of a reply, ignoring a think block or code fence."""
+    if not isinstance(text, str):
+        return None
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    start, end = text.find("{"), text.rfind("}")
+    return text[start : end + 1] if 0 <= start < end else None
+
+
+LOCAL_BACKENDS = ("ollama", "openai")
+
+
+def local_llm(
+    backend: str, *, url: str, model: str, timeout_seconds: float
+) -> OllamaLLM | OpenAICompatibleLLM:
+    """Build the configured local client; ``backend`` is ``AGENT_LLM_BACKEND``."""
+    if backend == "ollama":
+        return OllamaLLM(ollama_url=url, model=model, timeout_seconds=timeout_seconds)
+    if backend == "openai":
+        return OpenAICompatibleLLM(base_url=url, model=model, timeout_seconds=timeout_seconds)
+    raise ValueError(f"unknown local LLM backend {backend!r}; expected one of {LOCAL_BACKENDS}")
 
 
 CloudCallHook = Callable[[str, str, dict[str, Any]], None]

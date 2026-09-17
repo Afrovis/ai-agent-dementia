@@ -6,7 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from agent.llm import OllamaLLM
+from agent.llm import LOCAL_BACKENDS, local_llm
 
 from dialogue_bench.report import print_json_report, print_report
 from dialogue_bench.scenarios import DEFAULT_SCENARIOS_PATH, load_scenarios
@@ -23,9 +23,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--model",
         action="append",
         dest="models",
-        help="Ollama model to test; repeat to compare models (defaults to three documented models)",
+        help="model to test; repeat to compare models (defaults to three documented models)",
+    )
+    parser.add_argument(
+        "--backend",
+        choices=LOCAL_BACKENDS,
+        default="ollama",
+        help="ollama, or openai for an OpenAI-compatible server such as mlx_lm.server",
     )
     parser.add_argument("--ollama-url", default="http://localhost:11434")
+    parser.add_argument(
+        "--base-url", default="http://localhost:8080", help="server URL for --backend openai"
+    )
     parser.add_argument("--timeout", type=float, default=10.0, help="timeout per model call")
     parser.add_argument("--scenarios", type=Path, default=DEFAULT_SCENARIOS_PATH)
     parser.add_argument("--json", action="store_true")
@@ -46,7 +55,12 @@ def main(argv: list[str] | None = None) -> int:
     results = [
         run_model(
             model,
-            OllamaLLM(ollama_url=args.ollama_url, model=model, timeout_seconds=args.timeout),
+            local_llm(
+                args.backend,
+                url=args.ollama_url if args.backend == "ollama" else args.base_url,
+                model=model,
+                timeout_seconds=args.timeout,
+            ),
             scenarios,
         )
         for model in models

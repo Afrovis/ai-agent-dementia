@@ -75,7 +75,8 @@ from nc_shared.events import (
 
 from agent.config import AgentConfig
 from agent.goals import GOALS
-from agent.llm import ClaudeLLM, FallbackLLM, LLMClient, OllamaLLM
+from agent.llm import ClaudeLLM, FallbackLLM, LLMClient
+from agent.llm import local_llm as build_local_llm
 from agent.profile import DEFAULT_PROFILE, PersonProfile, load_profile
 from agent.rules import Phase, validate_say
 from agent.session import Session, Transition
@@ -643,8 +644,13 @@ def run() -> None:
     bus.ensure_group(PERSON_STREAM, PERSON_GROUP)
     bus.ensure_group(UTTERANCE_STREAM, UTTERANCE_GROUP)
     session = Session(config=config, strategies=strategies)
-    local_llm = OllamaLLM(
-        ollama_url=os.environ.get("OLLAMA_URL", "http://host.docker.internal:11434"),
+    local_llm = build_local_llm(
+        config.llm_backend,
+        url=(
+            os.environ.get("OLLAMA_URL", "http://host.docker.internal:11434")
+            if config.llm_backend == "ollama"
+            else config.llm_url
+        ),
         model=config.llm_model,
         timeout_seconds=config.llm_timeout_seconds,
     )

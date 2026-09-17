@@ -119,6 +119,15 @@ pytest tests/dialogue_bench/tests
 python -m dialogue_bench --model llama3.1:8b --model qwen2.5:7b
 ```
 
+The agent can also use an MLX model served on the host by `mlx_lm.server`
+(`AGENT_LLM_BACKEND=openai`, see `.env.example`). The bench takes the same
+switch: `--backend openai --base-url http://localhost:8080`.
+`tools/llm_speedtest/` holds a one-turn latency comparison
+(`speedtest.py`) and `run_bench.sh`, which starts one MLX server per model and
+runs the bench against it. MLX servers cannot constrain output to a JSON
+schema, so the schema is sent in the prompt and replies are validated as
+strictly as Ollama's.
+
 Evaluating perception and the agent against recorded bedroom videos is
 described in [docs/VIDEO_EVAL.md](docs/VIDEO_EVAL.md): a one-time tooling
 build under `tools/video_eval/` and a per-video runbook. Installation,

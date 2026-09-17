@@ -16,11 +16,21 @@ from dataclasses import dataclass
 from datetime import datetime
 from datetime import time as dt_time
 
+from agent.llm import LOCAL_BACKENDS
+
 
 def _parse_hhmm(value: str) -> dt_time:
     """Parse a local `HH:MM` string (`AGENT_NIGHT_START`/`AGENT_NIGHT_END`)."""
     hours, minutes = value.strip().split(":")
     return dt_time(int(hours), int(minutes))
+
+
+def _parse_llm_backend(value: str) -> str:
+    """Validate `AGENT_LLM_BACKEND` at startup so a typo fails loudly."""
+    backend = value.strip().lower()
+    if backend not in LOCAL_BACKENDS:
+        raise ValueError(f"AGENT_LLM_BACKEND must be one of {LOCAL_BACKENDS}, got {value!r}")
+    return backend
 
 
 @dataclass(frozen=True)
@@ -118,6 +128,14 @@ class AgentConfig:
     from crashing the agent while still bounding a failed request.
     `AGENT_LLM_TIMEOUT_SECONDS`."""
 
+    llm_backend: str = "ollama"
+    """Local text-model transport: `ollama` (reads `OLLAMA_URL`) or `openai`,
+    an OpenAI-compatible server on the host such as `mlx_lm.server` (reads
+    `AGENT_LLM_URL`). `AGENT_LLM_BACKEND`."""
+
+    llm_url: str = "http://host.docker.internal:8080"
+    """Base URL of the `openai` backend; unused for `ollama`. `AGENT_LLM_URL`."""
+
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> AgentConfig:
         """Build an `AgentConfig` from environment variables, defaults otherwise."""
@@ -137,6 +155,8 @@ class AgentConfig:
             zone_confirm_readings=int(env.get("AGENT_ZONE_CONFIRM_READINGS", "3")),
             llm_model=env.get("AGENT_LLM_MODEL") or "llama3.1:8b",
             llm_timeout_seconds=float(env.get("AGENT_LLM_TIMEOUT_SECONDS") or "10"),
+            llm_backend=_parse_llm_backend(env.get("AGENT_LLM_BACKEND") or "ollama"),
+            llm_url=env.get("AGENT_LLM_URL") or "http://host.docker.internal:8080",
         )
 
     def in_night_window(self, when: datetime) -> bool:
