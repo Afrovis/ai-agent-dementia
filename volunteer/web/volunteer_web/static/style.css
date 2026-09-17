@@ -84,6 +84,39 @@ button:disabled {
   min-height: 1px;
 }
 
+.sample-video-wrap {
+  position: relative;
+  width: 100%;
+  max-width: 40rem;
+  margin: 1rem 0;
+}
+
+.sample-video-wrap video {
+  display: block;
+  width: 100%;
+  border-radius: 0.5rem;
+  background: black;
+}
+
+.sample-video-wrap canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.sample-timeline {
+  display: block;
+  width: 100%;
+  max-width: 40rem;
+  height: auto;
+  border-radius: 0.5rem;
+  margin: 0.25rem 0 0;
+  cursor: pointer;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     --ink: #e7ecf3;

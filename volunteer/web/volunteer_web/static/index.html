@@ -34,10 +34,16 @@
         (standing, walking, sitting, in bed, on the floor) drawn live on a
         recording of the room.
       </p>
-      <p class="hint">The interactive demo is coming soon.</p>
+      <div class="sample-video-wrap">
+        <video id="sample-video" muted playsinline controls></video>
+        <canvas id="sample-overlay"></canvas>
+      </div>
+      <canvas id="sample-timeline" class="sample-timeline"></canvas>
+      <p class="hint">Drag the strip below the video to scrub the demo.</p>
     </section>
 
     <a class="button" href="/record">Record a video</a>
   </main>
+  <script src="/sample.js"></script>
 </body>
 </html>
