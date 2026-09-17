@@ -116,7 +116,7 @@ unit tests need no Ollama; the actual comparison command calls local Ollama:
 ```sh
 pip install -e services/agent -e tests/dialogue_bench[dev]
 pytest tests/dialogue_bench/tests
-python -m dialogue_bench --model llama3.1:8b --model qwen2.5:7b
+python -m dialogue_bench --model gemma4:e4b-mlx --model llama3.1:8b
 ```
 
 The agent can also use an MLX model served on the host by `mlx_lm.server`

@@ -117,9 +117,11 @@ class AgentConfig:
     HANDOFF.md rule 5, which must keep firing on the very first reading.
     `AGENT_ZONE_CONFIRM_READINGS`."""
 
-    llm_model: str = "llama3.1:8b"
+    llm_model: str = "gemma4:e4b-mlx"
     """Local text model used for interpret/compose/plan (issue #15): an
-    Ollama tag, or the served model id for the `openai` backend.
+    Ollama tag, or the served model id for the `openai` backend. The default
+    is the model `perceive`'s floor check already loads, so the two share one
+    copy in memory; it was chosen on the dialogue bench (`tools/llm_speedtest`).
     `AGENT_LLM_MODEL`."""
 
     llm_timeout_seconds: float = 10.0
@@ -154,7 +156,7 @@ class AgentConfig:
             person_path=env.get("PERSON_PATH") or None,
             say_min_gap_seconds=float(env.get("AGENT_SAY_MIN_GAP_SECONDS", "8")),
             zone_confirm_readings=int(env.get("AGENT_ZONE_CONFIRM_READINGS", "3")),
-            llm_model=env.get("AGENT_LLM_MODEL") or "llama3.1:8b",
+            llm_model=env.get("AGENT_LLM_MODEL") or "gemma4:e4b-mlx",
             llm_timeout_seconds=float(env.get("AGENT_LLM_TIMEOUT_SECONDS") or "10"),
             llm_backend=_parse_llm_backend(env.get("AGENT_LLM_BACKEND") or "ollama"),
             llm_url=env.get("AGENT_LLM_URL") or "http://host.docker.internal:11435",

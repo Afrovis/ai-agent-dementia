@@ -237,7 +237,7 @@ class OllamaLLM(_LocalLLM):
         self,
         *,
         ollama_url: str = "http://host.docker.internal:11434",
-        model: str = "llama3.1:8b",
+        model: str = "gemma4:e4b-mlx",
         timeout_seconds: float = 2.0,
     ) -> None:
         self._ollama_url = ollama_url.rstrip("/")

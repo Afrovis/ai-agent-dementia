@@ -22,7 +22,7 @@ def test_from_env_defaults():
     assert config.strategies_path is None
     assert config.person_path is None
     assert config.say_min_gap_seconds == 8.0
-    assert config.llm_model == "llama3.1:8b"
+    assert config.llm_model == "gemma4:e4b-mlx"
     assert config.llm_timeout_seconds == 10.0
     assert config.llm_backend == "ollama"
     assert config.llm_url == "http://host.docker.internal:11435"
@@ -70,7 +70,7 @@ def test_blank_optional_llm_values_use_safe_defaults():
     config = AgentConfig.from_env(
         {"AGENT_LLM_MODEL": "", "AGENT_LLM_TIMEOUT_SECONDS": "", "PERSON_PATH": ""}
     )
-    assert config.llm_model == "llama3.1:8b"
+    assert config.llm_model == "gemma4:e4b-mlx"
     assert config.llm_timeout_seconds == 10.0
     assert config.llm_backend == "ollama"
     assert config.person_path is None
