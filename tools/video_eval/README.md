@@ -48,13 +48,25 @@ and allow the Codex labeller to run:
 
 Reconcile both labellers with the scenario card, inspect the draft and every
 local path in the disagreement report, then explicitly confirm it. Scoring
-refuses to use an unconfirmed draft:
+refuses to use an unconfirmed draft. Confirming also adds/updates this
+clip's entry in `<data root>/manifest.yaml` (idempotent -- re-confirming
+updates the entry in place rather than duplicating it), which is the file
+`tests/perception_bench`'s tier 3 reads (`docs/VIDEO_EVAL.md` step A8):
 
 ```sh
 .venv-video-eval/bin/python -m video_eval reconcile --clip 2026-09-13_sample
 .venv-video-eval/bin/python -m video_eval reconcile \
   --clip 2026-09-13_sample --confirm --by "Recorder name"
 .venv-video-eval/bin/python -m video_eval score --clip 2026-09-13_sample
+```
+
+Run the perception bench's tier 3 against every confirmed clip the manifest
+now lists (skips cleanly, exit 0, if the manifest is absent or a clip is not
+yet confirmed):
+
+```sh
+.venv-video-eval/bin/python -m perception_bench \
+  --ir-manifest ../data-ai-agent-dementia/manifest.yaml --skip-daylight
 ```
 
 After choosing one offline prediction tag, run the same bridge frames through
@@ -67,8 +79,13 @@ frame streams, and stops the stack even if replay fails:
   --clip 2026-09-13_sample --tag mediapipe-squash-0123abcd-g
 ```
 
-`label-local` defaults to adaptive sampling with `qwen3-vl:8b`; use `--fast`
-for `gemma4:e4b-mlx` or `--all-frames` to disable still-frame propagation.
+`label-local` defaults to `--backend ollama` with adaptive sampling and
+`qwen3-vl:8b`; use `--fast` for `gemma4:e4b-mlx` or `--all-frames` to disable
+still-frame propagation. `--backend mlx` runs the VLM natively through
+`mlx-vlm` (install with `tools/video_eval[mlx]`) instead of Ollama's HTTP
+API, defaulting to `mlx-community/Qwen3-VL-8B-Instruct-8bit`; measured ~6x
+faster per frame with no request timeouts, so prefer it when the model is
+available as an MLX checkpoint. `--fast` only applies to the Ollama backend.
 Invalid local JSON is retried once, then retained as a null label for human
 reconciliation. `label-codex` can read only files listed beneath the clip's
 `sheets/` directory and refuses to start without the human-review marker.

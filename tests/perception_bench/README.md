@@ -10,7 +10,7 @@ consenting volunteers exist yet.
 |---|---|---|---|
 | 1 | Synthetic scripted clips, generated in-process | Yes, no downloads | Per-state accuracy, confusion matrix, **latency** |
 | 2 | IndoorActionDataset (real daylight RGB, opt-in download) | No, needs `fetch_daylight.sh` | Per-state accuracy for 4/6 states, no latency, no `in_bed` |
-| 3 | Infrared clips from the actual room | Not yet -- currently empty | Everything, once it exists |
+| 3 | Infrared clips from the actual room, via `tools/video_eval` | No -- needs `tools/video_eval` installed and a confirmed manifest | Everything: per-state recall, latency, gate verdicts, pooled by tag family |
 
 **No fabricated numbers, anywhere in this bench's output or docs.** If a
 tier has no data, the bench says so and exits 0, not silently. Example
@@ -46,7 +46,18 @@ Flags:
   `perception_bench.degrade.apply_night_degradation` first (see that
   module's docstring: de-risking, not IR evidence).
 - `--ir-manifest PATH` -- tier 3 manifest (default
-  `tests/perception_bench/fixtures/ir_manifest.yaml`).
+  `tests/perception_bench/fixtures/ir_manifest.yaml`). See
+  `perception_bench/infrared.py`'s module docstring for its format --
+  `video_eval reconcile --confirm` keeps it in sync automatically.
+- `--ir-tag PATTERN` -- `fnmatch` glob restricting which tier 3 prediction
+  tags get scored and reported (default: every tag with an existing
+  `predictions/*.jsonl` file).
+- `--ir-backend NAME` / `--ir-variant NAME` -- run `video_eval predict`
+  with this backend (and bridge variant, default `squash`) for every
+  confirmed tier 3 clip before scoring it, instead of only scoring
+  predictions that already exist.
+- `--ir-rescore` -- force tier 3 to re-run predict/score instead of
+  reusing existing up-to-date reports.
 - `--skip-daylight` -- skip even checking for tier 2 data.
 
 Exit code is non-zero only if a *measured, gating* target was missed. A
@@ -57,10 +68,13 @@ Tier 1 verdicts are **advisory**: they run against synthetic,
 generated-in-process clips as a smoke test, not the real recorded
 footage the >95%/<2s targets in PLAN.md section 12 are defined against,
 so tier 1 is printed with its real measured numbers -- including a real
-FAIL when it misses -- but never gates the exit code. Only tier 2 and
-tier 3 gate: a *measured* miss there exits non-zero, "not measured"
-still exits 0. The final "Result:" line says which of the three
-happened.
+FAIL when it misses -- but never gates the exit code. Tier 3 is advisory
+for the same reason, only more so: a handful of confirmed infrared clips
+is real evidence but not yet the statistical evidence those targets
+assume, so a real FAIL is printed per tag family but never gates the exit
+code either. Only tier 2 gates: a *measured* miss there exits non-zero,
+"not measured" still exits 0. The final "Result:" line says which of the
+three happened.
 
 ## Getting tier 2 data
 
@@ -84,9 +98,9 @@ for the manifest format tier 3 reads.
 Tier 1: synthetic scripted clips (advisory / smoke-test, does not gate exit code)
 ------------------------------------------------------------
 overall frame accuracy: 91.3%          # <- ILLUSTRATIVE, not measured
-  [PASS] tier1 standing recall >= 95% (advisory, smoke-test, does not gate exit code): 100.0%
-  [PASS] tier1 on_floor recall >= 95% (advisory, smoke-test, does not gate exit code): 100.0%
-  [PASS] tier1 latency <= 2s (advisory, smoke-test, does not gate exit code): max 1.00s, mean 0.40s
+  [PASS] tier1 standing recall >= 95% (advisory, does not gate exit code): 100.0%
+  [PASS] tier1 on_floor recall >= 95% (advisory, does not gate exit code): 100.0%
+  [PASS] tier1 latency <= 2s (advisory, does not gate exit code): max 1.00s, mean 0.40s
 ```
 
 For real numbers, run the bench yourself; see the verification output in

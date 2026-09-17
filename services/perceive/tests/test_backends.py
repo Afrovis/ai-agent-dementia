@@ -20,6 +20,7 @@ from perceive.backends import (
     MediaPipeBackend,
     PoseResult,
     ScriptedBackend,
+    Yolo26MlxPoseBackend,
     YoloPoseBackend,
     build_backend,
 )
@@ -228,3 +229,112 @@ def test_yolo_backend_selects_the_real_person_over_a_calibrated_phantom():
     pose = backend.detect(_jpeg())
     assert pose is not None
     assert pose.bbox == pytest.approx(person_box)
+
+
+class _MlxBoxes:
+    """Minimal stand-in for `yolo26mlx`'s `Boxes`: absolute-pixel `.xyxy`
+    (no `.xyxyn`, unlike ultralytics), plain lists rather than tensors."""
+
+    def __init__(self, conf, xyxy):
+        self.conf = conf
+        self.xyxy = xyxy
+
+    def __len__(self):
+        return len(self.conf)
+
+
+class _MlxKeypoints:
+    """Minimal stand-in for `yolo26mlx`'s `Keypoints`: absolute-pixel
+    `.data`, shape `(N, 17, 3)`, unlike ultralytics' pre-normalised `.xyn`."""
+
+    def __init__(self, data):
+        self.data = data
+
+
+class _MlxResult:
+    def __init__(self, boxes, keypoints, orig_shape):
+        self.boxes = boxes
+        self.keypoints = keypoints
+        self.orig_shape = orig_shape
+
+
+def _mlx_boxed_result(boxes_and_confidences, *, width=100, height=100):
+    """Build a `yolo26mlx`-shaped `_MlxResult` in absolute pixel coordinates,
+    one dummy keypoint set per box, mirroring `_boxed_result` above."""
+    keypoints_per_box = [[[width * 0.5, height * 0.5, 0.9]] * 17] * len(boxes_and_confidences)
+    boxes_px = [
+        [box[0] * width, box[1] * height, box[2] * width, box[3] * height]
+        for box, _confidence in boxes_and_confidences
+    ]
+    confidences = [confidence for _box, confidence in boxes_and_confidences]
+    return _MlxResult(
+        _MlxBoxes(confidences, boxes_px), _MlxKeypoints(keypoints_per_box), (height, width)
+    )
+
+
+def _stub_mlx_backend(results_by_call, *, known_phantoms=None) -> Yolo26MlxPoseBackend:
+    """A `Yolo26MlxPoseBackend` whose `_model.predict` returns the next entry
+    of `results_by_call` each time it is invoked, mirroring `_stub_yolo_backend`."""
+    backend = Yolo26MlxPoseBackend.__new__(Yolo26MlxPoseBackend)
+    calls = iter(results_by_call)
+    backend._model = SimpleNamespace(predict=lambda image, conf: [next(calls)])
+    backend._imgsz = 640
+    backend._detect_conf = None
+    backend._known_phantoms = known_phantoms if known_phantoms is not None else KnownPhantoms([])
+    return backend
+
+
+def test_mlx_backend_normalises_absolute_pixel_boxes_and_keypoints():
+    person_box = (0.5, 0.4, 0.7, 0.9)
+    result = _mlx_boxed_result([(person_box, 0.8)], width=200, height=100)
+
+    backend = _stub_mlx_backend([result])
+    pose = backend.detect(_jpeg())
+
+    assert pose is not None
+    assert pose.bbox == pytest.approx(person_box)
+    assert pose.landmarks["nose"].x == pytest.approx(0.5)
+    assert pose.landmarks["nose"].y == pytest.approx(0.5)
+    assert pose.landmarks["nose"].visibility == pytest.approx(0.9)
+
+
+def test_mlx_backend_excludes_a_calibrated_known_phantom():
+    phantom_box = (0.19, 0.31, 0.26, 0.46)
+    known_phantoms = KnownPhantoms([phantom_box], max_confidence=0.7)
+
+    backend = _stub_mlx_backend(
+        [_mlx_boxed_result([(phantom_box, 0.6)])], known_phantoms=known_phantoms
+    )
+    assert backend.detect(_jpeg()) is None
+
+
+def test_mlx_backend_selects_the_real_person_over_a_calibrated_phantom():
+    phantom_box = (0.19, 0.31, 0.26, 0.46)
+    known_phantoms = KnownPhantoms([phantom_box], max_confidence=0.7)
+    person_box = (0.5, 0.4, 0.7, 0.9)
+
+    backend = _stub_mlx_backend(
+        [_mlx_boxed_result([(phantom_box, 0.6), (person_box, 0.3)])],
+        known_phantoms=known_phantoms,
+    )
+    pose = backend.detect(_jpeg())
+    assert pose is not None
+    assert pose.bbox == pytest.approx(person_box)
+
+
+def test_mlx_backend_passes_confidence_through_to_predict():
+    person_box = (0.5, 0.4, 0.7, 0.9)
+    received_conf: list[float] = []
+    result = _mlx_boxed_result([(person_box, 0.8)])
+
+    backend = Yolo26MlxPoseBackend.__new__(Yolo26MlxPoseBackend)
+    backend._model = SimpleNamespace(
+        predict=lambda image, conf: received_conf.append(conf) or [result]
+    )
+    backend._imgsz = 640
+    backend._detect_conf = 0.35
+    backend._known_phantoms = KnownPhantoms([])
+
+    backend.detect(_jpeg())
+
+    assert received_conf == [0.35]

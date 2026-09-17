@@ -16,6 +16,7 @@ from perceive.classify import ClassifyThresholds
 from PIL import Image
 
 from video_eval.common import matching_meta, read_jsonl, update_index, write_meta
+from video_eval.manifest import upsert_clip
 from video_eval.paths import EvalPaths
 
 FPS = 2.0
@@ -282,6 +283,12 @@ def reconcile_clip(
         raw["confirmed_at"] = datetime.now(UTC).date().isoformat()
         reference.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
         update_index(paths.root, clip_id, "reconcile", "human_confirmed")
+        upsert_clip(
+            paths.root,
+            clip_id,
+            confirmed_by=raw["confirmed_by"],
+            confirmed_at=raw["confirmed_at"],
+        )
         return {
             "status": "confirmed",
             "intervals": len(timeline),

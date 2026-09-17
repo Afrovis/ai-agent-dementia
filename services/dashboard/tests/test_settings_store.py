@@ -99,6 +99,24 @@ def test_strategy_round_trip_and_reorder(tmp_path):
     assert saved["headline"] == "Good evening"
 
 
+def test_familiar_voice_clip_id_round_trips_and_is_validated(tmp_path):
+    strategy = _strategy()
+    strategy.update({"id": "familiar_voice", "order": 6, "clip_id": "family-message"})
+    form = {
+        key.replace("soft_greeting__", "familiar_voice__"): value
+        for key, value in _strategy_form(order=6).items()
+    }
+    form["familiar_voice__clip_id"] = "family-message"
+    path = tmp_path / "strategies.yaml"
+
+    save_strategy_document(path, [strategy], form)
+
+    assert load_strategy_document(path)[0]["clip_id"] == "family-message"
+    form["familiar_voice__clip_id"] = "../secret"
+    with pytest.raises(ValueError, match="clip id"):
+        save_strategy_document(path, [strategy], form)
+
+
 def test_unknown_strategy_id_is_not_rendered_or_rewritten(tmp_path):
     path = tmp_path / "strategies.yaml"
     path.write_text("strategies:\n  - id: '<script>alert(1)</script>'\n")

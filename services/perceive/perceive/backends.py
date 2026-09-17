@@ -15,14 +15,15 @@ are 0.0-1.0 with the origin top-left, so `perceive.classify` and
 `perceive.zones` never need to know a frame's pixel dimensions or which
 backend produced a `PoseResult`.
 
-`MediaPipeBackend` and `YoloPoseBackend` both lazy-import their model
-library inside `__init__`, exactly like `capture.sources.OpenCvSource`
-does for OpenCV: importing this module must never require `mediapipe` or
-`ultralytics` to be installed, since `ScriptedBackend` -- what every test
-and the future perception bench (issue #11) actually drive -- needs
-neither. Both real backends live behind optional extras in
-`pyproject.toml` (`mediapipe`, `yolo`); the service must import and its
-tests must run with neither installed.
+`MediaPipeBackend`, `YoloPoseBackend` and `Yolo26MlxPoseBackend` all
+lazy-import their model library inside `__init__`, exactly like
+`capture.sources.OpenCvSource` does for OpenCV: importing this module must
+never require `mediapipe`, `ultralytics` or `yolo26mlx` to be installed,
+since `ScriptedBackend` -- what every test and the future perception bench
+(issue #11) actually drive -- needs none of them. All three real backends
+live behind optional extras in `pyproject.toml` (`mediapipe`, `yolo`,
+`yolo26mlx`); the service must import and its tests must run with none of
+them installed.
 """
 
 from __future__ import annotations
@@ -354,6 +355,143 @@ class YoloPoseBackend:
         return result, candidates
 
 
+class Yolo26MlxPoseBackend:
+    """Wraps `yolo26mlx.YOLO`, the MLX-native port of Ultralytics' YOLO26-pose
+    (default weights: `yolo26l-pose.npz`; `PERCEIVE_YOLO26MLX_MODEL` accepts
+    any other `yolo26mlx`-compatible `.npz` checkpoint).
+
+    Ad-hoc benchmarking outside the pipeline (a scratch venv, not this
+    module) found `yolo26l-pose` agrees with `YoloPoseBackend`'s ultralytics
+    detections ~96% of the time at ~82ms/frame on Apple Silicon, well under
+    the 500ms budget at 2fps -- worth running through the real gated,
+    state-tracked evaluation (`video_eval predict`/`score`) instead of raw
+    detection agreement alone. `yolo26mlx` only runs on Apple Silicon (MLX),
+    so -- like `YoloPoseBackend` and `MediaPipeBackend` -- it is lazy
+    imported here and lives behind its own optional extra
+    (`pyproject.toml`'s `yolo26mlx`) rather than a core dependency; importing
+    this module must never require it.
+
+    Maps the same 17 COCO keypoints as `YoloPoseBackend` onto
+    `LANDMARK_NAMES` via the shared `_KEYPOINT_INDEX`; the package's own
+    output convention differs from ultralytics in two ways that matter here:
+    boxes and keypoints come back in absolute pixel coordinates (`.xyxy`,
+    `.keypoints.data`), not pre-normalised (`.xyxyn`, `.xyn`), so this
+    backend normalises by `.orig_shape` (`(height, width)`) itself; and
+    there is no `conf`-per-model-kwargs split, so the confidence threshold
+    is passed as `predict(..., conf=...)` directly.
+    """
+
+    _KEYPOINT_INDEX = YoloPoseBackend._KEYPOINT_INDEX
+    """Same COCO-17 index as `YoloPoseBackend`: `yolo26mlx` keeps the
+    standard COCO keypoint ordering."""
+
+    def __init__(
+        self,
+        model_path: str = "yolo26l-pose.npz",
+        *,
+        imgsz: int = 640,
+        detect_conf: float | None = None,
+        phantoms_file: str | None = None,
+        phantom_max_confidence: float | None = None,
+    ) -> None:
+        try:
+            from yolo26mlx import YOLO
+        except ImportError as exc:
+            raise RuntimeError(
+                "yolo26mlx is required for PERCEIVE_POSE_BACKEND=yolo26mlx. "
+                "Install it with `pip install .[yolo26mlx]`."
+            ) from exc
+
+        self._model = YOLO(model_path, task="pose")
+        self._imgsz = imgsz
+        self._detect_conf = detect_conf
+
+        # Same defaulting rationale as `YoloPoseBackend.__init__`: leaving
+        # these at `None` lets a caller that never mentions phantoms --
+        # `video_eval.predict` included -- still pick up
+        # `PERCEIVE_PHANTOMS_FILE`/`PERCEIVE_PHANTOM_MAX_CONFIDENCE` from its
+        # own environment.
+        resolved_path = (
+            phantoms_file
+            if phantoms_file is not None
+            else os.environ.get("PERCEIVE_PHANTOMS_FILE", "").strip() or None
+        )
+        resolved_max_confidence = (
+            phantom_max_confidence
+            if phantom_max_confidence is not None
+            else float(
+                os.environ.get("PERCEIVE_PHANTOM_MAX_CONFIDENCE", str(DEFAULT_MAX_CONFIDENCE))
+            )
+        )
+        self._known_phantoms = KnownPhantoms.load(
+            resolved_path, max_confidence=resolved_max_confidence
+        )
+
+    def detect(self, jpeg: bytes) -> PoseResult | None:
+        """Run the configured yolo26mlx pose model on `jpeg` and map the best
+        detection onto `LANDMARK_NAMES`."""
+        detected = self._detect_candidates(jpeg)
+        if detected is None:
+            return None
+        result, candidates = detected
+        if result.keypoints is None:
+            return None
+
+        selected = self._known_phantoms.select(candidates)
+        if selected is None:
+            return None
+        best = selected.index
+
+        height, width = result.orig_shape
+        keypoints = np.asarray(result.keypoints.data[best])
+
+        landmarks: dict[str, Landmark] = {}
+        for name, index in self._KEYPOINT_INDEX.items():
+            x_px, y_px, point_conf = keypoints[index].tolist()
+            if x_px == 0.0 and y_px == 0.0:
+                # Mirror `YoloPoseBackend.detect`'s skip of unpositioned
+                # keypoints, for the same landmark-presence semantics
+                # downstream (`perceive.classify` falls back to `bbox`).
+                continue
+            landmarks[name] = Landmark(
+                x=float(x_px) / width, y=float(y_px) / height, visibility=float(point_conf)
+            )
+
+        x_min, y_min, x_max, y_max = np.asarray(result.boxes.xyxy[best]).tolist()
+        return PoseResult(
+            landmarks=landmarks,
+            bbox=(x_min / width, y_min / height, x_max / width, y_max / height),
+            confidence=selected.confidence,
+        )
+
+    def detect_candidates(self, jpeg: bytes) -> list[Candidate]:
+        """Return every raw candidate in `jpeg`, without phantom filtering."""
+        detected = self._detect_candidates(jpeg)
+        return [] if detected is None else detected[1]
+
+    def _detect_candidates(self, jpeg: bytes) -> tuple[object, list[Candidate]] | None:
+        image = _decode_rgb(jpeg)
+        if image is None:
+            return None
+
+        results = self._model.predict(image, conf=self._detect_conf or 0.25)
+        if not results:
+            return None
+        result = results[0]
+        if result.boxes is None or len(result.boxes) == 0:
+            return None
+
+        height, width = result.orig_shape
+        confidences = np.asarray(result.boxes.conf).tolist()
+        boxes_px = np.asarray(result.boxes.xyxy)
+        boxes = (boxes_px / np.array([width, height, width, height])).tolist()
+        candidates = [
+            Candidate(box=tuple(box), confidence=float(confidence), index=i)
+            for i, (box, confidence) in enumerate(zip(boxes, confidences))
+        ]
+        return result, candidates
+
+
 class ScriptedBackend:
     """Returns a pre-supplied sequence of `PoseResult`s (or `None`s), ignoring
     the actual JPEG bytes entirely.
@@ -398,11 +536,13 @@ def build_backend(
     phantoms_file: str | None = None,
     phantom_max_confidence: float | None = None,
 ) -> PoseBackend:
-    """Return the configured `PoseBackend` for `kind` (`mediapipe`, `yolo`, `scripted`).
+    """Return the configured `PoseBackend` for `kind` (`mediapipe`, `yolo`,
+    `yolo26mlx`, `scripted`).
 
     `model_path`, `yolo_imgsz`, `detect_conf`, `phantoms_file` and
     `phantom_max_confidence`
-    are only used by `yolo` (`PERCEIVE_YOLO_MODEL`, `PERCEIVE_YOLO_IMGSZ`,
+    are only used by `yolo` and `yolo26mlx` (`PERCEIVE_YOLO_MODEL`,
+    `PERCEIVE_YOLO_IMGSZ`,
     `PERCEIVE_PHANTOMS_FILE`, `PERCEIVE_PHANTOM_MAX_CONFIDENCE`);
     `static_image_mode` only by `mediapipe` (`PERCEIVE_MEDIAPIPE_VIDEO_MODE`
     inverted). Leaving `phantoms_file`/`phantom_max_confidence` at their
@@ -425,6 +565,14 @@ def build_backend(
     if kind == "yolo":
         return YoloPoseBackend(
             model_path=model_path or "yolo11s-pose.pt",
+            imgsz=yolo_imgsz,
+            detect_conf=detect_conf,
+            phantoms_file=phantoms_file,
+            phantom_max_confidence=phantom_max_confidence,
+        )
+    if kind == "yolo26mlx":
+        return Yolo26MlxPoseBackend(
+            model_path=model_path or "yolo26l-pose.npz",
             imgsz=yolo_imgsz,
             detect_conf=detect_conf,
             phantoms_file=phantoms_file,

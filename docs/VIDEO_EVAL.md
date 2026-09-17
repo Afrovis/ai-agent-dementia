@@ -309,19 +309,36 @@ Both produce the same record per frame:
 upright | on_floor | absent), location (bed | door | bathroom_path | other),
 confidence, note`.
 
-`label-local` posts each review frame to Ollama `/api/chat` with
-`format: "json"`, temperature 0, model from `--model` defaulting to
-`qwen3-vl:8b` (`--fast` switches to `gemma4:e4b-mlx`), and the prompt
-below. Validate every field against its enum; retry once on invalid JSON
-or an out-of-enum value, then record `posture: null`. Budget about 20 s per
-frame with Qwen, so a 4-minute clip at 2 fps is close to three hours.
-Default to `--adaptive`: label every frame while the review frames show
-motion (reuse `capture.motion.frame_signature` and `motion_score` with the
-gate's threshold) and every tenth frame during still stretches, then
-propagate a still stretch's label across it. That brings the sample to
-roughly 40 minutes. Run it in the background. Unload the model when done
-with `curl localhost:11434/api/generate -d '{"model":"qwen3-vl:8b","keep_alive":0}'`
-so the Docker stack has its memory back.
+`label-local` posts each review frame to a local VLM with a JSON schema
+constraint, temperature 0, model from `--model`, and the prompt below.
+Validate every field against its enum; retry once on invalid JSON or an
+out-of-enum value, then record `posture: null`. Default to `--adaptive`:
+label every frame while the review frames show motion (reuse
+`capture.motion.frame_signature` and `motion_score` with the gate's
+threshold) and every tenth frame during still stretches, then propagate a
+still stretch's label across it.
+
+Two backends, selected with `--backend`:
+
+- `ollama` (default): posts to Ollama's `/api/chat` with `format: "json"`,
+  model defaulting to `qwen3-vl:8b` (`--fast` switches to `gemma4:e4b-mlx`).
+  Budget about 20 s per frame with Qwen, so a 4-minute clip at 2 fps is close
+  to three hours on every frame, roughly 40 minutes with `--adaptive`. Unload
+  the model when done with
+  `curl localhost:11434/api/generate -d '{"model":"qwen3-vl:8b","keep_alive":0}'`
+  so the Docker stack has its memory back.
+- `mlx` (needs `tools/video_eval[mlx]`, Apple Silicon only): runs the model
+  natively through `mlx-vlm` instead of Ollama's HTTP API, with JSON-schema
+  constrained decoding via `llguidance` giving the same structured-output
+  guarantee as Ollama's `format` parameter. Defaults to
+  `mlx-community/Qwen3-VL-8B-Instruct-8bit`. Measured on recorded clips: about
+  6x faster per frame than the same model size through Ollama (roughly 3.5 to
+  5.5 s per queried frame for the 8-bit 8B checkpoint) with zero request
+  timeouts, versus Ollama occasionally timing out mid-run. A quick 4B-vs-8B
+  accuracy pass across four clips found 8B noticeably more accurate overall
+  (about 75% vs 68% posture accuracy against hand-annotated timelines), so 8B
+  is the default despite the extra latency -- labelling is async, so the
+  latency difference rarely matters. `--fast` is Ollama-only.
 
 ```
 You label bedroom monitoring frames for a fall and wandering safety system.
@@ -419,13 +436,54 @@ Turns per-frame labels plus the scenario card into a reference timeline.
 4. Write `e2e/<date>/report.md`. Stop the stack, and delete
    `frames_raw`, `frames` and any speech cache afterwards.
 
-### A8. Wire into `perception_bench` tier 3
+### A8. Wire into `perception_bench` tier 3 (implemented)
 
-Fill in `tests/perception_bench/perception_bench/infrared.py` so that
-`python -m perception_bench --ir-manifest ../data-ai-agent-dementia/manifest.yaml`
-scores every confirmed clip using the `predict` and `score` code above, and
-`reconcile --confirm` appends the clip to that manifest. Tier 3 still skips
-cleanly when the manifest is absent, so CI stays green.
+`tests/perception_bench/perception_bench/infrared.py` scores every
+confirmed clip in a tier-3 manifest via `video_eval.score.score_clip`
+(imported lazily, so `perception_bench` keeps working -- and its own tests
+keep passing -- without `tools/video_eval` installed at all). The manifest
+is a small YAML file at the `video_eval` data root (the directory
+containing `clips/`) that only lists which clips to score:
+
+```yaml
+clips:
+  - clip_id: 2026-09-13_bedroom-sample-01
+    confirmed_by: Name        # copied from reference.yaml at confirm time
+    confirmed_at: 2026-09-15
+```
+
+`video_eval reconcile --confirm` keeps this file in sync automatically
+(`video_eval.manifest.upsert_clip`: idempotent, preserves other entries,
+atomic write) -- nothing else needs to touch it by hand. Zones, frames,
+predictions and the confirmed reference timeline all still live under each
+clip's own directory; only the *list of clips* lives in the manifest.
+
+```sh
+.venv-video-eval/bin/python -m perception_bench \
+  --ir-manifest ../data-ai-agent-dementia/manifest.yaml --skip-daylight
+```
+
+Per clip, tier 3 re-reads that clip's own `labels/reference.yaml` (not just
+the manifest's copy) and skips with a reason if it is missing or not
+confirmed. By default it scores whichever `predictions/*.jsonl` files
+already exist; `--ir-tag PATTERN` (an `fnmatch` glob) restricts which tags
+are scored and reported, and `--ir-backend NAME` (with `--ir-variant`) runs
+`video_eval.predict.predict_clip` first and scores the resulting tag.
+`--ir-rescore` forces re-running predict/score instead of reusing existing
+reports. Per-clip/tag rows (frame count, accuracy, `standing`/`on_floor`
+recall, `on_floor` latency, gate verdicts) are pooled per **tag family** --
+the prediction tag with its trailing git-sha removed, keeping any `-g` so
+gated and ungated runs never pool -- so the same backend/variant scored
+across clips, or at different commits, still tells one story. A reference
+`on_floor` event the prediction never reaches counts as missed and fails
+the latency gate, per clip and pooled. Tier 3's verdicts stay advisory, like tier 1's: a
+missed gate is reported honestly but does not fail the process, since a
+handful of confirmed clips is not yet the statistical evidence PLAN.md
+section 12's >=95%/<=2s targets assume.
+
+Tier 3 still skips cleanly (exit 0, a plain `missing_reason`, never a
+fabricated number) when the manifest is absent or empty, so CI stays
+green.
 
 ### A9. Zones per camera placement
 
@@ -597,7 +655,8 @@ stays under two hours each.
 | prepare (ffmpeg, 4K source) | about 1 to 2 minutes |
 | predict, one backend | under 1 minute |
 | blur and sheets | about 1 minute |
-| label-local, qwen3-vl 8b | about 3 hours on every frame, about 40 minutes with `--adaptive`; gemma4 e4b is roughly twice as fast and less accurate |
+| label-local, qwen3-vl 8b (ollama) | about 3 hours on every frame, about 40 minutes with `--adaptive`; gemma4 e4b is roughly twice as fast and less accurate |
+| label-local, Qwen3-VL-8B-Instruct-8bit (mlx) | roughly 6x faster per frame than the same size through Ollama; still budget minutes to tens of minutes with `--adaptive` depending on clip length |
 | label-codex | about 55 calls, roughly 6 minutes, about 300k tokens |
 | replay | real time, 4 minutes plus stack rebuild |
 

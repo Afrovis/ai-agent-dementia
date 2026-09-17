@@ -119,14 +119,72 @@ def _tier2_verdicts(tier2: Tier2Result) -> list[Verdict]:
     return verdicts
 
 
-def _tier3_verdicts(tier3: Tier3Result) -> list[Verdict]:
-    return [
-        Verdict(
-            label="tier3 infrared bench",
-            passed=None,
-            detail=tier3.missing_reason or f"{tier3.clip_count} clip(s) scored",
+_TIER3_GATE_LABELS = (
+    ("standing_recall", f"standing recall >= {ACCURACY_TARGET:.0%}"),
+    ("on_floor_recall", f"on_floor recall >= {ACCURACY_TARGET:.0%}"),
+    ("on_floor_delay", f"on_floor latency <= {LATENCY_TARGET_S:.0f}s"),
+)
+
+
+def _tier3_gate_detail(gate_name: str, gate: dict) -> str:
+    if not gate["measured"]:
+        return (
+            "not measured (no on_floor event)"
+            if gate_name == "on_floor_delay"
+            else ("not measured (no frames)")
         )
-    ]
+    if gate_name == "on_floor_delay":
+        return _latency_text(gate["value_s"], gate.get("missed", 0))
+    return f"{gate['value']:.1%}"
+
+
+def _latency_text(value_s: float | None, missed: int) -> str:
+    """A measured on_floor latency: a missed event is reported as such, never
+    as a missing number (it fails the gate, see `infrared._latency_gate`)."""
+    detected = None if value_s is None else f"max {value_s:.2f}s"
+    if not missed:
+        return detected or "n/a"
+    missed_text = f"missed {missed} on_floor event(s)"
+    return missed_text if detected is None else f"{missed_text}, detected {detected}"
+
+
+def _tier3_verdicts(tier3: Tier3Result) -> list[Verdict]:
+    """Tier 3's verdicts are advisory, like tier 1's -- see this issue's
+    "missing data is not a failing test" and the design decision to keep
+    tier 3's exit-code behaviour unchanged even now that it can measure
+    real numbers: only tier 2 gates the exit code today."""
+    if tier3.missing_reason is not None:
+        return [
+            Verdict(
+                label="tier3 infrared bench",
+                passed=None,
+                detail=tier3.missing_reason,
+                advisory=True,
+            )
+        ]
+
+    verdicts: list[Verdict] = []
+    for pooled in tier3.pooled_results:
+        for gate_name, label_suffix in _TIER3_GATE_LABELS:
+            gate = pooled.gates[gate_name]
+            verdicts.append(
+                Verdict(
+                    label=f"tier3 [{pooled.tag_family}] {label_suffix}",
+                    passed=gate["met"],
+                    detail=_tier3_gate_detail(gate_name, gate),
+                    advisory=True,
+                )
+            )
+    if not verdicts:
+        detail = (
+            f"{len(tier3.clip_results)} clip/tag row(s) scored, 0 pooled tag families"
+            if tier3.clip_results
+            else f"{tier3.clip_count} clip(s) in manifest, none scored (see skipped list)"
+        )
+        verdicts.append(
+            Verdict(label="tier3 infrared bench", passed=None, detail=detail, advisory=True)
+        )
+    return verdicts
 
 
 def build_report(
@@ -165,7 +223,7 @@ def _format_confusion_matrix(accuracy: AccuracyResult) -> str:
 
 def _format_verdict(v: Verdict) -> str:
     marker = "PASS" if v.passed else ("FAIL" if v.passed is False else "n/a ")
-    tag = " (advisory, smoke-test, does not gate exit code)" if v.advisory else ""
+    tag = " (advisory, does not gate exit code)" if v.advisory else ""
     return f"  [{marker}] {v.label}{tag}: {v.detail}"
 
 
@@ -205,7 +263,37 @@ def print_report(report: BenchReport) -> None:
     if report.tier3.missing_reason:
         print(f"NOT MEASURED: {report.tier3.missing_reason}")
     else:
-        print(f"clips scored: {report.tier3.clip_count}")
+        print(f"clips in manifest: {report.tier3.clip_count}")
+        if report.tier3.clip_results:
+            print("per clip/tag:")
+            for row in report.tier3.clip_results:
+                acc = "n/a" if row.overall_accuracy is None else f"{row.overall_accuracy:.1%}"
+                standing = "n/a" if row.standing_recall is None else f"{row.standing_recall:.1%}"
+                floor = "n/a" if row.on_floor_recall is None else f"{row.on_floor_recall:.1%}"
+                latency = _latency_text(row.on_floor_latency_s, row.on_floor_missed)
+                print(
+                    f"  {row.clip_id} [{row.tag}] frames={row.frame_count} acc={acc} "
+                    f"standing_recall={standing} on_floor_recall={floor} "
+                    f"on_floor_latency={latency}"
+                )
+        if report.tier3.pooled_results:
+            print("pooled by tag family:")
+            for pooled in report.tier3.pooled_results:
+                acc = "n/a" if pooled.overall_accuracy is None else f"{pooled.overall_accuracy:.1%}"
+                standing = (
+                    "n/a" if pooled.standing_recall is None else f"{pooled.standing_recall:.1%}"
+                )
+                floor = "n/a" if pooled.on_floor_recall is None else f"{pooled.on_floor_recall:.1%}"
+                latency = _latency_text(pooled.on_floor_latency_s, pooled.on_floor_missed)
+                print(
+                    f"  {pooled.tag_family}: clips={len(pooled.clip_ids)} "
+                    f"frames={pooled.frame_count} acc={acc} standing_recall={standing} "
+                    f"on_floor_recall={floor} on_floor_latency={latency}"
+                )
+        if report.tier3.skipped:
+            print("skipped clips:")
+            for clip_id, reason in report.tier3.skipped:
+                print(f"  {clip_id}: {reason}")
 
     print("\nVerdicts")
     print("-" * 60)
@@ -218,8 +306,8 @@ def print_report(report: BenchReport) -> None:
         print("Result: at least one measured target was missed.")
     elif advisory_miss:
         print(
-            "Result: no measured target was missed. "
-            "(Advisory tier 1 targets missed, see above -- does not gate.)"
+            "Result: no gating target was missed. "
+            "(Advisory tier 1/tier 3 targets missed, see above -- they do not gate.)"
         )
     else:
         print("Result: no measured target missed. (Tiers marked n/a were not measured.)")
@@ -274,6 +362,11 @@ def report_to_dict(report: BenchReport) -> dict:
             "measured": report.tier3.missing_reason is None,
             "missing_reason": report.tier3.missing_reason,
             "clip_count": report.tier3.clip_count,
+            "clip_results": [asdict(row) for row in report.tier3.clip_results],
+            "pooled_results": [asdict(pooled) for pooled in report.tier3.pooled_results],
+            "skipped": [
+                {"clip_id": clip_id, "reason": reason} for clip_id, reason in report.tier3.skipped
+            ],
         },
         "verdicts": [asdict(v) for v in report.verdicts],
         "exit_code": report.exit_code,

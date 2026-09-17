@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Volunteer recording</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <main class="landing-page">
+    <h1>Help improve a dementia care research project</h1>
+    <p>
+      This is a research project building software that watches over someone
+      with dementia at night and gently helps them. I'm looking for healthy
+      volunteers to record a short, guided video of themselves moving around a
+      room, so the software can be tested on more varied footage than my own.
+    </p>
+
+    <p>
+      <strong>Your video stays private.</strong> It is encrypted in your
+      browser before it leaves your computer. Only I (Mathias) can see it. The
+      analysis runs on my own computer with local AI. Your video is never sent
+      to any AI company or cloud service. Cloudflare delivers this website and
+      checks for bots, but it only ever handles encrypted data it cannot read.
+      You can ask for your video to be deleted at any time with the link you
+      get after recording. No sound is recorded. This is a research project,
+      not a medical service.
+    </p>
+
+    <section id="demo-section">
+      <h2>What the software sees</h2>
+      <p>
+        Here's a real example: a skeleton overlay and a state label
+        (standing, walking, sitting, in bed, on the floor) drawn live on a
+        recording of the room.
+      </p>
+      <div class="sample-video-wrap">
+        <video id="sample-video" muted playsinline controls></video>
+        <canvas id="sample-overlay"></canvas>
+      </div>
+      <canvas id="sample-timeline" class="sample-timeline"></canvas>
+      <p class="hint">Drag the strip below the video to scrub the demo.</p>
+    </section>
+
+    <a class="button" href="/record">Record a video</a>
+  </main>
+  <script src="/sample.js"></script>
+</body>
+</html>

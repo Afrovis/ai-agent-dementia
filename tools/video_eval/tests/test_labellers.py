@@ -6,8 +6,8 @@ from PIL import Image
 
 from video_eval.common import read_jsonl, write_jsonl
 from video_eval.label_codex import label_codex
-from video_eval.label_local import label_local
-from video_eval.labels import validate_label
+from video_eval.label_local import MlxLabeller, OllamaLabeller, label_local
+from video_eval.labels import LABEL_SCHEMA, validate_label
 
 VALID = {
     "person_visible": True,
@@ -16,6 +16,8 @@ VALID = {
     "confidence": 0.9,
     "note": "person is upright",
 }
+
+_MISSING = object()
 
 
 def _prepared_frames(root, count=1):
@@ -41,6 +43,126 @@ def test_label_validation_rejects_enum_and_long_note():
         validate_label({**VALID, "posture": "walking"})
     with pytest.raises(ValueError, match="15 words"):
         validate_label({**VALID, "note": " ".join(["word"] * 16)})
+
+
+@pytest.mark.parametrize(
+    ("person_visible", "expected"),
+    [
+        ("true", True),
+        ("FALSE", False),
+        (" True ", True),
+        (1, True),
+        (0, False),
+        (True, True),
+        (False, False),
+    ],
+)
+def test_label_validation_coerces_unambiguous_person_visible(person_visible, expected):
+    label = validate_label({**VALID, "person_visible": person_visible})
+
+    assert label.person_visible is expected
+
+
+@pytest.mark.parametrize(
+    "person_visible",
+    [
+        "yes",
+        "1",
+        2,
+        -1,
+        None,
+        1.0,
+        pytest.param(_MISSING, id="missing"),
+    ],
+)
+def test_label_validation_rejects_ambiguous_person_visible(person_visible):
+    raw = {key: value for key, value in VALID.items() if key != "person_visible"}
+    if person_visible is not _MISSING:
+        raw["person_visible"] = person_visible
+
+    with pytest.raises(ValueError, match="person_visible must be a boolean"):
+        validate_label(raw)
+
+
+def test_ollama_labeller_requests_structured_label_schema(monkeypatch):
+    labeller = OllamaLabeller(base_url="http://ollama.test", model="test-model")
+    seen = {}
+
+    def fake_post(path, payload):
+        seen.update(path=path, payload=payload)
+        return {"message": {"content": json.dumps(VALID)}}
+
+    monkeypatch.setattr(labeller, "_post", fake_post)
+
+    assert labeller.label(b"jpeg") == VALID
+    assert seen["path"] == "/api/chat"
+    assert isinstance(seen["payload"]["format"], dict)
+    assert seen["payload"]["format"] == LABEL_SCHEMA
+    assert seen["payload"]["format"] != "json"
+
+
+class _FakeSchemaProcessor:
+    def clone(self):
+        return self
+
+
+def test_mlx_labeller_parses_generated_json():
+    def fake_loader(model_id):
+        assert model_id == "test-mlx-model"
+        return ("model", "processor", "prompt", 0, _FakeSchemaProcessor())
+
+    seen = {}
+
+    def fake_generator(model, processor, prompt, image_path, logits_processor):
+        seen.update(
+            model=model,
+            processor=processor,
+            prompt=prompt,
+            image_path=image_path,
+            logits_processor=logits_processor,
+        )
+        return json.dumps(VALID)
+
+    labeller = MlxLabeller(model="test-mlx-model", loader=fake_loader, generator=fake_generator)
+
+    assert labeller.label(b"jpeg") == VALID
+    assert seen["model"] == "model"
+    assert seen["processor"] == "processor"
+    assert seen["prompt"] == "prompt"
+    assert seen["image_path"].endswith(".jpg")
+
+
+def test_mlx_labeller_rejects_invalid_json():
+    def fake_loader(_model_id):
+        return ("model", "processor", "prompt", 0, _FakeSchemaProcessor())
+
+    labeller = MlxLabeller(
+        model="test-mlx-model", loader=fake_loader, generator=lambda *_: "not json"
+    )
+
+    with pytest.raises(ValueError, match="invalid JSON"):
+        labeller.label(b"jpeg")
+
+
+def test_local_uses_mlx_backend_and_tags_records(tmp_path):
+    root = tmp_path / "private"
+    _prepared_frames(root, 1)
+
+    def fake_loader(_model_id):
+        return ("model", "processor", "prompt", 0, _FakeSchemaProcessor())
+
+    labeller = MlxLabeller(
+        model="test-mlx-model",
+        loader=fake_loader,
+        generator=lambda *_: json.dumps(VALID),
+    )
+    result = label_local(
+        "test", root=root, backend="mlx", model="test-mlx-model", labeller_factory=lambda: labeller
+    )
+
+    assert result["model"] == "test-mlx-model"
+    labels = read_jsonl(root / "clips" / "test" / "labels" / "local.jsonl")
+    assert labels[0]["labeller"] == "mlx:test-mlx-model"
 
 
 def test_local_retries_invalid_and_propagates_static_frames(tmp_path):

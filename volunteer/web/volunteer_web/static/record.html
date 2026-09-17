@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Record a video</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <main class="record-page">
+    <section id="consent-section">
+      <h1>Before you record</h1>
+      <p>
+        Your video is encrypted in your browser before it leaves your computer.
+        Only I (Mathias) can see it. The analysis runs on my own computer with
+        local AI. Your video is never sent to any AI company or cloud service.
+        Cloudflare delivers this website and checks for bots, but it only ever
+        handles encrypted data it cannot read. You can ask for your video to be
+        deleted at any time with the link you get after recording. No sound is
+        recorded. This is a research project, not a medical service.
+      </p>
+      <form id="consent-form">
+        <label><input type="checkbox" id="consent-adult" /> I am 18 years of age or older.</label>
+        <label><input type="checkbox" id="consent-understood" /> I understand the video is stored and analysed as described above.</label>
+        <label><input type="checkbox" id="consent-alone" /> I will only film myself, with nobody else in view.</label>
+      </form>
+      <div id="turnstile-container"></div>
+      <button id="consent-submit" disabled>I consent, start recording</button>
+      <p class="hint">
+        Bookmark this link once it appears &mdash; it's the only way back to your results:
+        <br />
+        <a id="bookmark-link" href="#">(appears after you consent)</a>
+      </p>
+    </section>
+
+    <section id="setup-section" hidden>
+      <h1>Set up your camera</h1>
+      <ul class="checklist">
+        <li>Place your laptop as far away as possible.</li>
+        <li>Try to fit the whole floor in view.</li>
+        <li>Make sure the room is well lit.</li>
+        <li>Stand at the far end and check your whole body is in frame.</li>
+      </ul>
+      <video id="setup-preview" autoplay muted playsinline></video>
+      <button id="test-prompts-button">Test the voice prompts</button>
+      <button id="start-recording-button">Start recording</button>
+    </section>
+
+    <section id="recording-section" hidden>
+      <p id="prompt-text" class="prompt-text">Get ready...</p>
+      <p id="prompt-safety" class="prompt-safety"></p>
+      <button id="skip-step-button" hidden>Skip this step</button>
+      <button id="stop-button">Stop recording</button>
+      <p class="hint">Chunks waiting to upload: <span id="pending-chunks">0</span></p>
+    </section>
+
+    <section id="done-section" hidden>
+      <p id="done-message">Uploading...</p>
+    </section>
+
+    <section id="unsupported-section" hidden>
+      <h1>Your browser can't record here</h1>
+      <p>
+        This page needs a browser with WebCrypto and MediaRecorder support
+        (recent Chrome, Firefox, Safari or Edge) to record and encrypt safely.
+        There is no unencrypted fallback.
+      </p>
+    </section>
+  </main>
+
+  <script src="/crypto.js"></script>
+  <script src="/recorder.js"></script>
+</body>
+</html>

@@ -88,7 +88,7 @@ All events are pydantic models in `shared/nc_shared/events.py`, serialised as JS
 | `session` | `SessionState` | `agent` | `phase: IDLE, OBSERVING, ENGAGED, COOLDOWN, ESCALATED`, `goal`, `strategy_index` |
 | `session` | `GoalChanged` | `agent` | `from_goal`, `to_goal`, `reason` |
 | `cloud` | `CloudCall` | `agent` | `task: interpret or plan`, `model`, `payload: JSON text data only` |
-| `say` | `Say` | `agent` | `text`, `strategy`, `interruptible: bool` |
+| `say` | `Say` | `agent` | `text`, `strategy`, `interruptible: bool`, `clip_id: str or None` (when set, embodiment plays the consented caregiver-uploaded clip while still showing `text`) |
 | `show` | `Show` | `agent` | `face: asleep, awake, speaking, listening`, `headline`, `body`, `photo_id or None`, `brightness: 0 to 1` |
 | `notify` | `Notify` | `agent`; any service on fault (currently `embodiment` and `listen`) | `level: info, attention, critical`, `title`, `body`, `repeat_until_ack: bool` |
 | `ack` | `Ack` | `dashboard`, `notify` | `notify_id` |
@@ -106,7 +106,7 @@ Rules:
 
 Phases: `IDLE → OBSERVING → ENGAGED → COOLDOWN → IDLE`, with `ENGAGED → ESCALATED → COOLDOWN`. This is the summary for the ordinary, nudging path; rule 5 (below) can escalate straight to `ESCALATED` from any of `IDLE`, `OBSERVING`, `ENGAGED`, or `COOLDOWN`, and outranks this summary when the two disagree.
 
-- Enter `OBSERVING` on `sitting_up` or `standing` inside the night window. Wait 20 s. If back `in_bed`, return to `IDLE`. The night window gates starting this nudging session only; it does not gate rule 5.
+- Enter `OBSERVING` on `sitting_up`, `standing` or `walking` inside the night window. Wait 20 s. If back `in_bed`, return to `IDLE`. The night window gates starting this nudging session only; it does not gate rule 5.
 - Enter `ENGAGED` after 20 s up, or on any `Utterance`. Goal defaults to `return_to_bed`.
 - In `ENGAGED`, run strategies in configured order (issue #14, `agent.strategies.StrategyEngine`). Each strategy: emit `Show`, optionally `Say` (validated by `rules.validate_say()`, HANDOFF.md rule 3), wait its dwell time, evaluate. Move to the next on no progress -- "progress" is currently just heading to or reaching the bed (`zone == "bed"` or `state == "in_bed"`), the one signal issue #14 can observe.
 - Goal switches: `restroom`, `drink_water`, `comfort`, `wait_for_caregiver`. `restroom`/`drink_water`/`comfort` return to `return_to_bed` when satisfied; `wait_for_caregiver` does not, by design (see below). Every switch goes through `rules.validate_goal()` (issue #13, the goal-change equivalent of `rules.validate()`) and emits `GoalChanged`. Perception seeing a confirmed `PersonState.zone` of `door` or `bathroom_path` enters `restroom`, and it returns to `return_to_bed` once the person is seen back at the bed or a configured timeout (`AGENT_RESTROOM_TIMEOUT_SECONDS`) elapses. Entering the goal selects `path_light` and emits an idempotent hallway-light `on` command; returning to `return_to_bed` emits `off` and selects `guided_return` when enabled. An escalation during the trip keeps the light on until the person is stably back in bed. Issue #15 adds structured local-LLM interpretation and planning: stated restroom needs and pain propose `restroom`/`comfort`, and planner goal proposals enter only through `Session.propose_goal()`. Invalid proposals are inert. Issue #16 loads the caregiver-authored `config/person.yaml` (`PERSON_PATH`, with example/default fallbacks) and injects every profile field into interpret, compose, and plan prompts. Other goal success conditions remain limited by what the current sensors can observe.
@@ -171,8 +171,9 @@ validated and atomically written to `config/person.yaml` and
 `config/strategies.yaml`; the agent processes reload them at startup rather
 than watching files. Photo uploads are validated JPEG/PNG/WebP files under
 `PHOTO_DIR`. Family voice uploads are explicit, consent-labelled, validated
-PCM WAV files under `VOICE_CLIP_DIR`; they are not bus events and playback is
-not implemented yet. Upload bytes and profile text are never logged.
+PCM WAV files under `VOICE_CLIP_DIR`; they are referenced by opaque `clip_id`
+on `Say` events while the audio bytes stay off Redis. Upload bytes and profile
+text are never logged.
 
 Issue #24 implements the morning summary in `store`, which owns the complete
 SQLite event history. At `MORNING_SUMMARY_TIME` in `TZ`, it publishes one
@@ -222,7 +223,7 @@ Implement in this order. Numbers match `PLAN.md` section 5.3.
 | 3 | `orient_time_place` | room photo behind face | place and time template | 30 s | implemented, issue #14 |
 | 4 | `validate_and_redirect` | face listening | composed from utterance | 20 s | implemented, issues #14/#15/#16 -- local structured composition with the full person profile, deterministically validated, with the caregiver template as the failure fallback |
 | 5 | `guided_return` | brightness 0.7, bed direction text | step template | 30 s | implemented, issue #14 |
-| 6 | `familiar_voice` | family photo | plays uploaded clip | clip length + 15 s | not implemented -- issue #23 provides the consented local WAV upload path; playback and selection still need implementation |
+| 6 | `familiar_voice` | family photo | plays uploaded clip | clip length + 15 s | implemented, disabled by default; requires a configured `clip_id` whose WAV exists |
 | 7 | `music_or_story` | dim, photo | plays track | track length | not implemented -- needs a caregiver track-upload path that does not exist yet |
 | 8 | `path_light` | bathroom direction | one sentence | restroom goal | implemented, issue #21 -- goal-specific rather than part of the ordinary ladder; `light` controls a feature-flagged local Shelly plug |
 | 10 | `escalate_phone` | dim clock | "Someone is coming to help." | until `Ack` | implemented, issue #14 -- selected unconditionally on entering `ESCALATED` and stays selected; see `agent.strategies.StrategyEngine.force` |
@@ -302,8 +303,8 @@ Run tests for one service: `cd services/agent && pytest`.
 
 | Question | Default until decided | Decider |
 |---|---|---|
-| Pose model: MediaPipe Pose vs YOLOv8-pose | MediaPipe, both backends built behind `PERCEIVE_POSE_BACKEND` in issue 8; the comparison now runs on the owner's RGB bedroom recordings through `tools/video_eval` (M5). A five-frame smoke test on 2026-09-13 had YOLO finding people in bed that MediaPipe missed at bridge resolution, so expect the default to be revisited | whoever does issue 51, with bench numbers |
-| Bridge frame format: 320 by 240 squashed vs letterboxed, and resolution | keep the current squash until issue 51 measures it; do not change `script.js` constants without numbers | issue 52 |
+| Pose model: MediaPipe Pose vs YOLOv8-pose | Decided with numbers: `PERCEIVE_POSE_BACKEND=yolo` with YOLO11s-pose at 640 input (PR #55, `docs/FLOOR_DETECTION_HANDOFF.md`). MediaPipe stays available behind the flag. Revisit on infrared clips (#11) | decided (#55); revisit with #11 |
+| Bridge frame format: 320 by 240 squashed vs letterboxed, and resolution | Decided with numbers: letterbox with source dimensions sent alongside (`docs/VIDEO_EVAL.md` section 7, #52), at 640x480 (#55) | decided (#52, #55) |
 | Local text model | `llama3.1:8b`, compare 3 on the dialogue bench in issue 17 | issue 17 |
 | Smart plug for path light in v1 | manual night light, plug behind a feature flag | project owner |
 | Morning summary contents | count, durations, what helped, faults | project owner after a caregiver interview |
@@ -317,4 +318,4 @@ Run tests for one service: `cd services/agent && pytest`.
     1. In `labels.py`, coerce common unambiguous non-bool representations (`"true"`/`"false"` strings, `1`/`0`) to bool before rejecting, instead of hard-failing on anything that is not already a Python `bool`.
     2. In `label_local.py`, constrain the Ollama call with a real JSON-schema `format` (Ollama supports structured outputs) instead of the bare `"format": "json"` string, so `person_visible` is constrained to boolean at generation time rather than policed after the fact.
   - Add a test to `tests/test_labellers.py` covering a non-bool `person_visible` (e.g. the string `"true"`) to confirm it either coerces cleanly or is retried and falls back to a `failed_label_record`, since no existing test exercises this path.
-  - Not yet implemented — flagged for whoever picks up label-local reliability work.
+  - Status: fixed. `labels.py` coerces only unambiguous spellings (`true`/`false` in any case, `1`/`0`) and rejects the rest; `label_local.py` sends `LABEL_SCHEMA` as the Ollama `format`. `tests/test_labellers.py` covers accepted and rejected `person_visible` values and the structured `format` in the request.

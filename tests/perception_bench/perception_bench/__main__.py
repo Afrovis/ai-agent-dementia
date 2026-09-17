@@ -53,6 +53,29 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="tier 3 manifest path (default: %(default)s)",
     )
     parser.add_argument(
+        "--ir-tag",
+        default=None,
+        help="fnmatch glob restricting which tier 3 prediction tags are scored/reported",
+    )
+    parser.add_argument(
+        "--ir-backend",
+        default=None,
+        help=(
+            "run video_eval predict with this backend for each confirmed tier 3 clip before "
+            "scoring it (default: score whichever predictions/*.jsonl already exist)"
+        ),
+    )
+    parser.add_argument(
+        "--ir-variant",
+        default="squash",
+        help="video_eval bridge variant to predict with when --ir-backend is given",
+    )
+    parser.add_argument(
+        "--ir-rescore",
+        action="store_true",
+        help="force tier 3 to re-run predict/score instead of reusing existing reports",
+    )
+    parser.add_argument(
         "--skip-daylight",
         action="store_true",
         help="skip tier 2 entirely without even checking for data (useful in CI)",
@@ -85,7 +108,13 @@ def main(argv: list[str] | None = None) -> int:
             degrade=args.night_degrade,
         )
 
-    tier3 = run_tier3(args.ir_manifest)
+    tier3 = run_tier3(
+        args.ir_manifest,
+        tag_glob=args.ir_tag,
+        backend=args.ir_backend,
+        variant=args.ir_variant,
+        rescore=args.ir_rescore,
+    )
 
     report = build_report(tier1_runs, tier1_accuracy, tier1_latency, tier2, tier3)
 

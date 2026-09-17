@@ -126,7 +126,7 @@ A session is the unit of interaction. It starts when the person leaves the `in_b
 ### 5.1 Session lifecycle
 
 ```
-IDLE ──(sitting_up or standing at night)──▶ OBSERVING
+IDLE ──(sitting_up/standing/walking at night)──▶ OBSERVING
 OBSERVING ──(still up after 20 s, or speaks)──▶ ENGAGED
 OBSERVING ──(back in bed)──▶ IDLE
 ENGAGED ──(goal reached)──▶ COOLDOWN ──(5 min calm)──▶ IDLE
@@ -300,9 +300,9 @@ Before any real use:
 ### Milestone 5: Recorded-video evaluation (after the dry-run prep)
 - [x] Fix the MediaPipe dependency defect: pin `mediapipe>=0.10,<1.0` and install the slim-image runtime libraries needed by OpenCV.
 - [x] Build the first `tools/video_eval/` CLI stage: `prepare` and `predict`, as specified in `docs/VIDEO_EVAL.md`.
-- [ ] Build `blur`, `sheets`, `label-local`, `label-codex`, `reconcile`, `score`, and `replay` (#50 and #51).
+- [x] Build `blur`, `sheets`, `label-local`, `label-codex`, `reconcile`, `score`, and `replay` (#50 and #51), plus `visualize` (#54).
 - Fill in perception bench tier 3 so confirmed clips score in `python -m perception_bench`.
-- Run the backend, squash vs letterbox, resolution, hysteresis and gate experiments on the RGB clips and decide the bridge fix and the pose backend with numbers.
+- [x] Run the backend, squash vs letterbox, resolution, hysteresis and gate experiments on the RGB clips and decide the bridge fix and the pose backend with numbers: letterbox at 640x480 (#52, `docs/VIDEO_EVAL.md` section 7) and YOLO11s-pose at 640 input (#55, `docs/FLOOR_DETECTION_HANDOFF.md`).
 - Record the scenario set in section 8 of `docs/VIDEO_EVAL.md` in RGB; infrared clips are a later round.
 
 ### Later

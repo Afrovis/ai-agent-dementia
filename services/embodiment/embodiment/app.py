@@ -61,6 +61,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 # (HANDOFF.md section 6), so a fresh install legitimately has none.
 DEFAULT_PHOTO_DIR = Path("data/photos")
 PHOTO_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp")
+DEFAULT_VOICE_CLIP_DIR = Path("/app/data/voice-clips")
 
 # Placeholder images shipped with the service, so the fake agent's `demo_*`
 # photo ids resolve on a fresh checkout. Searched only after `photo_dir`, so
@@ -71,6 +72,7 @@ DEMO_PHOTO_DIR = Path(__file__).parent / "demo_photos"
 # it to this character set is what keeps a crafted id such as
 # `../../etc/passwd` from escaping the photo directory.
 PHOTO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+VOICE_CLIP_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(SERVICE_NAME)
@@ -141,6 +143,19 @@ def resolve_photo(
     return None
 
 
+def resolve_voice_clip(voice_clip_dir: Path, clip_id: str) -> Path | None:
+    """Resolve one dashboard-assigned WAV id without allowing path traversal."""
+    if (
+        "/" in clip_id
+        or "\\" in clip_id
+        or ".." in clip_id
+        or VOICE_CLIP_ID_RE.fullmatch(clip_id) is None
+    ):
+        return None
+    candidate = voice_clip_dir / f"{clip_id}.wav"
+    return candidate if candidate.is_file() else None
+
+
 def _show_to_message(event: Show) -> dict:
     return {
         "type": "show",
@@ -152,7 +167,9 @@ def _show_to_message(event: Show) -> dict:
     }
 
 
-def _say_to_message(event: Say, audio_id: str | None = None) -> dict:
+def _say_to_message(
+    event: Say, audio_id: str | None = None, *, audio_url: str | None = None
+) -> dict:
     message = {
         "type": "say",
         "text": event.text,
@@ -160,7 +177,9 @@ def _say_to_message(event: Say, audio_id: str | None = None) -> dict:
         "interruptible": event.interruptible,
         "session_id": event.session_id,
     }
-    if audio_id is not None:
+    if audio_url is not None:
+        message["audio_url"] = audio_url
+    elif audio_id is not None:
         message["audio_url"] = f"/speech/{audio_id}.wav"
     return message
 
@@ -179,6 +198,7 @@ async def broadcast_loop(
     block_ms: int = 100,
     max_iterations: int | None = None,
     stop_event: asyncio.Event | None = None,
+    voice_clip_dir: Path | str = DEFAULT_VOICE_CLIP_DIR,
 ) -> None:
     """Broadcast display, speech, and early voice-activity events to browsers.
 
@@ -191,6 +211,7 @@ async def broadcast_loop(
     bus.ensure_group("say", GROUP)
     bus.ensure_group("speech_in", GROUP)
 
+    voice_clip_dir = Path(voice_clip_dir)
     iterations = 0
     while True:
         if stop_event is not None and stop_event.is_set():
@@ -214,7 +235,22 @@ async def broadcast_loop(
                 if stream == "speech_in" and not isinstance(event, SpeechStarted):
                     bus.ack(stream, GROUP, msg_id)
                     continue
-                if isinstance(event, Say) and speech is not None:
+                if isinstance(event, Say) and event.clip_id is not None:
+                    clip_path = resolve_voice_clip(voice_clip_dir, event.clip_id)
+                    if clip_path is None:
+                        logger.warning(
+                            json.dumps(
+                                {
+                                    "service": SERVICE_NAME,
+                                    "message": "caregiver voice clip unavailable; text only",
+                                    "clip_id": event.clip_id,
+                                }
+                            )
+                        )
+                        message = _say_to_message(event)
+                    else:
+                        message = _say_to_message(event, audio_url=f"/voice/{event.clip_id}.wav")
+                elif isinstance(event, Say) and speech is not None:
                     try:
                         audio_id = await asyncio.to_thread(speech.synthesize, event.text)
                         message = _say_to_message(event, audio_id)
@@ -328,6 +364,7 @@ def create_app(
     *,
     speech=None,
     prerender_phrases: tuple[str, ...] = (),
+    voice_clip_dir: Path | str = DEFAULT_VOICE_CLIP_DIR,
 ) -> FastAPI:
     """Build the FastAPI app, wiring `bus` into the websocket broadcast loop.
 
@@ -336,6 +373,7 @@ def create_app(
     """
     manager = ConnectionManager()
     photo_dir = Path(photo_dir)
+    voice_clip_dir = Path(voice_clip_dir)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -354,7 +392,9 @@ def create_app(
                         repeat_until_ack=False,
                     )
                 )
-        task = asyncio.create_task(broadcast_loop(bus, manager, speech=speech))
+        task = asyncio.create_task(
+            broadcast_loop(bus, manager, speech=speech, voice_clip_dir=voice_clip_dir)
+        )
         try:
             yield
         finally:
@@ -390,6 +430,14 @@ def create_app(
         path = None if speech is None else speech.resolve(audio_id)
         if path is None:
             raise HTTPException(status_code=404, detail="speech audio not found")
+        return FileResponse(path, media_type="audio/wav")
+
+    @app.get("/voice/{clip_id}.wav")
+    async def voice_clip(clip_id: str) -> FileResponse:
+        """Serve one validated caregiver-uploaded, consented WAV clip."""
+        path = resolve_voice_clip(voice_clip_dir, clip_id)
+        if path is None:
+            raise HTTPException(status_code=404, detail="voice clip not found")
         return FileResponse(path, media_type="audio/wav")
 
     @app.websocket("/ws")

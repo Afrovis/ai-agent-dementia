@@ -53,7 +53,12 @@ from nc_shared.bus import Bus
 from nc_shared.events import Health, PersonState
 
 from perceive.backends import PoseBackend, build_backend
-from perceive.classify import ClassifyThresholds, StateTracker, zone_for_pose
+from perceive.classify import (
+    ClassifyThresholds,
+    StateTracker,
+    ground_zone_for_pose,
+    zone_for_pose,
+)
 from perceive.floor_check import (
     FloorCheckClient,
     FloorCheckScheduler,
@@ -125,10 +130,16 @@ class PerceiveConfig:
     floor_top_y: float = 1.01
     absent_confirm_seconds: float = 3.0
     bed_vanish_hold: bool = False
+    sitting_thigh_ratio: float = 0.0
     hold_floor: bool = True
     confirm_frames: int = 3
     bed_hold_seconds: float = 0.0
     walk_threshold: float = 0.15
+    walk_mode: str = "legacy"
+    walk_motion_threshold: float = 0.35
+    walk_window_seconds: float = 2.0
+    bed_latch: bool = False
+    upright_zone_from_feet: bool = False
     heartbeat_seconds: float = 60.0
     zones_path: str | None = None
     vision_enabled: bool = True
@@ -168,10 +179,18 @@ class PerceiveConfig:
             floor_top_y=float(env.get("PERCEIVE_FLOOR_TOP_Y", "1.01")),
             absent_confirm_seconds=float(env.get("PERCEIVE_ABSENT_CONFIRM_SECONDS", "3")),
             bed_vanish_hold=env.get("PERCEIVE_BED_VANISH_HOLD", "false").strip().lower() == "true",
+            sitting_thigh_ratio=float(env.get("PERCEIVE_SITTING_THIGH_RATIO", "0")),
             hold_floor=env.get("PERCEIVE_HOLD_FLOOR", "true").strip().lower() != "false",
             confirm_frames=int(env.get("PERCEIVE_CONFIRM_FRAMES", "3")),
             bed_hold_seconds=float(env.get("PERCEIVE_BED_HOLD_SECONDS", "0")),
             walk_threshold=float(env.get("PERCEIVE_WALK_THRESHOLD", "0.15")),
+            walk_mode=env.get("PERCEIVE_WALK_MODE", "legacy").strip().lower() or "legacy",
+            walk_motion_threshold=float(env.get("PERCEIVE_WALK_MOTION_THRESHOLD", "0.35")),
+            walk_window_seconds=float(env.get("PERCEIVE_WALK_WINDOW_SECONDS", "2")),
+            bed_latch=env.get("PERCEIVE_BED_LATCH", "false").strip().lower() == "true",
+            upright_zone_from_feet=(
+                env.get("PERCEIVE_UPRIGHT_ZONE_FROM_FEET", "false").strip().lower() == "true"
+            ),
             heartbeat_seconds=float(env.get("PERCEIVE_HEARTBEAT_SECONDS", "60")),
             zones_path=env.get("ZONES_PATH"),
             vision_enabled=env.get("PERCEIVE_VISION_ENABLED", "true").strip().lower() != "false",
@@ -213,8 +232,14 @@ def build_tracker(config: PerceiveConfig) -> StateTracker:
         floor_top_y=config.floor_top_y,
         absent_confirm_seconds=config.absent_confirm_seconds,
         bed_vanish_hold=config.bed_vanish_hold,
+        sitting_thigh_ratio=config.sitting_thigh_ratio,
         hold_floor=config.hold_floor,
         walk_displacement_threshold=config.walk_threshold,
+        walk_mode=config.walk_mode,
+        walk_motion_threshold=config.walk_motion_threshold,
+        walk_window_seconds=config.walk_window_seconds,
+        bed_latch=config.bed_latch,
+        upright_zone_from_feet=config.upright_zone_from_feet,
         floor_height_ratio=config.floor_height_ratio,
         fall_window_seconds=config.fall_window_seconds,
         fall_drop=config.fall_drop,
@@ -338,11 +363,13 @@ def run_once(
     pose = backend.detect(frame.jpeg)
 
     zone: ZoneName = "other"
+    ground_zone: ZoneName | None = None
     if pose is not None:
         zone = zone_for_pose(zones, pose)
+        ground_zone = ground_zone_for_pose(zones, pose)
 
     now = now_fn()
-    result = tracker.update(pose, zone, now)
+    result = tracker.update(pose, zone, now, ground_zone=ground_zone)
 
     # One line per frame would be ~170k lines a night at the active rate.
     # The PersonState publishes below carry what actually matters.

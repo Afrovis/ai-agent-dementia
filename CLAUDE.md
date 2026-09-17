@@ -232,6 +232,12 @@ Demo photos ship in `services/embodiment/embodiment/demo_photos` and resolve
 at `/photos/demo_family` and `/photos/demo_room`. Caregiver uploads under
 `PHOTO_DIR` shadow a demo photo of the same id.
 
+`familiar_voice` is disabled by default. Upload a consented PCM WAV on the
+dashboard Media page, copy its displayed id into that strategy's `clip_id`,
+enable it, and restart `agent`; both `agent` and `embodiment` must use the same
+`VOICE_CLIP_DIR` (the compose default is `/app/data/voice-clips`). It never
+falls back to Piper or cloned speech when the configured clip is unavailable.
+
 `data/` is gitignored. Certificates, the SQLite database and recordings all
 live there and none of them belong in a commit.
 
@@ -251,6 +257,26 @@ or offline against prepared frames (`--frames-dir DIR` instead of
 `--redis`/`--count`, used by `tools/video_eval`). Restart `perceive`
 afterwards to pick up the file. Do this again, and re-run it, any time the
 camera or the room's static furniture changes.
+
+The bed zone decides most in-bed versus out-of-bed readings, and a
+hand-drawn rectangle is usually wrong in both directions: it takes in the
+wall above the headboard and the floor in front of the bed, and misses the
+foot of the mattress. `perceive.calibrate_bed` traces it from the image
+instead with an ultralytics `-seg` model (COCO `bed`, `yolo11m-seg.pt` by
+default, downloaded on first use), votes the masks across frames, stretches
+the outline 15% upward so a lying or seated body still counts, and writes
+only `bed` into `zones.yaml`. It runs once at setup, not per frame; re-run
+it when the camera or the bed moves:
+
+```sh
+docker compose exec perceive python -m perceive.calibrate_bed \
+  --zones /app/config/zones.yaml --redis redis://bus:6379 --count 40
+```
+
+or `--frames-dir DIR` offline. Restart `perceive` afterwards. With a
+calibrated bed zone, set `PERCEIVE_BED_VANISH_HOLD=true` and
+`PERCEIVE_SITTING_THIGH_RATIO=0.55`; the evidence is in
+`docs/BED_OCCUPANCY_2026-09-15.md`.
 
 ## Conventions
 

@@ -1,0 +1,48 @@
+name: nc-volunteer
+
+# Fully separate from the root project (HANDOFF.md rule 4: "no shared
+# network, bus, database or ports with the root compose project"). No
+# `ports:` here -- `web` is reached only through `cloudflared`.
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run
+    networks: [edge]
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on: [web]
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ..
+      dockerfile: volunteer/web/Dockerfile
+    networks: [edge]
+    volumes:
+      - ${VOLUNTEER_DATA_DIR}:/data
+    environment:
+      VOLUNTEER_DATA_DIR_MOUNT: /data
+      PUBLIC_HOSTNAME: ${PUBLIC_HOSTNAME}
+      TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY}
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY}
+      MAX_RECORDING_SECONDS: ${MAX_RECORDING_SECONDS}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB}
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ..
+      dockerfile: volunteer/worker/Dockerfile
+    network_mode: none
+    volumes:
+      - ${VOLUNTEER_DATA_DIR}:/data
+      - ${VOLUNTEER_KEY_DIR}:/keys:ro
+    environment:
+      VOLUNTEER_DATA_DIR_MOUNT: /data
+      WORKER_CPUS: ${WORKER_CPUS}
+    cpus: ${WORKER_CPUS}
+    mem_limit: 6g
+    restart: unless-stopped
+
+networks:
+  edge: {}

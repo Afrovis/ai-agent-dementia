@@ -167,6 +167,7 @@ against the files that implement them.
 | --- | --- | --- | --- |
 | `embodiment` | Browser page, websockets `/ws` and `/media` | both | `services/embodiment/embodiment/app.py` |
 | `embodiment` | Photos under `data/photos` and demo photos | reads | `services/embodiment/embodiment/app.py` |
+| `embodiment` | Consented family WAV clips under `data/voice-clips` | reads | `services/embodiment/embodiment/app.py` |
 | `embodiment` | Piper voice model and ephemeral generated WAV cache | reads/writes | `services/embodiment/embodiment/tts.py` |
 | `embodiment` | `config/strategies.yaml` and `config/person.yaml` for speech warming | reads | `services/embodiment/embodiment/tts.py` |
 | `capture` | USB or RTSP camera, optional | reads | `services/capture/capture/sources.py` |
@@ -174,6 +175,7 @@ against the files that implement them.
 | `perceive` | `config/zones.yaml` at startup | reads | `services/perceive/perceive/zones.py` |
 | `listen` | faster-whisper model cache; downloads `small.en` on first use | reads/writes | `services/listen/listen/transcribe.py` |
 | `agent` | `config/strategies.yaml` at startup | reads | `services/agent/agent/strategies.py` |
+| `agent` | Consented family WAV headers under `data/voice-clips` | reads | `services/agent/agent/strategies.py` |
 | `agent` | Ollama `/api/generate` on the host | calls | `services/agent/agent/llm.py` |
 | `agent` | Anthropic Messages API, text-only and opt-in | calls | `services/agent/agent/llm.py` |
 | `notify` | ntfy topic, or the log when `NTFY_URL` is empty | calls | `services/notify/notify/backends.py` |

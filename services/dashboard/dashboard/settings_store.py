@@ -31,6 +31,7 @@ KNOWN_STRATEGY_IDS = frozenset(
         "orient_time_place",
         "validate_and_redirect",
         "guided_return",
+        "familiar_voice",
         "path_light",
         "escalate_phone",
     }
@@ -241,6 +242,11 @@ def save_strategy_document(
         if photo_id and not MEDIA_ID_RE.fullmatch(photo_id):
             raise ValueError(f"{strategy_id} photo id is invalid")
         entry["photo_id"] = photo_id or None
+        if strategy_id == "familiar_voice":
+            clip_id = str(submitted.get(prefix + "clip_id", "")).strip()
+            if clip_id and not MEDIA_ID_RE.fullmatch(clip_id):
+                raise ValueError(f"{strategy_id} clip id is invalid")
+            entry["clip_id"] = clip_id or None
         updated.append(entry)
     return _atomic_yaml(
         Path(path), {"strategies": sorted(updated, key=lambda item: int(item["order"]))}

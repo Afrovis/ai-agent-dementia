@@ -1,26 +1,15 @@
 # Worked example of the tier-3 manifest format (perception_bench/infrared.py).
 #
-# This is documentation, not real data: the clip path below does not exist
-# in this repository, and the numbers in its timeline are illustrative
-# placeholders, not a measurement. Copy this file to ir_manifest.yaml,
-# point `clips[].path` at real recordings under data/, and fill in
-# `zones` and `timeline` from the room and the recording session
-# (see RECORDING.md).
-
-zones:
-  bed: [[0.0, 0.2], [0.35, 0.2], [0.35, 0.85], [0.0, 0.85]]
-  door: [[0.85, 0.0], [1.0, 0.0], [1.0, 1.0], [0.85, 1.0]]
-  bathroom_path: [[0.35, 0.85], [0.85, 0.85], [0.85, 1.0], [0.35, 1.0]]
+# This is documentation, not real data: `clip-id-does-not-exist` below is
+# not a real video_eval clip in this repository. Real clips and their
+# `confirmed_by`/`confirmed_at` entries are appended automatically by
+# `video_eval reconcile --confirm` (see `video_eval.manifest`); this file is
+# only a reference for the shape `--ir-manifest` expects.
 
 clips:
-  # ILLUSTRATIVE EXAMPLE ONLY -- this file does not exist. Real clips live
-  # under data/perception_bench/ir/, which is gitignored.
-  - path: clips/EXAMPLE_2026-01-10_full_script.mp4
-    frame_interval_s: 0.5 # 2 fps, matching CAPTURE_FPS's default
-    timeline:
-      - {from_s: 0.0, to_s: 30.0, state: in_bed}
-      - {from_s: 30.0, to_s: 40.0, state: sitting_up}
-      - {from_s: 40.0, to_s: 50.0, state: standing}
-      - {from_s: 50.0, to_s: 56.0, state: walking}
-      - {from_s: 56.0, to_s: 71.0, state: on_floor}
-      - {from_s: 71.0, to_s: 81.0, state: absent}
+  # ILLUSTRATIVE EXAMPLE ONLY -- this clip does not exist. Real clips live
+  # under `../data-ai-agent-dementia/clips/<clip_id>/`, which is gitignored
+  # and lives outside this repository entirely.
+  - clip_id: clip-id-does-not-exist
+    confirmed_by: Recorder Name
+    confirmed_at: "2026-09-15"

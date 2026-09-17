@@ -1,0 +1,16 @@
+# Local development override (HANDOFF.md section 5.1). Publishes `web` on
+# localhost and swaps in Cloudflare's always-pass Turnstile test keys so a
+# local run never depends on a real Cloudflare account.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  web:
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      TURNSTILE_SITE_KEY: "1x00000000000000000000BB"
+      TURNSTILE_SECRET_KEY: "1x0000000000000000000000000000000AA"
+
+  cloudflared:
+    profiles: ["cloudflare"]

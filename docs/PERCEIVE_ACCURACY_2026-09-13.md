@@ -9,7 +9,9 @@ bed and floor events in the two recorded bedroom clips
 `perceive-accuracy-quick-wins`, worktree
 `.claude/worktrees/perceive-accuracy`, branched from
 `issue-52-embodiment-bridge-aspect-ratio` at `fbb83bc`. Everything below is
-committed on that branch. Nothing is merged and the live bridge is unchanged.
+committed on that branch. Status since: merged to `main` in PR #53, and the
+follow-up floor work in PR #55 changed the live bridge to 640x480 and the
+default backend to YOLO11s-pose (`docs/FLOOR_DETECTION_HANDOFF.md`).
 
 ## 1. What the document got wrong
 
