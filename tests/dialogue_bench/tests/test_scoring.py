@@ -70,3 +70,36 @@ def test_every_scenario_drives_both_calls_with_context():
     assert client.calls[0][1]["last_turns"] == ["I woke up."]
     assert client.calls[1][1]["scene_note"] == "Standing beside the bed."
     assert client.calls[1][1]["profile"] == {"caregiver_name": "Tom"}
+
+
+def test_compose_gets_the_interpreted_goal_and_copies_are_counted():
+    template = "It's alright{name_vocative}, let's rest now."
+    scenarios = [
+        DialogueScenario(
+            id=identifier,
+            utterance="hello",
+            expected_intent=intent,
+            profile={"preferred_address": "Jean"},
+            caregiver_phrase_template=template,
+        )
+        for identifier, intent in (("toilet", Intent.NEED_RESTROOM), ("time", Intent.FINE))
+    ]
+    client = FakeLLM(
+        interpretations=[
+            Interpretation(intent=Intent.NEED_RESTROOM, distress=0),
+            Interpretation(intent=Intent.FINE, distress=0),
+        ],
+        compositions=[
+            Composition(text="Jean, the restroom is just through the door."),
+            Composition(text="It's alright Jean, let's rest now!"),
+        ],
+    )
+
+    result = run_model("fake", client, scenarios)
+
+    composes = [payload for name, payload in client.calls if name == "compose"]
+    assert [payload["goal"] for payload in composes] == ["restroom", "return_to_bed"]
+    assert composes[0]["caregiver_phrase_template"] == "It's alright, Jean, let's rest now."
+    assert [item.composition_copies_template for item in result.scenarios] == [False, True]
+    assert result.template_copies == 1
+    assert result.distinct_compositions == 2

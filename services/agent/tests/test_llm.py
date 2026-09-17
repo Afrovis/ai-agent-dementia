@@ -54,6 +54,8 @@ def test_ollama_interpret_posts_schema_and_parses_strict_json(monkeypatch):
     assert payload["model"] == "test"
     assert payload["stream"] is False
     assert "properties" in payload["format"]
+    # The allowed intents are spelled out, not only enforced by `format`.
+    assert "JSON schema:" in payload["prompt"] and "need_restroom" in payload["prompt"]
     assert '"last_turns": ["two", "three", "four"]' in payload["prompt"]
 
 
@@ -116,6 +118,31 @@ def test_openai_compatible_is_as_strict_as_ollama(monkeypatch):
         "agent.llm.urlopen", lambda *_: _chat('{"text": "No. You are wrong. Sit."}')
     )
     assert client.compose("s", "t", {}, "3 o'clock", None, "hi") is None
+
+
+def test_compose_sends_goal_and_asks_for_a_reply_to_the_utterance(monkeypatch):
+    captured = {}
+
+    def fake_open(request, timeout):
+        captured["request"] = request
+        return _Response({"response": '{"text": "Jean, the restroom is just through the door."}'})
+
+    monkeypatch.setattr("agent.llm.urlopen", fake_open)
+    result = OllamaLLM(ollama_url="http://ollama").compose(
+        "validate_and_redirect",
+        "It's alright, Jean, let's rest now.",
+        {"preferred_address": "Jean"},
+        "3 o'clock at night",
+        None,
+        "I need the toilet",
+        "restroom",
+    )
+
+    assert result == Composition(text="Jean, the restroom is just through the door.")
+    prompt = json.loads(captured["request"].data)["prompt"]
+    assert '"goal": "restroom"' in prompt
+    assert "do not copy it word for word" in prompt
+    assert "acknowledge what latest_utterance is about" in prompt
 
 
 def test_local_llm_selects_backend():

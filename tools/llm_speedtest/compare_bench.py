@@ -26,16 +26,18 @@ def main() -> None:
 
     lines = [
         (
-            "| model | intent acc | wants_to_leave | safe replies | interpret s (mean/max) "
+            "| model | intent acc | wants_to_leave | safe replies | template copies "
+            "| distinct replies | interpret s (mean/max) "
             "| compose s (mean/max) | turn s |"
         ),
-        "|---|---|---|---|---|---|---|",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for name, r in zip(names, results):
         lines.append(
             f"| {name} | {r['intent_accuracy']:.0%} "
             f"| {r['intent_accuracy_by_class']['wants_to_leave']:.0%} "
             f"| {r['safe_compositions']}/{r['scenario_count']} "
+            f"| {r.get('template_copies', '?')} | {r.get('distinct_compositions', '?')} "
             f"| {r['mean_interpret_latency_seconds']:.2f} / {r['max_interpret_latency_seconds']:.2f} "
             f"| {r['mean_compose_latency_seconds']:.2f} / {r['max_compose_latency_seconds']:.2f} "
             f"| {r['mean_interpret_latency_seconds'] + r['mean_compose_latency_seconds']:.2f} |"

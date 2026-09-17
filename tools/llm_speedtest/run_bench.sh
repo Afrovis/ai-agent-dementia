@@ -6,9 +6,9 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-py="$root/.venv-mlx/bin/python"
+py="${PYTHON:-$root/.venv-mlx/bin/python}"  # override for a venv elsewhere
 out="$root/tools/llm_speedtest/results/bench-$(date +%Y%m%d-%H%M%S)"
-port=8080
+port=11435  # 8080 is often taken; 127.0.0.1 avoids an IPv6 localhost clash
 mkdir -p "$out"
 
 unload_ollama() {
@@ -23,17 +23,17 @@ for spec in "$@"; do
   unload_ollama
   echo "== $spec" >&2
   if [[ "$kind" == "mlx" ]]; then
-    "$root/.venv-mlx/bin/mlx_lm.server" --model "$model" --port "$port" --log-level WARNING \
+    "$(dirname "$py")/mlx_lm.server" --model "$model" --port "$port" --log-level WARNING \
       --chat-template-args '{"enable_thinking":false}' >"$out/server.log" 2>&1 &
     server=$!
-    until curl -sf "localhost:$port/v1/models" >/dev/null; do
+    until curl -sf "127.0.0.1:$port/v1/models" >/dev/null; do
       kill -0 "$server" || { echo "server died, see $out/server.log" >&2; exit 1; }
       sleep 1
     done
     # Warm-up so the first scenario doesn't pay the model load.
-    curl -s "localhost:$port/v1/chat/completions" \
+    curl -s "127.0.0.1:$port/v1/chat/completions" \
       -d "{\"model\":\"$model\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":1}" >/dev/null
-    "$py" -m dialogue_bench --backend openai --base-url "http://localhost:$port" \
+    "$py" -m dialogue_bench --backend openai --base-url "http://127.0.0.1:$port" \
       --model "$model" --json --include-text >"$file"
     kill "$server"
     wait "$server" 2>/dev/null || true

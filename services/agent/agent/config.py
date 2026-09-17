@@ -118,11 +118,12 @@ class AgentConfig:
     `AGENT_ZONE_CONFIRM_READINGS`."""
 
     llm_model: str = "llama3.1:8b"
-    """Local Ollama text model used for interpret/compose/plan (issue #15).
+    """Local text model used for interpret/compose/plan (issue #15): an
+    Ollama tag, or the served model id for the `openai` backend.
     `AGENT_LLM_MODEL`."""
 
     llm_timeout_seconds: float = 10.0
-    """Hard timeout for one local Ollama text request. The latency budgets
+    """Hard timeout for one local text-model request. The latency budgets
     remain under one second for interpret and under two seconds to first
     token for compose/plan; this larger ceiling prevents a cold model load
     from crashing the agent while still bounding a failed request.
@@ -133,7 +134,7 @@ class AgentConfig:
     an OpenAI-compatible server on the host such as `mlx_lm.server` (reads
     `AGENT_LLM_URL`). `AGENT_LLM_BACKEND`."""
 
-    llm_url: str = "http://host.docker.internal:8080"
+    llm_url: str = "http://host.docker.internal:11435"
     """Base URL of the `openai` backend; unused for `ollama`. `AGENT_LLM_URL`."""
 
     @classmethod
@@ -156,7 +157,7 @@ class AgentConfig:
             llm_model=env.get("AGENT_LLM_MODEL") or "llama3.1:8b",
             llm_timeout_seconds=float(env.get("AGENT_LLM_TIMEOUT_SECONDS") or "10"),
             llm_backend=_parse_llm_backend(env.get("AGENT_LLM_BACKEND") or "ollama"),
-            llm_url=env.get("AGENT_LLM_URL") or "http://host.docker.internal:8080",
+            llm_url=env.get("AGENT_LLM_URL") or "http://host.docker.internal:11435",
         )
 
     def in_night_window(self, when: datetime) -> bool:

@@ -24,6 +24,8 @@ def test_from_env_defaults():
     assert config.say_min_gap_seconds == 8.0
     assert config.llm_model == "llama3.1:8b"
     assert config.llm_timeout_seconds == 10.0
+    assert config.llm_backend == "ollama"
+    assert config.llm_url == "http://host.docker.internal:11435"
 
 
 def test_from_env_reads_every_key():

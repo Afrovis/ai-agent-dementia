@@ -55,7 +55,7 @@ def capture_calls(scenario_id: str) -> tuple[Any, list[Call]]:
 
     class Recorder(OllamaLLM):
         def _call(self, task, payload, output_type):  # type: ignore[override]
-            calls.append(Call(task, _prompt(task, payload), output_type))
+            calls.append(Call(task, _prompt(task, payload, output_type), output_type))
 
     scenario = next(s for s in load_scenarios() if s.id == scenario_id)
     rec = Recorder()
@@ -69,13 +69,6 @@ def capture_calls(scenario_id: str) -> tuple[Any, list[Call]]:
         scenario.utterance,
     )
     return scenario, calls
-
-
-def with_schema(call: Call) -> str:
-    # Ollama enforces the schema via `format`; MLX has no constrained decoding
-    # here, so the schema goes into the prompt instead.
-    schema = json.dumps(call.output_type.model_json_schema(), separators=(",", ":"))
-    return f"{call.prompt}\nJSON schema: {schema}"
 
 
 @dataclass
@@ -112,7 +105,7 @@ class MLXBackend:
         from mlx_lm import stream_generate
         from mlx_lm.sample_utils import make_sampler
 
-        messages = [{"role": "user", "content": with_schema(call)}]
+        messages = [{"role": "user", "content": call.prompt}]
         prompt = self.tokenizer.apply_chat_template(
             messages, add_generation_prompt=True, tokenize=False, **self.tokenizer_kw
         )
@@ -153,7 +146,7 @@ class MLXVLMBackend:
         prompt = apply_chat_template(
             self.processor,
             self.model.config,
-            with_schema(call),
+            call.prompt,
             num_images=0,
             enable_thinking=False,
         )

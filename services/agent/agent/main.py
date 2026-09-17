@@ -250,11 +250,13 @@ def _maybe_publish_say(
     if llm is not None and strategy.id == "validate_and_redirect":
         composition = llm.compose(
             strategy.id,
-            strategy.say_template,
+            # The rendered phrase, so the model never sees a raw placeholder.
+            text,
             _profile_for_llm(profile),
             time_as_words(now),
             session.last_scene_note,
             session.recent_utterances[-1] if session.recent_utterances else None,
+            session.goal,
         )
         # A model failure cannot replace the caregiver's known-safe phrase.
         # The rendered template still passes the same deterministic Say gate.

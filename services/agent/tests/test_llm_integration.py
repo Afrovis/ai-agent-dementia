@@ -163,6 +163,8 @@ def test_validate_and_redirect_uses_validated_llm_composition():
     )
     compose_calls = [payload for name, payload in llm.calls if name == "compose"]
     assert compose_calls[-1]["latest_utterance"] == "Where is my mother"
+    assert compose_calls[-1]["goal"] == session.goal
+    assert "{" not in compose_calls[-1]["caregiver_phrase_template"]
     assert compose_calls[-1]["profile"]["things_to_avoid"] == ["mentioning hospital"]
 
 

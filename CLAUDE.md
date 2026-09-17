@@ -121,7 +121,7 @@ python -m dialogue_bench --model llama3.1:8b --model qwen2.5:7b
 
 The agent can also use an MLX model served on the host by `mlx_lm.server`
 (`AGENT_LLM_BACKEND=openai`, see `.env.example`). The bench takes the same
-switch: `--backend openai --base-url http://localhost:8080`.
+switch: `--backend openai --base-url http://127.0.0.1:11435`.
 `tools/llm_speedtest/` holds a one-turn latency comparison
 (`speedtest.py`) and `run_bench.sh`, which starts one MLX server per model and
 runs the bench against it. MLX servers cannot constrain output to a JSON

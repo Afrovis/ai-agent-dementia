@@ -33,7 +33,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--ollama-url", default="http://localhost:11434")
     parser.add_argument(
-        "--base-url", default="http://localhost:8080", help="server URL for --backend openai"
+        "--base-url", default="http://127.0.0.1:11435", help="server URL for --backend openai"
     )
     parser.add_argument("--timeout", type=float, default=10.0, help="timeout per model call")
     parser.add_argument("--scenarios", type=Path, default=DEFAULT_SCENARIOS_PATH)
