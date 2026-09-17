@@ -481,3 +481,25 @@ Running list of problems found during implementation, with date and item.
   encrypted into chunks and pushed through `run_once` in the real built
   `worker` image, reached `ready` and decrypted into a valid, ffprobe-
   playable MP4 -- V7's stated acceptance test.
+- 2026-09-16, V9: `build_sample.py`'s `encode_sample_video` wrote ffmpeg's
+  output to a `.tmp`-suffixed path for the atomic rename (`os.replace`
+  pattern used elsewhere), but ffmpeg infers the container format from the
+  output filename's extension -- `sample.mp4.tmp` has none it recognizes,
+  so muxer setup failed with "Unable to choose an output format". Fixed by
+  passing `-f mp4` explicitly. Found by actually running `build_sample.py`
+  against the real `2026-09-13_bedroom-sample-02` clip with local ffmpeg
+  (available on this machine, so V9's own acceptance test could run
+  end to end rather than only by inspection): rendered the reference
+  `visualize --mode pipeline` video and confirmed the canvas overlay's
+  skeleton, bbox and state label match it at five timestamps.
+- 2026-09-16, V10: `scripts/render_prompts.py` written and confirmed
+  end to end -- a local `piper-tts` install (this machine has one under
+  `.venv-dialogue`, separate from the `embodiment` image) plus a fresh
+  `python -m piper.download_voices en_US-lessac-medium` rendered all nine
+  `script.json` steps to valid mono 22.05kHz WAVs, re-running without
+  `--force` skipped all nine, and `--force` re-rendered them; a spot-check
+  with `ffmpeg -af volumedetect` showed normal speech loudness (-15.7dB
+  mean, 0dB peak), not an anemic whisper. Rendered at `--speed 1.0`
+  (normal pace) rather than the bedside voice's 0.85x slow-down, since
+  these are one-time instructional prompts to a volunteer at their laptop,
+  not a nighttime companion's speech.
