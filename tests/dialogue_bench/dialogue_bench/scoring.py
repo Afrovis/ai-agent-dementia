@@ -12,6 +12,7 @@ from agent.llm import Intent, LLMClient
 from agent.rules import validate_say
 from agent.session import DEFAULT_GOAL, INTENT_GOALS
 
+from dialogue_bench.checks import CheckContext, CheckOutcome, CheckStatus, run_checks
 from dialogue_bench.scenarios import DialogueScenario
 
 
@@ -27,6 +28,18 @@ class ScenarioResult:
     composition_copies_template: bool
     interpret_latency_seconds: float
     compose_latency_seconds: float
+    check_outcomes: tuple[CheckOutcome, ...] = ()
+
+    @property
+    def assertion_failures(self) -> tuple[CheckOutcome, ...]:
+        return tuple(
+            outcome for outcome in self.check_outcomes if outcome.status == CheckStatus.FAIL
+        )
+
+    @property
+    def assertions_passed(self) -> bool:
+        """True when no applicable (non-SKIP) check failed."""
+        return len(self.assertion_failures) == 0
 
 
 @dataclass(frozen=True)
@@ -108,6 +121,31 @@ class ModelResult:
         return matrix
 
     @property
+    def scenarios_with_assertions(self) -> int:
+        """Scenarios where at least one configured check actually applied (non-SKIP)."""
+        return sum(
+            any(outcome.status != CheckStatus.SKIP for outcome in item.check_outcomes)
+            for item in self.scenarios
+        )
+
+    @property
+    def assertion_pass_rate(self) -> float | None:
+        applicable = [
+            item
+            for item in self.scenarios
+            if any(outcome.status != CheckStatus.SKIP for outcome in item.check_outcomes)
+        ]
+        if not applicable:
+            return None
+        return sum(item.assertions_passed for item in applicable) / len(applicable)
+
+    @property
+    def violations_by_check(self) -> dict[str, int]:
+        return dict(
+            Counter(outcome.name for item in self.scenarios for outcome in item.assertion_failures)
+        )
+
+    @property
     def intent_accuracy_by_class(self) -> dict[str, float | None]:
         scores: dict[str, float | None] = {}
         for intent in Intent:
@@ -159,6 +197,22 @@ def run_model(
             )
             composition_safe = verdict.accepted
             composition_failure = verdict.reason
+        check_outcomes: tuple[CheckOutcome, ...] = ()
+        if composition_text is not None:
+            ctx = CheckContext(
+                profile=scenario.profile,
+                utterance=scenario.utterance,
+                time_words=scenario.time_words,
+                scene_note=scenario.scene_note,
+                caregiver_phrase_template=scenario.caregiver_phrase_template,
+                avoid_terms=scenario.avoid_terms,
+            )
+            # `must_not` checks: a FAIL is a violation. `must` checks: anything other than
+            # PASS or SKIP is a violation. Since a check only ever returns PASS/FAIL/SKIP,
+            # both amount to the same thing -- a FAIL outcome is always the violation.
+            check_outcomes = run_checks(composition_text, scenario.must_not, ctx) + run_checks(
+                composition_text, scenario.must, ctx
+            )
         results.append(
             ScenarioResult(
                 scenario_id=scenario.id,
@@ -172,6 +226,7 @@ def run_model(
                 and _words(composition_text) == _words(template),
                 interpret_latency_seconds=interpret_latency,
                 compose_latency_seconds=compose_latency,
+                check_outcomes=check_outcomes,
             )
         )
     return ModelResult(model=model_name, scenarios=tuple(results))

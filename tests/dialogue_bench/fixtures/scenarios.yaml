@@ -19,6 +19,10 @@ default_profile:
     - Is unsteady at night
   restroom_location: Through the bedroom door and immediately left
 
+default_avoid_terms: [hospital]
+default_must: [addresses_by_name]
+default_must_not: [conjunction_but, avoid_terms, states_clock_time, invents_proper_noun]
+
 scenarios:
   - id: restroom-01
     utterance: "I need to use the toilet."
@@ -100,24 +104,31 @@ scenarios:
   - id: time-01
     utterance: "Is it morning already?"
     expected_intent: confused_time
+    must_not: [conjunction_but, avoid_terms, invents_proper_noun]
   - id: time-02
     utterance: "Why is it dark in the afternoon?"
     expected_intent: confused_time
+    must_not: [conjunction_but, avoid_terms, invents_proper_noun]
   - id: time-03
     utterance: "I thought breakfast was ready."
     expected_intent: confused_time
+    must_not: [conjunction_but, avoid_terms, invents_proper_noun]
   - id: time-04
     utterance: "What day is it?"
     expected_intent: confused_time
+    must_not: [conjunction_but, avoid_terms, invents_proper_noun]
   - id: time-05
     utterance: "It cannot be nighttime."
     expected_intent: confused_time
+    must_not: [conjunction_but, avoid_terms, invents_proper_noun]
   - id: time-06
     utterance: "Have I slept through the whole day?"
     expected_intent: confused_time
+    must_not: [conjunction_but, avoid_terms, invents_proper_noun]
   - id: time-07
     utterance: "The clock says three but that makes no sense."
     expected_intent: confused_time
+    must_not: [conjunction_but, avoid_terms, invents_proper_noun]
 
   - id: pain-01
     utterance: "My hip hurts."
