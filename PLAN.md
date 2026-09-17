@@ -190,7 +190,7 @@ The LLM is **not** in charge of safety. A deterministic rule layer owns state tr
 2. **Compose**: write the actual sentence for the chosen strategy, given the person's profile, the caregiver's preferred phrases, and the current context. Output constrained to one short sentence.
 3. **Plan**: propose the next strategy or a goal change, as a structured JSON decision. The rule layer validates it against the allowed transitions before acting.
 
-Local model: a small 4-bit instruction-tuned model served by MLX on the host, `mlx-community/gemma-4-e4b-it-4bit` by default, chosen on the dialogue bench over `llama3.1:8b`, `Qwen3.5-4B` and the same Gemma in Ollama. It fits in 16 GB next to the vision model. Ollama remains a supported text backend. Target: under 2 s to first token for a compose call.
+Local model: an instruction-tuned 7B to 8B model in Ollama (e.g. `llama3.1:8b` or `qwen2.5:7b`) with a 4-bit quant fits comfortably in 16 GB next to the vision model. Target: under 2 s to first token for a compose call.
 
 Cloud fallback: when the local model returns `unclear` twice in a row, or when the planner's confidence is low, the agent may call Claude Opus 5 with the text transcript and structured state only. It is off by default, enabled per person in the dashboard, and every fallback call is logged in the timeline.
 

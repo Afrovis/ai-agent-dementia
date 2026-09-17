@@ -128,8 +128,7 @@ whether something is an emergency.
 - **Perception:** YOLO11s (recommended) or MediaPipe pose estimation, plus
   an Ollama vision model for harder cases.
 - **Voice:** faster-whisper for speech-to-text, Piper for text-to-speech.
-- **LLM:** a local 4-bit model served by MLX on the host by default
-  (`mlx-community/gemma-4-e4b-it-4bit`, Ollama also supported), with an
+- **LLM:** a local 7–8B Ollama model by default (`llama3.1:8b`), with an
   optional text-only Claude fallback for hard reasoning, off by default.
 - **Storage:** SQLite via SQLModel.
 - **Web:** FastAPI for services, HTMX for the dashboard, plain HTML/JS for

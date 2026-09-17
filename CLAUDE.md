@@ -44,15 +44,8 @@ docker run --rm -v "$PWD":/repo -w /repo python:3.12-slim \
 
 ```sh
 cp .env.example .env
-tools/mlx_server/serve.sh &   # the agent's text model, on the host
 docker compose up --build
 ```
-
-The agent's text model runs on the host under MLX, because Docker has no
-Metal access. Create `.venv-mlx` once (`python3.12 -m venv .venv-mlx &&
-.venv-mlx/bin/pip install mlx-lm`). If the server is down, `agent` logs
-`local llm call failed` and falls back to the caregiver's fixed phrases.
-Set `AGENT_LLM_BACKEND=ollama` to use Ollama instead.
 
 Ports come from `.env`: embodiment on `EMBODIMENT_PORT` (8443), dashboard on
 `DASHBOARD_PORT` (8444), Redis published on 6379.
@@ -126,8 +119,9 @@ pytest tests/dialogue_bench/tests
 python -m dialogue_bench --model llama3.1:8b --model qwen2.5:7b
 ```
 
-The bench defaults to Ollama; for the MLX backend the agent uses, pass
-`--backend openai --base-url http://127.0.0.1:11435`.
+The agent can also use an MLX model served on the host by `mlx_lm.server`
+(`AGENT_LLM_BACKEND=openai`, see `.env.example`). The bench takes the same
+switch: `--backend openai --base-url http://127.0.0.1:11435`.
 `tools/llm_speedtest/` holds a one-turn latency comparison
 (`speedtest.py`) and `run_bench.sh`, which starts one MLX server per model and
 runs the bench against it. MLX servers cannot constrain output to a JSON

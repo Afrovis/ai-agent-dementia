@@ -5,8 +5,8 @@ propose a strategy/goal.  It never changes a session itself: callers must
 run a plan through ``Session.propose_goal``/the rule layer and must run a
 composition through ``rules.validate_say`` before publishing it.
 
-The default local client is ``OpenAICompatibleLLM`` talking to an MLX server
-on the host; ``OllamaLLM`` remains supported. ``FallbackLLM`` can additionally route only the
+Ollama remains the default; ``OpenAICompatibleLLM`` is an opt-in local
+alternative for an MLX server on the host. ``FallbackLLM`` can additionally route only the
 two explicitly approved fallback cases to Claude: a second consecutive local
 ``unclear`` interpretation, or a local plan below 0.4 confidence. Composition
 never leaves the device. Failures and invalid model JSON become ``None`` so a
