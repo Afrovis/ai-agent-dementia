@@ -503,3 +503,31 @@ Running list of problems found during implementation, with date and item.
   (normal pace) rather than the bedside voice's 0.85x slow-down, since
   these are one-time instructional prompts to a volunteer at their laptop,
   not a nighttime companion's speech.
+- 2026-09-16, V11: `volunteer_web.main`'s `uvicorn.run(...)` used the
+  default access log, which prints the client address on every request
+  line (`172.23.0.1:55980 - "GET /api/... HTTP/1.1" 200 OK`) -- a direct
+  violation of rule 6 ("logs never contain ... IP addresses"). In
+  production the address uvicorn sees is `cloudflared`'s internal Docker
+  address rather than a volunteer's real IP, since Cloudflare Tunnel
+  proxies the connection, but rule 6 doesn't carve out an exception for
+  that and a stray access log is still the wrong default. Fixed with
+  `access_log=False`; the app's own structured `log()` calls already cover
+  what's worth recording. Found by actually building both images, running
+  `web` and `worker` together with the real `docker-compose.yml` (isolated
+  `.env` pointed at scratch data/key directories, not
+  `VOLUNTEER_DATA_DIR`/`VOLUNTEER_KEY_DIR`), and pushing a synthetic
+  `ffmpeg testsrc` clip through the real HTTP API end to end (create,
+  encrypt and upload chunks with `volunteer_common.crypto`, finalize,
+  poll) to `ready` -- not by reading the source. Also confirmed while at
+  it: `docker inspect`'s `NanoCpus` on the `worker` container matched
+  `WORKER_CPUS` exactly (the compose `cpus:` field is applied as a real
+  cgroup limit, not just documentation), and grepping the rebuilt stack's
+  logs for `#k=`, `Bearer`, `wrapped` and IP-shaped strings after the fix
+  found nothing but the harmless `0.0.0.0` bind address. Not verified:
+  `perceive` continuing to publish while `worker` runs a job, since the
+  root bedside stack was not running on this machine at the time (no
+  camera/mic attached) -- that half of V11's acceptance needs a real
+  concurrent run on the Mac mini deployment. Privacy copy (`PLAN.md`,
+  `index.html`) re-read against V9-V11's changes: still accurate, since
+  none of the three touched storage, transport, analysis or third-party
+  requests.

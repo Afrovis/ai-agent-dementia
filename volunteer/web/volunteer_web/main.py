@@ -19,7 +19,10 @@ def main() -> None:
     config = WebConfig.from_env()
     log(SERVICE_NAME, "starting", port=config.port, public_hostname=config.public_hostname)
     app = create_app(config)
-    uvicorn.run(app, host="0.0.0.0", port=config.port, log_level="info")
+    # HANDOFF.md rule 6: logs never contain IP addresses. Uvicorn's default
+    # access log prints the client address on every request line; the app's
+    # own log() calls already cover what's worth recording.
+    uvicorn.run(app, host="0.0.0.0", port=config.port, log_level="info", access_log=False)
 
 
 if __name__ == "__main__":
