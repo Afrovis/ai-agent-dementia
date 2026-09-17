@@ -481,3 +481,53 @@ Running list of problems found during implementation, with date and item.
   encrypted into chunks and pushed through `run_once` in the real built
   `worker` image, reached `ready` and decrypted into a valid, ffprobe-
   playable MP4 -- V7's stated acceptance test.
+- 2026-09-16, V9: `build_sample.py`'s `encode_sample_video` wrote ffmpeg's
+  output to a `.tmp`-suffixed path for the atomic rename (`os.replace`
+  pattern used elsewhere), but ffmpeg infers the container format from the
+  output filename's extension -- `sample.mp4.tmp` has none it recognizes,
+  so muxer setup failed with "Unable to choose an output format". Fixed by
+  passing `-f mp4` explicitly. Found by actually running `build_sample.py`
+  against the real `2026-09-13_bedroom-sample-02` clip with local ffmpeg
+  (available on this machine, so V9's own acceptance test could run
+  end to end rather than only by inspection): rendered the reference
+  `visualize --mode pipeline` video and confirmed the canvas overlay's
+  skeleton, bbox and state label match it at five timestamps.
+- 2026-09-16, V10: `scripts/render_prompts.py` written and confirmed
+  end to end -- a local `piper-tts` install (this machine has one under
+  `.venv-dialogue`, separate from the `embodiment` image) plus a fresh
+  `python -m piper.download_voices en_US-lessac-medium` rendered all nine
+  `script.json` steps to valid mono 22.05kHz WAVs, re-running without
+  `--force` skipped all nine, and `--force` re-rendered them; a spot-check
+  with `ffmpeg -af volumedetect` showed normal speech loudness (-15.7dB
+  mean, 0dB peak), not an anemic whisper. Rendered at `--speed 1.0`
+  (normal pace) rather than the bedside voice's 0.85x slow-down, since
+  these are one-time instructional prompts to a volunteer at their laptop,
+  not a nighttime companion's speech.
+- 2026-09-16, V11: `volunteer_web.main`'s `uvicorn.run(...)` used the
+  default access log, which prints the client address on every request
+  line (`172.23.0.1:55980 - "GET /api/... HTTP/1.1" 200 OK`) -- a direct
+  violation of rule 6 ("logs never contain ... IP addresses"). In
+  production the address uvicorn sees is `cloudflared`'s internal Docker
+  address rather than a volunteer's real IP, since Cloudflare Tunnel
+  proxies the connection, but rule 6 doesn't carve out an exception for
+  that and a stray access log is still the wrong default. Fixed with
+  `access_log=False`; the app's own structured `log()` calls already cover
+  what's worth recording. Found by actually building both images, running
+  `web` and `worker` together with the real `docker-compose.yml` (isolated
+  `.env` pointed at scratch data/key directories, not
+  `VOLUNTEER_DATA_DIR`/`VOLUNTEER_KEY_DIR`), and pushing a synthetic
+  `ffmpeg testsrc` clip through the real HTTP API end to end (create,
+  encrypt and upload chunks with `volunteer_common.crypto`, finalize,
+  poll) to `ready` -- not by reading the source. Also confirmed while at
+  it: `docker inspect`'s `NanoCpus` on the `worker` container matched
+  `WORKER_CPUS` exactly (the compose `cpus:` field is applied as a real
+  cgroup limit, not just documentation), and grepping the rebuilt stack's
+  logs for `#k=`, `Bearer`, `wrapped` and IP-shaped strings after the fix
+  found nothing but the harmless `0.0.0.0` bind address. Not verified:
+  `perceive` continuing to publish while `worker` runs a job, since the
+  root bedside stack was not running on this machine at the time (no
+  camera/mic attached) -- that half of V11's acceptance needs a real
+  concurrent run on the Mac mini deployment. Privacy copy (`PLAN.md`,
+  `index.html`) re-read against V9-V11's changes: still accurate, since
+  none of the three touched storage, transport, analysis or third-party
+  requests.
