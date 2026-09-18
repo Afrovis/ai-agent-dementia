@@ -140,6 +140,10 @@ without `--force`, and unmapped marker names silently render as `upright`.
 Recordings,
 frames and labels live outside the repository in `../data-ai-agent-dementia/`
 and never enter git; only face-blurred, verified frames may be sent to Codex.
+Polished 30 fps demo clips (yolo11x-pose on the 4K source, not the 2 fps review
+render) are made with the project skill in
+`.claude/skills/demo-creation-video/`, which writes to
+`../data-ai-agent-dementia/analysis/demo-videos/`.
 
 To check the media bridge, open the page, grant camera and microphone
 permission, then watch these climb above zero. They sit at zero when no
