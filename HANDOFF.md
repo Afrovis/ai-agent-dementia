@@ -2,7 +2,7 @@
 
 Read this before touching any issue. It contains everything not in the code yet: the fixed decisions, the conventions, the contracts between services, and the rules that must never be broken. `PLAN.md` is the design rationale. This file is the execution brief.
 
-Last updated: 2026-09-13. If you change a decision below, update this file in the same PR.
+Last updated: 2026-09-17. If you change a decision below, update this file in the same PR.
 
 ## 1. What this project is, in three sentences
 
@@ -207,9 +207,11 @@ retains only non-frame bus outputs, and cleans capped frame streams and the
 ephemeral stack afterward.
 
 Issue #52 resolves the browser bridge's aspect-ratio defect. The complete
-camera image is letterboxed into the 320 by 240 JPEG instead of being
+camera image is letterboxed into the bridge JPEG instead of being
 horizontally squashed, and frame events retain both encoded and intrinsic
-camera dimensions. The numerical detector comparison and its limitations are
+camera dimensions. The encoded size is 640 by 480 (#55); the page's
+`FRAME_WIDTH`/`FRAME_HEIGHT` in `services/embodiment/embodiment/static/script.js`
+are the authority. The numerical detector comparison and its limitations are
 recorded in `docs/VIDEO_EVAL.md`.
 
 ## 7. Strategy catalogue
@@ -228,7 +230,7 @@ Implement in this order. Numbers match `PLAN.md` section 5.3.
 | 8 | `path_light` | bathroom direction | one sentence | restroom goal | implemented, issue #21 -- goal-specific rather than part of the ordinary ladder; `light` controls a feature-flagged local Shelly plug |
 | 10 | `escalate_phone` | dim clock | "Someone is coming to help." | until `Ack` | implemented, issue #14 -- selected unconditionally on entering `ESCALATED` and stays selected; see `agent.strategies.StrategyEngine.force` |
 
-Strategy 9 (`escalate_gentle`) needs hardware and is out of scope. `agent.strategies.py` is the catalogue and selection engine; ordering, enable/disable, cooldown, dwell, and every phrase for the seven implemented strategies live in `config/strategies.example.yaml`, editable by the caregiver (`STRATEGIES_PATH`, falling back to code defaults, same convention as `zones.yaml`). The `light` service defaults to hardware disabled and supports a Shelly Gen2+ local RPC switch when `LIGHT_ENABLED=true`; all keys are documented in `.env.example`.
+Strategy 9 (`escalate_gentle`) needs hardware and is out of scope. `agent.strategies.py` is the catalogue and selection engine; ordering, enable/disable, cooldown, dwell, and every phrase for the eight implemented strategies live in `config/strategies.example.yaml`, editable by the caregiver (`STRATEGIES_PATH`, falling back to code defaults, same convention as `zones.yaml`). The `light` service defaults to hardware disabled and supports a Shelly Gen2+ local RPC switch when `LIGHT_ENABLED=true`; all keys are documented in `.env.example`.
 
 ## 8. Milestones and issues
 
@@ -243,38 +245,56 @@ Board: https://github.com/users/Afrovis/projects/2. Repo: https://github.com/Afr
 | M4 Caregiver | 22 to 27 | caregiver can configure everything in the dashboard, morning summary arrives, two-week dry run completed |
 | M5 Video eval | 11, 48 to 52 | every confirmed clip under `../data-ai-agent-dementia/` scores through `tools/video_eval` and perception bench tier 3, the three defects are fixed, and the pose backend and bridge aspect decisions are made with numbers |
 
-M5 issues, in order, each scoped by the matching section of `docs/VIDEO_EVAL.md`:
+Status on 2026-09-17: M0 to M3 and M5 are met. M4 is met except issue 27, the
+two-week volunteer dry run, which is the only open issue on the board. Each
+M5 stage is scoped by the matching section of `docs/VIDEO_EVAL.md`; read that
+file rather than the closed issues.
 
-- 48 `perceive: pin mediapipe below 1.0` (defect 1; implemented with a backend API regression test).
-- 49 `video_eval: prepare and predict` (A1, A2, A9: frame extraction in bridge and review formats, offline run of the real backend, tracker and motion gate, zones per placement).
-- 50 `video_eval: blur, sheets and labellers` (A3, A4: implemented with
-  fail-closed head blur and two-scale verification, privacy-reviewed contact
-  sheets, adaptive Ollama labelling, and a sheet-only Codex labeller).
-- 51 `video_eval: reconcile, score, replay` (A5 to A7: reference timeline with human confirmation, per-frame and event metrics against the PLAN.md gates, end-to-end replay report).
-- 52 `embodiment: decide and fix the bridge aspect ratio` (defect 2, after the squash vs letterbox experiment; also send the true camera dimensions).
-- Issue 11 closes when tier 3 (A8) scores the confirmed clips.
+Work since M5 has been accuracy and tooling rather than new milestones:
+floor detection (#55, `docs/FLOOR_DETECTION_HANDOFF.md`), bed occupancy (#60,
+`docs/BED_OCCUPANCY_2026-09-15.md`), pose backends (#61, #63), walking and
+sticky bed occupancy (#62, `docs/WALKING_BED_OCCUPANCY_PLAN.md`), the agent's
+text model (#66, `EXPERIMENTS.md`), and the volunteer recording site
+(`volunteer/PLAN.md` and `volunteer/HANDOFF.md`, which carry their own brief).
 
-Dependency notes:
+Two habits from the closed work still apply to anything new:
 
-- Issue 2 (events and bus) blocks every other issue. Do it first.
-- Issue 28 (browser media bridge) depends on issue 3 (embodiment page with HTTPS).
-- Issue 8 (pose classification) needs real IR fixtures. If none exist yet, build the pipeline against webcam fixtures with a lamp on and mark the IR evaluation as a follow-up.
-- Issue 49 blocks 50 and 51. Issue 48 must land before any `predict` number is trusted, because a fresh `perceive` build is otherwise broken. Issue 52 waits for the squash vs letterbox numbers from 51.
-- Issue 15 (local LLM calls) should be built against the `FakeLLM` in `shared/` first, then Ollama.
+- Build LLM work against the `FakeLLM` in `shared/` first, then the real
+  model. Every test must pass with no Ollama.
+- An evaluation number is only trusted once the build that produced it is
+  sound; a stale or broken container silently produces plausible numbers.
 
 ## 9. Local development
 
-Prerequisites on the host: Docker Desktop, Ollama with `ollama pull gemma4:e4b-mlx` and `ollama pull moondream`, `mkcert` for the LAN certificate.
+Prerequisites on the host: Docker Desktop and Ollama, with `ollama pull
+gemma4:e4b-mlx` (the agent's text model, shared with the floor check) and
+`ollama pull moondream` (scene notes).
 
 ```
 cp .env.example .env
-mkcert -install && mkcert -cert-file data/certs/lan.pem -key-file data/certs/lan-key.pem "$(hostname).local" localhost
 docker compose up --build
-open https://$(hostname).local:8443/         # embodiment
-open https://$(hostname).local:8444/         # dashboard
 ```
 
-Without hardware: `python -m nc_shared.replay play redis://localhost:6379 tests/fixtures/events/night-01.jsonl --speed 10` publishes recorded events to the bus. `python -m nc_shared.replay record redis://localhost:6379 out.jsonl` records live bus traffic to a JSONL file in the same shape.
+`embodiment` is on `EMBODIMENT_PORT` (8443) and `dashboard` on
+`DASHBOARD_PORT` (8444). `embodiment` serves HTTPS when `CERT_FILE` and
+`CERT_KEY` both exist and plain HTTP otherwise, which is enough on
+`localhost` to see the face. The camera and microphone bridge is stricter:
+browsers block `getUserMedia` on any page with a certificate error, so a
+certificate the browser does not already trust leaves the face rendering and
+the bridge dead. `CLAUDE.md` has the Tailscale procedure that works from
+other devices, including the macOS sandbox trap and how to verify trust
+without `curl -k`.
+
+Without hardware, record and replay real bus traffic from inside a container,
+where `nc_shared` is already installed:
+
+```
+docker compose exec store python -m nc_shared.replay record redis://bus:6379 /app/data/rec.jsonl
+docker compose exec store python -m nc_shared.replay play redis://bus:6379 /app/data/rec.jsonl --speed 10
+```
+
+`./data` is mounted into every container, so a file written to `/app/data`
+appears in `data/` on the host.
 
 Run tests for one service: `cd services/agent && pytest`.
 
@@ -303,19 +323,27 @@ Run tests for one service: `cd services/agent && pytest`.
 
 | Question | Default until decided | Decider |
 |---|---|---|
-| Pose model: MediaPipe Pose vs YOLOv8-pose | Decided with numbers: `PERCEIVE_POSE_BACKEND=yolo` with YOLO11s-pose at 640 input (PR #55, `docs/FLOOR_DETECTION_HANDOFF.md`). MediaPipe stays available behind the flag. Revisit on infrared clips (#11) | decided (#55); revisit with #11 |
+| Pose model: MediaPipe Pose vs YOLOv8-pose | Decided with numbers on RGB: `PERCEIVE_POSE_BACKEND=yolo` with YOLO11s-pose at 640 input (PR #55, `docs/FLOOR_DETECTION_HANDOFF.md`). MediaPipe and an MLX-native backend (#61) stay available behind the flag | decided (#55); reopen when an infrared clip exists |
 | Bridge frame format: 320 by 240 squashed vs letterboxed, and resolution | Decided with numbers: letterbox with source dimensions sent alongside (`docs/VIDEO_EVAL.md` section 7, #52), at 640x480 (#55) | decided (#52, #55) |
-| Local text model | Decided 2026-09-17 on the dialogue bench: `gemma4:e4b-mlx` in Ollama (see `tools/llm_speedtest`) | issue 17 |
+| Local text model | Decided 2026-09-17 on the dialogue bench: `gemma4:e4b-mlx` in Ollama (#66, `EXPERIMENTS.md`, `tools/llm_speedtest`) | decided (#66) |
+| Walking as a product state, distinct from standing | detection ships opt-in (#62, `docs/WALKING_BED_OCCUPANCY_PLAN.md`); nothing downstream depends on it yet | project owner |
 | Smart plug for path light in v1 | manual night light, plug behind a feature flag | project owner |
 | Morning summary contents | count, durations, what helped, faults | project owner after a caregiver interview |
 
-## 13. Fixes
+## 13. Lessons from fixed defects
 
-- `tools/video_eval label-local` drops frames when the local vision model's JSON response fails validation. Found 2026-09-13 comparing `qwen3-vl:8b` output against the scripted timeline for clip `2026-09-13_bedroom-sample-01`: 27 of 488 frames (5.5%) came back as `failed_label_record` (all fields null), including a 20-frame block (51.0-60.5s) that swallowed the second scripted `sitting_up` event at t=58s entirely.
-  - Root cause: `labels.py` validates `person_visible` with `type(raw.get("person_visible")) is not bool`, a strict type check. The Ollama call in `label_local.py` only sets `"format": "json"` (loose JSON mode, no schema), so the model is free to emit `person_visible` as a string, a number, or omit it; `qwen3-vl:8b` does this occasionally. `_call_with_retry` allows 2 attempts; when both fail validation the frame is written as a null record instead of a real label.
-  - Compounding factor: adaptive sampling only labels moving frames plus 1-in-10 still frames, propagating each labelled record forward to the frames it skips. When the anchor frame's label attempt fails, every still frame propagated from it inherits the same null record, turning one bad model response into a multi-second coverage gap.
-  - Suggested fix, two independent parts:
-    1. In `labels.py`, coerce common unambiguous non-bool representations (`"true"`/`"false"` strings, `1`/`0`) to bool before rejecting, instead of hard-failing on anything that is not already a Python `bool`.
-    2. In `label_local.py`, constrain the Ollama call with a real JSON-schema `format` (Ollama supports structured outputs) instead of the bare `"format": "json"` string, so `person_visible` is constrained to boolean at generation time rather than policed after the fact.
-  - Add a test to `tests/test_labellers.py` covering a non-bool `person_visible` (e.g. the string `"true"`) to confirm it either coerces cleanly or is retried and falls back to a `failed_label_record`, since no existing test exercises this path.
-  - Status: fixed. `labels.py` coerces only unambiguous spellings (`true`/`false` in any case, `1`/`0`) and rejects the rest; `label_local.py` sends `LABEL_SCHEMA` as the Ollama `format`. `tests/test_labellers.py` covers accepted and rejected `person_visible` values and the structured `format` in the request.
+Resolved defects are not kept here once they have a test; git history has the
+detail. These two cost real evaluation data and are easy to repeat.
+
+- Constrain structured LLM output at generation time, never police it
+  afterwards. `tools/video_eval label-local` once sent a bare
+  `"format": "json"` to Ollama, so `person_visible` could arrive as a string
+  and fail a strict `is bool` check: 27 of 488 frames on
+  `2026-09-13_bedroom-sample-01` became null records, including a 20-frame
+  block that swallowed a scripted `sitting_up` event outright. It now sends
+  `LABEL_SCHEMA` as the `format` and coerces only unambiguous spellings.
+  Covered by `tools/video_eval/tests/test_labellers.py`.
+- Any sampling shortcut that propagates one result forward to the frames it
+  skips turns a single bad response into a multi-second gap. Adaptive
+  labelling does exactly this, so a failure there is never a single-frame
+  failure. Weigh that before adding another such shortcut.

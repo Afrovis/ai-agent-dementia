@@ -1,27 +1,29 @@
 # Night Companion: an embodied agent for night-time reorientation
 
-Status: implementation in progress, v0.1 (updated 2026-09-13)
+Status: implementation in progress, v0.1 (updated 2026-09-17)
 
-Progress through 2026-09-13:
+Progress through 2026-09-17:
 
-- M5 issues #48 and #49 are implemented on branches `issue-48-pin-mediapipe`
-  and `issue-49-video-eval-prepare-predict`.
-- The perceive MediaPipe extra is pinned to `>=0.10,<1.0`; the slim image
-  includes the OpenCV runtime libraries required to construct the backend.
-- `tools/video_eval` now provides idempotent `prepare` and offline `predict`
-  commands, including squash/letterbox bridge frames, provenance metadata,
-  private-root indexing, MotionGate replay, zones, StateTracker hysteresis,
-  and backend timing records.
-- The local bedroom sample produced 488 review frames and 488 frames in each
-  bridge variant. A real pinned-MediaPipe run completed in 9.3 seconds over
-  488 frames (466 backend calls, 22 gate drops); no images or derived data are
-  committed here.
-- Issue #50 adds fail-closed YOLO/MediaPipe privacy blurring, verified 3x3
-  contact sheets, adaptive local Ollama labels, and human-gated Codex labels.
-- Remaining M5 work: reconcile/score/replay (#51), and the evidence-based
-  bridge aspect-ratio decision and fix (#52). The
-  sample has no caregiver-authored zones or confirmed reference timeline yet,
-  so state accuracy and end-to-end replay remain pending.
+- M0 to M4 are built: the full session pipeline, voice in and out with
+  barge-in, the caregiver dashboard, morning summaries, retention controls
+  and the opt-in cloud fallback. Issues 1 to 26 and 28 are closed.
+- M5's offline video-evaluation tooling is complete: `prepare`, `predict`,
+  `blur`, `sheets`, `label-local`, `label-codex`, `reconcile`, `score`,
+  `replay` and `visualize`, wired into perception bench tier 3. Five RGB
+  bedroom clips are recorded and three have human-confirmed reference
+  timelines.
+- Accuracy work measured on those clips: floor detection by height ratio
+  (#55), bed-zone segmentation and the seated-thigh rule (#60), an
+  MLX-native pose backend (#61), walking versus standing with feet-based
+  zones and opt-in sticky bed occupancy (#62), and an MLX backend for
+  offline labelling (#63).
+- The agent's local text model is decided by measurement: `gemma4:e4b-mlx`
+  (#66, `EXPERIMENTS.md`), with the dialogue bench now also scoring the
+  compose prompt's own rules (#67).
+- A public volunteer recording site (`volunteer/`) collects consented clips
+  from healthy adults to widen the evaluation set.
+- Still ahead: issue #27, the two-week volunteer dry run, and a dark and
+  infrared recording round.
 
 ## 1. Purpose
 
@@ -264,7 +266,7 @@ Configured by the caregiver, injected into every prompt:
 Before any real use:
 
 1. **Perception bench**: record consenting volunteers in the actual room at night doing scripted actions (sit up, stand, walk to door, lie on floor). Measure state accuracy and latency per state. Target: over 95 percent on `standing` and `on_floor`, under 2 s latency.
-   - **Recorded-video evaluation** (added 2026-09-13): before volunteers, the project owner records themselves in their own bedroom doing the scripted actions. Each clip is downsampled to exactly what the browser bridge sends (320 by 240, squashed to 4:3, 2 fps), scored offline against a reference timeline built from the recorder's own scenario card, a local vision-language model, and a cloud model that only ever sees face-blurred contact sheets. The same clips are then replayed through the live stack to check agent transitions. RGB in lamp light first; infrared later. Tooling, runbook and privacy rules are in `docs/VIDEO_EVAL.md`.
+   - **Recorded-video evaluation** (added 2026-09-13): before volunteers, the project owner records themselves in their own bedroom doing the scripted actions. Each clip is downsampled to exactly what the browser bridge sends (640 by 480, letterboxed, 2 fps, since #52 and #55), scored offline against a reference timeline built from the recorder's own scenario card, a local vision-language model, and a cloud model that only ever sees face-blurred contact sheets. The same clips are then replayed through the live stack to check agent transitions. RGB in lamp light first; infrared later. Tooling, runbook and privacy rules are in `docs/VIDEO_EVAL.md`.
 2. **Dialogue bench**: 50 scripted scenarios with utterances such as "where is my husband", "I have to catch the train", "I need to pee". Judge the local model's intent classification and compose output for tone rules. Keep this as a regression suite.
 3. **Dry run**: two weeks with a volunteer, no caregiver notifications, review timelines daily.
 4. **Supervised pilot**: with the actual family, caregiver present the first nights.
@@ -301,9 +303,11 @@ Before any real use:
 - [x] Fix the MediaPipe dependency defect: pin `mediapipe>=0.10,<1.0` and install the slim-image runtime libraries needed by OpenCV.
 - [x] Build the first `tools/video_eval/` CLI stage: `prepare` and `predict`, as specified in `docs/VIDEO_EVAL.md`.
 - [x] Build `blur`, `sheets`, `label-local`, `label-codex`, `reconcile`, `score`, and `replay` (#50 and #51), plus `visualize` (#54).
-- Fill in perception bench tier 3 so confirmed clips score in `python -m perception_bench`.
+- [x] Fill in perception bench tier 3 so confirmed clips score in `python -m perception_bench` (#11, #59).
 - [x] Run the backend, squash vs letterbox, resolution, hysteresis and gate experiments on the RGB clips and decide the bridge fix and the pose backend with numbers: letterbox at 640x480 (#52, `docs/VIDEO_EVAL.md` section 7) and YOLO11s-pose at 640 input (#55, `docs/FLOOR_DETECTION_HANDOFF.md`).
-- Record the scenario set in section 8 of `docs/VIDEO_EVAL.md` in RGB; infrared clips are a later round.
+- [x] Record RGB clips from section 8 of `docs/VIDEO_EVAL.md`: five clips exist, three with human-confirmed reference timelines.
+- Record the dark and infrared round (scenario 5), and widen the set with
+  volunteer clips from `volunteer/`.
 
 ### Later
 - Bed pressure sensor and door sensor via Zigbee or Home Assistant.
@@ -316,7 +320,9 @@ Before any real use:
 
 ```
 ai-agent-dementia/
-  PLAN.md
+  PLAN.md          # this file: design and rationale
+  HANDOFF.md       # execution brief: fixed decisions, contracts, rules
+  ARCHITECTURE.md  # generated as-built map; never edited by hand
   README.md
   docker-compose.yml
   .env.example
@@ -328,20 +334,32 @@ ai-agent-dementia/
     embodiment/
     notify/
     dashboard/
+    light/         # feature-flagged Shelly plug for the restroom path
+    store/         # sqlite persistence and nightly summaries
   shared/          # event schemas, config models, bus client
   config/
     person.example.yaml
     strategies.example.yaml
-  data/            # sqlite, photos, voice clips (gitignored)
+  data/            # sqlite, photos, voice clips, certs (gitignored)
   tests/
     perception_bench/
     dialogue_bench/
+  tools/
+    video_eval/    # offline evaluation against recorded clips
+    llm_speedtest/ # local text-model latency comparison
+  volunteer/       # public volunteer recording site
   docs/
 ```
 
+Recordings, extracted frames and labels live outside this repository, in
+`../data-ai-agent-dementia/`, and never enter git.
+
 ## 15. Open questions
 
-- Which pose model handles IR and blankets best? Evaluate MediaPipe Pose vs YOLOv8-pose on real captures.
-- Which local text model gives the warmest, most rule-following one-sentence outputs? Compare 3 candidates on the dialogue bench.
-- Is a smart plug for path lighting in scope for v1, or manual night light?
-- What does the caregiver want to see in the morning summary? Interview before building the dashboard.
+Questions already settled with numbers are recorded in `HANDOFF.md` section
+12, which is the single place decisions are logged. What is still open:
+
+- Is a smart plug for path lighting in scope for v1, or manual night light? The `light` service exists behind `LIGHT_ENABLED`; the product call has not been made.
+- What does the caregiver want to see in the morning summary? Interview before the supervised pilot; the current contents are a first guess.
+- Does the product need `walking` as a state distinct from `standing`? The detection rule ships opt-in (#62); the reasoning is in `docs/WALKING_BED_OCCUPANCY_PLAN.md`.
+- Which pose backend holds up in infrared and under blankets? Decided on RGB (#55); no infrared clip has been recorded yet, so the answer is untested in the dark.
