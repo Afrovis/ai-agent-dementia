@@ -1,9 +1,9 @@
 # decision_bench plan
 
-Status: phase 1 in progress, 2026-09-21. `guidelines.md`,
-`decision_bench/schema.py` and seven unlabelled pilot scenarios exist; the
-clause text awaits human review. The user-facing description is in
-[README.md](README.md).
+Status: phase 2 complete, 2026-09-21. The real-agent replay harness, scoring,
+reports, CLI, deterministic stub and tests exist for the seven unlabelled
+pilots. Labels remain phase 3 work, and the clause text awaits human review.
+The user-facing description is in [README.md](README.md).
 
 ## Goal
 
@@ -143,12 +143,47 @@ tests/decision_bench/
    The pilots carry timelines and checkpoint questions only: labelling them
    is step 3, so the first labels come from the annotator and not from
    someone who has read the agent code.
-2. **Harness and scoring**, with unit tests on a stubbed LLM, plus a
-   report on one local model.
+2. ✅ **Harness and scoring**, with unit tests on a stubbed LLM and reports
+   suitable for local-model comparison. Phase 2 made `memory_question` and
+   `blunt_refusal` deterministic checks; `correction_of_reality` and
+   `infantilising` remain human-review patterns.
 3. **Annotator.** Pick the shell, label the pilot, run the human review,
    and adjust the prompt and schema based on the disagreements.
 4. **Scale up** to about 30 reviewed scenarios and about 8 noisy variants,
    then run the first comparison across models.
+
+## Phase 2 run on one local model (2026-09-21)
+
+`gemma4:e4b-mlx` on Ollama, all seven pilots, default `AgentConfig` and
+`config/strategies.example.yaml`. All 15 checkpoints are unlabelled, so
+there is no pass rate yet; the JSON report is in
+`../data-ai-agent-dementia/analysis/decision-bench/2026-09-21-gemma4-pilot.json`.
+What the traces show, for the annotator and for the agent itself:
+
+- **fall-01** escalates on the first `on_floor` reading with a critical
+  `Notify`. **false-alarm-01** goes `OBSERVING → IDLE` with no speech.
+- **restroom-01** handles the toilet request well (goal `restroom`,
+  `path_light`), but once the person is back `in_bed` at 350 s the
+  `guided_return` dwell runs out at 380 s, before `in_bed_stable` (120 s)
+  ends the session, so the agent reports "strategies exhausted" and sends an
+  `attention` notify although nothing is wrong. The same happens in
+  **false-alarm-02**, which runs the whole ladder and notifies.
+- **Every night-time `soft_greeting` and `orient_time_place` states an exact
+  clock time** ("it's 2 o'clock at night"): 8 `states_clock_time` wording
+  failures in one run. AA-02 supports saying it is night, not the clock
+  time, so labels citing it will mark these as violations. That is a
+  template question (`time_words`), not a model one.
+- `validate_and_redirect` produced one "but" (`conjunction_but`).
+- **Zone-driven goal switching is almost unreachable live.** The agent
+  confirms a zone after 3 consecutive `PersonState` events, but `perceive`
+  publishes only on a state change or its 60 s heartbeat. Walking along the
+  bathroom path therefore takes minutes to confirm, and every goal switch in
+  the pilots came from speech. Silent restroom scenarios will expose this.
+- Results vary from run to run: the model sometimes returns output that
+  fails validation (`None`; compose falls back to the template) and the
+  planner's strategy proposals differ, so a comparison needs several runs
+  per model. A cold model timed out on its first calls, which is why the
+  CLI now makes one warm-up call.
 
 ## Open questions
 

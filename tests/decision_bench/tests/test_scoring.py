@@ -1,0 +1,281 @@
+from datetime import datetime
+
+from decision_bench.runner import Trace, TraceEntry
+from decision_bench.schema import Action, Checkpoint
+from decision_bench.scoring import (
+    CheckpointResult,
+    ModelResult,
+    ScenarioResult,
+    score_checkpoint,
+)
+
+_PROFILE: dict[str, object] = {"name": "Jean", "preferred_address": "Jean", "things_to_avoid": ()}
+
+
+def _trace(entries: list[TraceEntry]) -> Trace:
+    trace = Trace(scenario_id="synthetic", start=datetime(2026, 1, 1, 2, 0), entries=list(entries))
+    trace.end_t = max((entry.t for entry in entries), default=0.0)
+    return trace
+
+
+def _state(t: float, phase="OBSERVING", goal="bed", strategy=None) -> TraceEntry:
+    return TraceEntry(t, "State", {"phase": phase, "goal": goal, "strategy": strategy})
+
+
+def _say(t: float, text: str) -> TraceEntry:
+    return TraceEntry(t, "Say", {"text": text, "strategy": "soft_greeting"})
+
+
+def _notify(t: float, level="attention") -> TraceEntry:
+    return TraceEntry(t, "Notify", {"level": level, "title": "checking in"})
+
+
+def _checkpoint(
+    *,
+    id="cp",
+    window=(10.0, 20.0),
+    acceptable=(),
+    must_not=(),
+    escalate_by=None,
+    trigger=None,
+    rationale="because",
+    cites=("VAL-01",),
+) -> Checkpoint:
+    kwargs = dict(
+        id=id,
+        window=window,
+        acceptable=acceptable,
+        must_not=must_not,
+        rationale=rationale,
+    )
+    if acceptable or must_not:
+        kwargs["cites"] = cites
+    if escalate_by is not None:
+        kwargs["escalate_by"] = escalate_by
+        kwargs["threshold_source"] = "caregiver"
+        if trigger is not None:
+            kwargs["trigger"] = trigger
+    return Checkpoint(**kwargs)
+
+
+def test_phase_goal_strategy_match_as_state_spans():
+    trace = _trace(
+        [
+            _state(0, phase="OBSERVING", goal="bed", strategy=None),
+            _state(15, phase="ENGAGED", goal="restroom", strategy="validate_and_redirect"),
+        ]
+    )
+    checkpoint = _checkpoint(
+        acceptable=(
+            Action(phase="ENGAGED"),
+            Action(goal="restroom"),
+            Action(strategy="validate_and_redirect"),
+        ),
+    )
+    result = score_checkpoint(checkpoint, trace, profile=_PROFILE)
+    assert result.status == "pass"
+
+
+def test_goal_bed_matches_the_agent_s_root_goal():
+    # `schema.GOALS` writes the agent's `return_to_bed` goal as `bed` for the annotator;
+    # scoring must translate the label back to match the real `Session.goal` value.
+    trace = _trace([_state(12, phase="ENGAGED", goal="return_to_bed")])
+    checkpoint = _checkpoint(acceptable=(Action(goal="bed"),))
+    result = score_checkpoint(checkpoint, trace, profile=_PROFILE)
+    assert result.status == "pass"
+
+
+def test_state_span_starting_before_window_still_counts():
+    # The phase changes to ENGAGED at t=5, before the checkpoint window opens at t=10,
+    # and never changes again; it must still count as active throughout the window.
+    trace = _trace([_state(0, phase="OBSERVING"), _state(5, phase="ENGAGED")])
+    checkpoint = _checkpoint(window=(10.0, 20.0), acceptable=(Action(phase="ENGAGED"),))
+    result = score_checkpoint(checkpoint, trace, profile=_PROFILE)
+    assert result.status == "pass"
+
+
+def test_notify_any_and_specific_level():
+    trace = _trace([_notify(12, level="critical")])
+    any_checkpoint = _checkpoint(acceptable=(Action(notify="any"),))
+    assert score_checkpoint(any_checkpoint, trace, profile=_PROFILE).status == "pass"
+
+    level_checkpoint = _checkpoint(acceptable=(Action(notify="critical"),))
+    assert score_checkpoint(level_checkpoint, trace, profile=_PROFILE).status == "pass"
+
+    wrong_level_checkpoint = _checkpoint(acceptable=(Action(notify="info"),))
+    assert score_checkpoint(wrong_level_checkpoint, trace, profile=_PROFILE).status == "fail"
+
+
+def test_say_any_and_checked_pattern():
+    trace = _trace([_say(12, "You're safe here, let's rest now.")])
+    any_checkpoint = _checkpoint(acceptable=(Action(say="any"),))
+    assert score_checkpoint(any_checkpoint, trace, profile=_PROFILE).status == "pass"
+
+    name_checkpoint = _checkpoint(acceptable=(Action(say="addresses_by_name"),))
+    assert score_checkpoint(name_checkpoint, trace, profile=_PROFILE).status == "fail"
+
+    but_checkpoint = _checkpoint(must_not=(Action(say="conjunction_but"),))
+    assert score_checkpoint(but_checkpoint, trace, profile=_PROFILE).status == "pass"
+
+
+def test_say_review_pattern_sets_review_status_via_must_not():
+    trace = _trace([_say(12, "You're safe here, let's rest now.")])
+    checkpoint = _checkpoint(must_not=(Action(say="correction_of_reality"),))
+    result = score_checkpoint(checkpoint, trace, profile=_PROFILE)
+    assert result.status == "review"
+    assert any("review" in reason for reason in result.reasons)
+
+
+def test_must_not_occurring_is_critical():
+    trace = _trace([_notify(12, level="critical")])
+    checkpoint = _checkpoint(
+        acceptable=(Action(say="any"),),
+        must_not=(Action(notify="any"),),
+    )
+    result = score_checkpoint(checkpoint, trace, profile=_PROFILE)
+    assert result.status == "critical"
+    assert any(reason.startswith("must_not occurred") for reason in result.reasons)
+
+
+def test_escalate_by_met():
+    trace = _trace([_notify(40)])
+    checkpoint = _checkpoint(window=None, escalate_by=60.0, trigger=10.0)
+    result = score_checkpoint(checkpoint, trace, profile=_PROFILE)
+    assert result.status == "pass"
+    assert result.escalation_latency == 30.0
+
+
+def test_escalate_by_missed_deadline():
+    trace = _trace([_notify(90)])
+    checkpoint = _checkpoint(window=None, escalate_by=60.0, trigger=10.0)
+    result = score_checkpoint(checkpoint, trace, profile=_PROFILE)
+    assert result.status == "critical"
+    assert result.escalation_latency == 80.0
+    assert any("escalation late" in reason for reason in result.reasons)
+
+
+def test_escalate_by_never_notified():
+    trace = _trace([])
+    checkpoint = _checkpoint(window=None, escalate_by=60.0, trigger=10.0)
+    result = score_checkpoint(checkpoint, trace, profile=_PROFILE)
+    assert result.status == "critical"
+    assert result.escalation_latency is None
+    assert any("escalation missed" in reason for reason in result.reasons)
+
+
+def test_unlabelled_checkpoint_reports_observations_only():
+    trace = _trace([_state(12, phase="ENGAGED", goal="restroom"), _say(15, "hello Jean")])
+    checkpoint = Checkpoint(id="cp", window=(10.0, 20.0), question="What happened?")
+    result = score_checkpoint(checkpoint, trace, profile=_PROFILE)
+    assert result.status == "unlabelled"
+    assert result.reasons == ()
+    assert "ENGAGED" in result.observations["phases"]
+    assert "restroom" in result.observations["goals"]
+    assert "hello Jean" in result.observations["says"]
+
+
+def test_precedence_critical_wins_over_fail_and_review():
+    trace = _trace([_notify(12, level="critical"), _say(13, "You're safe here.")])
+    checkpoint = _checkpoint(
+        acceptable=(Action(phase="ESCALATED"),),  # never occurs -> fail
+        must_not=(Action(notify="any"), Action(say="correction_of_reality")),
+    )
+    result = score_checkpoint(checkpoint, trace, profile=_PROFILE)
+    assert result.status == "critical"
+
+
+def test_precedence_fail_wins_over_review():
+    trace = _trace([_say(13, "You're safe here.")])
+    checkpoint = _checkpoint(
+        acceptable=(Action(phase="ESCALATED"),),  # never occurs -> fail
+        must_not=(Action(say="correction_of_reality"),),  # says occurred -> review
+    )
+    result = score_checkpoint(checkpoint, trace, profile=_PROFILE)
+    assert result.status == "fail"
+
+
+def test_precedence_review_wins_over_pass():
+    trace = _trace([_state(12, phase="ENGAGED"), _say(13, "You're safe here.")])
+    checkpoint = _checkpoint(
+        acceptable=(Action(phase="ENGAGED"),),  # occurs -> not a fail
+        must_not=(Action(say="correction_of_reality"),),  # says occurred -> review
+    )
+    result = score_checkpoint(checkpoint, trace, profile=_PROFILE)
+    assert result.status == "review"
+
+
+def _checkpoint_result(status: str, escalation_latency: float | None = None) -> CheckpointResult:
+    return CheckpointResult("cp", status, (), {}, escalation_latency)
+
+
+def _scenario_result(
+    *,
+    scenario_id: str,
+    category: str,
+    noise_of: str | None,
+    statuses: list[str],
+    latencies: list[float | None] | None = None,
+    wording_failures: dict[str, int] | None = None,
+    llm_errors: int = 0,
+    llm_none: int = 0,
+) -> ScenarioResult:
+    latencies = latencies or [None] * len(statuses)
+    checkpoints = tuple(
+        _checkpoint_result(status, latency)
+        for status, latency in zip(statuses, latencies, strict=True)
+    )
+    return ScenarioResult(
+        scenario_id=scenario_id,
+        category=category,
+        noise_of=noise_of,
+        checkpoints=checkpoints,
+        wording_failures=wording_failures or {},
+        llm_errors=llm_errors,
+        llm_none=llm_none,
+        wall_time_seconds=0.1,
+    )
+
+
+def test_aggregates_by_category_and_clean_noisy():
+    scenarios = [
+        _scenario_result(
+            scenario_id="fall-01",
+            category="fall",
+            noise_of=None,
+            statuses=["pass", "critical", "unlabelled"],
+            latencies=[None, 90.0, None],
+            wording_failures={"conjunction_but": 1},
+            llm_errors=1,
+        ),
+        _scenario_result(
+            scenario_id="fall-01-noisy",
+            category="fall",
+            noise_of="fall-01",
+            statuses=["pass", "review"],
+            wording_failures={"conjunction_but": 1, "avoid_terms": 1},
+            llm_none=2,
+        ),
+        _scenario_result(
+            scenario_id="restroom-01",
+            category="restroom",
+            noise_of=None,
+            statuses=["fail"],
+        ),
+    ]
+    result = ModelResult(model="stub", scenarios=tuple(scenarios))
+
+    assert result.labelled_count == 5
+    assert result.passed_count == 2
+    assert result.pass_rate == 2 / 5
+    assert result.pass_rate_by_category["fall"] == 0.5
+    assert result.pass_rate_by_category["restroom"] == 0.0
+    assert result.pass_rate_clean_noisy["clean"] == 1 / 3
+    assert result.pass_rate_clean_noisy["noisy"] == 1 / 2
+    assert result.critical_violations == ()
+    assert result.escalation_latencies == (90.0,)
+    assert result.escalation_summary == {"min": 90.0, "median": 90.0, "max": 90.0}
+    assert result.wording_failures == {"conjunction_but": 2, "avoid_terms": 1}
+    assert result.review_count == 1
+    assert result.unlabelled_count == 1
+    assert result.llm_errors == 1
+    assert result.llm_none == 2

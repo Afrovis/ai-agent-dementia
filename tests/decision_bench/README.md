@@ -12,15 +12,16 @@ caregiver, and how quickly.
 It is not a CI gate. Run it when you change the session rules, the strategy
 order, the prompts or the model, and compare the reports.
 
-> Status: phase 1 of [PLAN.md](PLAN.md). The guideline pack, the scenario
-> schema and seven unlabelled pilot scenarios exist; the harness does not
-> yet. This README describes the benchmark once it exists.
+> Status: phase 2 of [PLAN.md](PLAN.md). The real-agent replay harness,
+> scoring, reports, CLI and seven unlabelled pilot scenarios exist. Reviewed
+> labels are phase 3, so the pilots currently produce review summaries rather
+> than pass rates.
 
 ## What it measures
 
-For every scenario the harness runs `agent.session.Session` in-process with
-an injected clock. There is no Redis, camera or microphone, and the real
-LLM backend interprets speech and writes the replies. Each labelled
+For every scenario the harness drives `agent.main.run_once` in-process with
+an in-memory bus and injected clock. There is no Redis, camera or microphone,
+and the real LLM backend interprets speech and writes the replies. Each labelled
 checkpoint is scored on:
 
 | Measure | Meaning |
@@ -126,14 +127,24 @@ attributed to the evidence.
 
 ## Running
 
-Planned interface, mirroring `dialogue_bench`:
+The scenario clock ticks once per second. Person readings repeat at
+`perceive`'s default 60-second heartbeat cadence, so state persistence and
+the agent's zone hysteresis follow the live data path. Before the first
+scenario, each real model gets one untimed warm-up call, because a cold model
+can exceed `--timeout` and those failures would be charged to the first
+scenario. `--no-warmup` skips it.
+
+The interface mirrors `dialogue_bench`:
 
 ```sh
 pip install -e services/agent -e tests/dialogue_bench -e tests/decision_bench[dev]
 pytest tests/decision_bench/tests          # unit tests, no LLM needed
+python -m decision_bench --backend stub    # deterministic smoke run
+python -m decision_bench --backend stub --trace
 python -m decision_bench --model gemma4:e4b-mlx --model llama3.1:8b
 python -m decision_bench --backend openai --base-url http://127.0.0.1:11435 --model <mlx-model>
-python -m decision_bench --category fall --scenario fall-02   # narrow the run
+python -m decision_bench --category fall --scenario fall-01   # narrow the run
+python -m decision_bench --backend stub --json --out decision-report.json
 ```
 
 ## Caveats

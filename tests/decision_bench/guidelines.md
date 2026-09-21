@@ -57,8 +57,10 @@ validates them).
 A `say` label names a pattern that the agent's spoken text either shows or
 not. Patterns marked *check* are deterministic string rules (the first five
 already exist in `dialogue_bench/checks.py`). Patterns marked *review* are
-hard to catch with string rules; phase 2 decides whether each gets a check
-or is flagged for human review. None is scored by a judge model.
+hard to catch with string rules and are flagged for human review. Phase 2
+settled the four new patterns: memory questions and blunt refusals are checks;
+correction of reality and infantilising remain review-only. None is scored by
+a judge model.
 
 | Pattern | Meaning | Scored by |
 | --- | --- | --- |
@@ -68,8 +70,8 @@ or is flagged for human review. None is scored by a judge model.
 | `invents_proper_noun` | Names a person or place that is not in the profile. | check |
 | `addresses_by_name` | Uses the person's preferred name. | check |
 | `correction_of_reality` | Tells the person their belief is false ("your husband died", "you don't work any more", "the children are grown up"). | review |
-| `memory_question` | Asks the person to recall something ("do you remember…?", "don't you know…?"). | review |
-| `blunt_refusal` | Refuses or forbids directly ("no", "you can't", "you're not allowed"). | review |
+| `memory_question` | Asks the person to recall something ("do you remember…?", "don't you know…?"). | check |
+| `blunt_refusal` | Refuses or forbids directly ("no", "you can't", "you're not allowed"). | check |
 | `infantilising` | Talks down, scolds or treats the person as a child. | review |
 
 ## NICE: NICE guideline NG97
