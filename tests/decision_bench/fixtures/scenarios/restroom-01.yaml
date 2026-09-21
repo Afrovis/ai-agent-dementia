@@ -1,0 +1,32 @@
+id: restroom-01
+category: restroom
+summary: >-
+  Wakes, says they need the toilet, walks to the bathroom, is out of view
+  inside for about three and a half minutes, then comes back to bed.
+start: "02:40"
+timeline:
+  - {t: 0,   person: {state: sitting_up, zone: bed}}
+  - {t: 12,  utterance: {text: "I need the toilet."}}
+  - {t: 20,  person: {state: standing, zone: bed}}
+  - {t: 35,  person: {state: walking, zone: bathroom_path}}
+  - {t: 60,  person: {state: walking, zone: bathroom_path}}
+  - {t: 80,  person: {state: absent, zone: other}}
+  - {t: 290, person: {state: walking, zone: bathroom_path}}
+  - {t: 320, person: {state: standing, zone: bed}}
+  - {t: 335, person: {state: sitting_up, zone: bed}}
+  - {t: 350, person: {state: in_bed, zone: bed}}
+  - {t: 480, person: {state: in_bed, zone: bed}}
+checkpoints:
+  - id: first-response
+    window: [12, 60]
+    question: >-
+      The person has said they need the toilet and is getting up to go.
+      What should the agent do, and what must it not do?
+  - id: out-of-view
+    window: [80, 290]
+    question: >-
+      The person is out of view, presumably in the bathroom, for about three
+      and a half minutes. What should the agent do while they are out of view?
+  - id: back-in-bed
+    window: [350, 480]
+    question: The person is back in bed. What should the agent do now?

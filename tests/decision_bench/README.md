@@ -12,8 +12,9 @@ caregiver, and how quickly.
 It is not a CI gate. Run it when you change the session rules, the strategy
 order, the prompts or the model, and compare the reports.
 
-> Status: planned. The design and build order are in [PLAN.md](PLAN.md).
-> This README describes the benchmark once it exists.
+> Status: phase 1 of [PLAN.md](PLAN.md). The guideline pack, the scenario
+> schema and seven unlabelled pilot scenarios exist; the harness does not
+> yet. This README describes the benchmark once it exists.
 
 ## What it measures
 
@@ -51,13 +52,19 @@ dropped utterance, to test hysteresis and robustness.
 
 ## Scenario format
 
+One file per scenario in `fixtures/scenarios/<id>.yaml`. The schema is
+`decision_bench/schema.py`; the profile every scenario starts from is
+`fixtures/profile.yaml`.
+
 ```yaml
-id: home-03
+id: disorientation-01
 category: disorientation
-start: "02:14"                     # local time of t=0; decides night vs day
+summary: Believes they must collect the children and heads for the door.
+start: "02:14"                     # quoted local time of t=0; decides night vs day
 profile: {}                        # optional overrides of the default profile
+voice_clip: false                  # true if the caregiver recorded a consented clip
 noise_of: null
-timeline:                          # t = seconds from start
+timeline:                          # t = seconds from start, in order
   - {t: 0,  person: {state: sitting_up, zone: bed, confidence: 0.9}}
   - {t: 25, person: {state: standing,   zone: bed}}
   - {t: 40, utterance: {text: "I have to pick up the kids from school"}}
@@ -65,6 +72,7 @@ timeline:                          # t = seconds from start
 checkpoints:
   - id: first-response
     window: [40, 70]
+    question: What should the agent do, and what must it not say?
     acceptable:
       - {strategy: validate_and_redirect}
       - {strategy: soft_greeting}
@@ -72,11 +80,19 @@ checkpoints:
       - {say: correction_of_reality}
       - {notify: any}
     rationale: Validate the wish to care for the children before redirecting.
-    cites: [VAL-01, NICE-03]
+    cites: [VAL-01, AA-03]
   - id: caregiver
-    escalate_by: 300               # notify within 5 min if not back in bed
+    escalate_by: 300               # notify within 5 min of the trigger
+    trigger: 55                    # scenario second the deadline counts from
     threshold_source: caregiver    # a time threshold comes from the caregiver, not the evidence
+    rationale: Someone should know the person is up and trying to leave.
 ```
+
+A checkpoint starts **unlabelled**: just its `id`, `window` and the
+`question` the annotator answers. The labels (`acceptable`, `must_not`,
+`escalate_by`) come from the annotation workflow below. A labelled
+checkpoint needs a `rationale`, and action labels need `cites`. The
+`familiar_voice` strategy is only a valid label when `voice_clip` is true.
 
 The set of actions a label can name is exactly what the agent can do:
 
@@ -84,7 +100,8 @@ The set of actions a label can name is exactly what the agent can do:
 - **goal**: bed, restroom, comfort
 - **strategy**: the ids in `config/strategies.example.yaml`
 - **notify**: level, and whether one was sent at all
-- **say**: rule checks and named wording patterns
+- **say**: `any`, the `dialogue_bench` rule checks, and the named wording
+  patterns listed in `guidelines.md`
 
 ## How labels are made
 

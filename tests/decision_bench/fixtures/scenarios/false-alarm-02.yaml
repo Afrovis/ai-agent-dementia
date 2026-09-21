@@ -1,0 +1,18 @@
+id: false-alarm-02
+category: false_alarm
+summary: >-
+  Sits up to reach the glass on the bedside table, murmurs contentedly, and
+  lies back down within a minute.
+start: "04:10"
+timeline:
+  - {t: 0,   person: {state: in_bed, zone: bed}}
+  - {t: 20,  person: {state: sitting_up, zone: bed, scene_note: "Reaching towards the bedside table."}}
+  - {t: 45,  utterance: {text: "Mm, that's better.", confidence: 0.6, duration_s: 1.0}}
+  - {t: 60,  person: {state: in_bed, zone: bed}}
+  - {t: 180, person: {state: in_bed, zone: bed}}
+checkpoints:
+  - id: settles
+    window: [20, 180]
+    question: >-
+      The person sits up for a drink, says something contented, and lies
+      back down. What should the agent do, and what must it not do?
