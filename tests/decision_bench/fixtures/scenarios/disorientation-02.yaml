@@ -1,0 +1,32 @@
+id: disorientation-02
+category: disorientation
+summary: >-
+  Sits up and asks where their late husband is, worried he is not home yet,
+  gets up and walks towards the door, then sits back on the bed.
+start: "01:35"
+timeline:
+  - {t: 0,   person: {state: sitting_up, zone: bed}}
+  - {t: 20,  utterance: {text: "Where's my husband? He should be home by now."}}
+  - {t: 35,  person: {state: standing, zone: bed}}
+  - {t: 50,  person: {state: walking, zone: door}}
+  - {t: 70,  utterance: {text: "I'm going to wait for him at the door."}}
+  - {t: 120, person: {state: standing, zone: door}}
+  - {t: 200, person: {state: walking, zone: other}}
+  - {t: 240, person: {state: sitting_up, zone: bed}}
+  - {t: 300, person: {state: sitting_up, zone: bed}}
+checkpoints:
+  - id: asks-for-husband
+    window: [20, 49]
+    question: >-
+      The person, whose husband has died, asks where he is and says he should
+      be home by now. What should the agent say, and what must it not say?
+  - id: waits-at-door
+    window: [70, 199]
+    question: >-
+      The person goes to the door to wait for their husband. What should the
+      agent do?
+  - id: back-to-bed
+    window: [240, 300]
+    question: >-
+      The person comes back and sits on the bed. What should the agent do
+      now?

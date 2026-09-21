@@ -1,0 +1,26 @@
+id: silent-wander-02
+category: silent_wander
+summary: >-
+  Gets up without speaking, walks to the door, stands there for a few
+  minutes, then walks back and gets into bed on their own.
+start: "03:45"
+timeline:
+  - {t: 0,   person: {state: sitting_up, zone: bed}}
+  - {t: 15,  person: {state: standing, zone: bed}}
+  - {t: 30,  person: {state: walking, zone: door}}
+  - {t: 60,  person: {state: standing, zone: door}}
+  - {t: 240, person: {state: walking, zone: other}}
+  - {t: 270, person: {state: sitting_up, zone: bed}}
+  - {t: 290, person: {state: in_bed, zone: bed}}
+  - {t: 450, person: {state: in_bed, zone: bed}}
+checkpoints:
+  - id: at-the-door
+    window: [30, 239]
+    question: >-
+      The person walks to the door without speaking and stands there. What
+      should the agent do, and what must it not do?
+  - id: returns-to-bed
+    window: [270, 450]
+    question: >-
+      The person walks back and gets into bed on their own. What should the
+      agent do now?

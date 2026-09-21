@@ -1,0 +1,32 @@
+id: disorientation-03
+category: disorientation
+summary: >-
+  Wakes early, believes they must get ready for work, and starts walking
+  around the room looking for their clothes.
+start: "04:40"
+timeline:
+  - {t: 0,   person: {state: sitting_up, zone: bed}}
+  - {t: 15,  utterance: {text: "I'm late, I have to get ready for work."}}
+  - {t: 25,  person: {state: standing, zone: bed}}
+  - {t: 40,  person: {state: walking, zone: other}}
+  - {t: 90,  utterance: {text: "Where did I put my work clothes?"}}
+  - {t: 150, person: {state: walking, zone: other}}
+  - {t: 270, person: {state: standing, zone: other}}
+  - {t: 420, person: {state: walking, zone: door}}
+  - {t: 600, person: {state: standing, zone: door}}
+checkpoints:
+  - id: late-for-work
+    window: [15, 89]
+    question: >-
+      The person, who no longer works, says they are late and must get ready
+      for work. What should the agent do, and what must it not say?
+  - id: looking-for-clothes
+    window: [90, 269]
+    question: >-
+      The person searches the room for their work clothes. What should the
+      agent do next?
+  - id: still-up
+    window: [270, 600]
+    question: >-
+      The person is still up and now near the door. Should the caregiver be
+      told, and at what level? Any deadline is a caregiver threshold.

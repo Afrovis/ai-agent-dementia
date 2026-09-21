@@ -1,0 +1,18 @@
+id: false-alarm-03
+category: false_alarm
+summary: >-
+  Talks in their sleep while lying in bed and shifts position, but never
+  sits up or gets out of bed.
+start: "01:10"
+timeline:
+  - {t: 0,   person: {state: in_bed, zone: bed}}
+  - {t: 20,  utterance: {text: "No, no, leave it there.", confidence: 0.6, duration_s: 1.5}}
+  - {t: 45,  person: {state: in_bed, zone: bed, confidence: 0.8}}
+  - {t: 70,  utterance: {text: "mm the garden", confidence: 0.5, duration_s: 1.0}}
+  - {t: 240, person: {state: in_bed, zone: bed}}
+checkpoints:
+  - id: sleep-talk
+    window: [20, 240]
+    question: >-
+      The person mumbles a few words while lying in bed and does not sit up.
+      What should the agent do, and what must it not do?

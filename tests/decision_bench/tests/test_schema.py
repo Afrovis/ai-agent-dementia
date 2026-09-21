@@ -55,11 +55,10 @@ def _labelled(**overrides: object) -> dict[str, object]:
 # --- fixtures in the repository ---
 
 
-def test_pilot_scenarios_load():
+def test_scenarios_load_and_cover_every_category():
     scenarios = load_scenarios()
-    assert len(scenarios) == 7
-    by_category = {c: sum(s.category == c for s in scenarios) for c in CATEGORIES}
-    assert by_category == {c: 2 if c == "false_alarm" else 1 for c in CATEGORIES}
+    assert len(scenarios) >= 14
+    assert {s.category for s in scenarios} == set(CATEGORIES)
 
 
 def test_labels_come_from_the_annotation_workflow():

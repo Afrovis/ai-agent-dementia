@@ -1,0 +1,67 @@
+scenario: silent-wander-02
+annotator:
+  model: claude-opus-5
+  effort: high
+  date: '2026-09-21'
+  attempts: 1
+  session_id: 4949c4c8-efe8-4228-9974-37e34813e92c
+  list_price_usd: 0.20289999999999997
+  prompt_sha256: 76eb2712d96cf8dd5c5e52f74c413014919e34ff1dc2abd6cebe6eb8c17a3941
+  guidelines_sha256: ee0ed966fce268e5baacea5d74db35489410f8f5429af7df3a8b8c86ac4f611d
+  scenario_sha256: c0ca139e43bbeb9a161ae619811e0f12aa0fe257664eca6a203cffe39aed61bb
+scenario_notes: The returns-to-bed window starts at t=270, when Jean is only sitting up in bed. She is
+  not lying down (in_bed) until t=290. If the window started at t=290, NICE-05 would cleanly support must_not
+  say:any ('stay silent') for the settled period. As it stands, the window mixes a brief wind-down moment
+  with the settled period.
+checkpoints:
+  - id: at-the-door
+    acceptable:
+      - {strategy: path_light}
+      - {goal: restroom}
+      - {strategy: ambient_orient}
+      - {strategy: soft_greeting}
+      - {strategy: validate_and_redirect}
+      - {strategy: orient_time_place}
+      - {notify: info}
+      - {notify: attention}
+    must_not:
+      - {notify: critical}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      At 03:45 Jean gets up without speaking, walks to the door and stands there for about three minutes
+      (t=60–240). She is unsteady at night and uses a walker. TOIL-01 and DICE-01 treat restless silent
+      walking as a possible toileting or way-finding need, and TOIL-02 and TOIL-04 make lighting the route
+      to the toilet a strong choice. NICE-02, AA-01, AA-02 and AA-04 support a calm first response: ambient
+      cues, a soft greeting, gently saying it is night-time, or validating and redirecting. AA-05 allows
+      walking with supervision, which supports an info or attention note to the caregiver. It also rules
+      out a critical call just because she is walking and standing.
+    cites: [TOIL-01, TOIL-02, TOIL-04, DICE-01, NICE-02, AA-01, AA-02, AA-04, AA-05]
+    uncertain: I did not set an escalate_by. Standing still at the door for three minutes is not a fall,
+      and nothing in the timeline suggests danger. Still, AA-05's 'with supervision' and her unsteadiness
+      could justify a caregiver-set deadline for an info or attention notification, for example 180 s
+      from t=30. That number would be a placeholder for the caregiver to set, not something a clause gives.
+      I also left out phase OBSERVING because pure watching would pass the checkpoint trivially. A reviewer
+      may decide that watching quietly without cues is also acceptable.
+  - id: returns-to-bed
+    acceptable:
+      - {phase: COOLDOWN}
+      - {phase: IDLE}
+    must_not:
+      - {strategy: orient_time_place}
+      - {notify: critical}
+      - {notify: attention}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      Jean walks back on her own, sits on the bed at t=270 and is lying in bed from t=290 to t=450. NICE-05
+      says that once the person settles by themselves, the agent should support rest and stay quiet: it
+      should not rouse her to orient her, and it should not ask the caregiver to act. So the right response
+      is to wind down (COOLDOWN) or go back to IDLE. Starting an orientation strategy, or sending an attention
+      or critical notification, would work against a person who has already settled.
+    cites: [NICE-05, AA-05]
+    uncertain: NICE-05 reads as 'no say, no notify', which would support must_not say:any and must_not
+      notify:any. I held back on both for two reasons. First, the window opens at t=270, while she is
+      still sitting up, before she lies down at t=290, so one short closing sentence then seems reasonable.
+      Second, an info-level note for the record after a night episode fits AA-05's supervision point.
+      If the reviewer reads NICE-05 strictly, both should go into must_not.

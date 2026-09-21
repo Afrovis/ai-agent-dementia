@@ -1,0 +1,137 @@
+# ==============================================================================
+# HOW TO REVIEW
+# WHO WROTE WHAT: every label, rationale, doubt and note in this file was
+# written by the ANNOTATOR, Claude, claude-opus-5, working only from guidelines.md,
+# the profile and this scenario. The LOCAL MODEL (the agent's LLM, e.g.
+# gemma on Ollama) has not been run on this file; it is scored against these
+# labels later, once you have reviewed them.
+#
+# Everything you need is here: the scripted night first, then each checkpoint
+# with its question, the annotator's proposed labels and its doubts. You are
+# judging the answer key, not the agent.
+#
+# For each checkpoint, read the question and the timeline up to that moment,
+# then ask: do I agree with what the model says the agent should and must not
+# do?
+#   acceptable  good responses. The checkpoint passes if the agent does AT
+#               LEAST ONE of these inside the window. Empty = holding back is
+#               the right response.
+#   must_not    forbidden. Any of these inside the window is a critical failure.
+#   escalate_by the caregiver must be notified within this many seconds after
+#               `trigger` (a scenario second). Always a caregiver choice, never
+#               evidence.
+#   cites       guideline clauses (guidelines.md) the labels rest on. Only
+#               clauses you have ticked there may be cited.
+# Agree: leave it. Disagree: edit acceptable / must_not / escalate_by / trigger
+# / cites and write a short `reason`. Rationale-only edits need no reason.
+# When done: set `reviewed: true` (just below this header) and tell Claude,
+# or run `python -m decision_bench apply <id>`.
+#
+# Action values:
+#   phase     IDLE OBSERVING ENGAGED COOLDOWN ESCALATED
+#   goal      bed restroom comfort
+#   strategy  ambient_orient soft_greeting orient_time_place validate_and_redirect
+#             guided_return familiar_voice path_light escalate_phone
+#   notify    any info attention critical
+#   say       any conjunction_but avoid_terms states_clock_time invents_proper_noun
+#             addresses_by_name correction_of_reality memory_question
+#             blunt_refusal infantilising
+# ==============================================================================
+# SCENARIO silent-wander-02 (silent_wander)
+# Gets up without speaking, walks to the door, stands there for a few minutes, then walks
+# back and gets into bed on their own.
+#
+# Night starts at 03:45.
+# Consented caregiver voice clip: no
+#
+# TIMELINE (a camera reading holds until the next one)
+#   t=    0s  03:45:00  sitting up, zone bed
+#   t=   15s  03:45:15  standing, zone bed
+#   t=   30s  03:45:30  walking, zone door
+#   t=   60s  03:46:00  standing, zone door
+#   t=  240s  03:49:00  walking, zone other
+#   t=  270s  03:49:30  sitting up, zone bed
+#   t=  290s  03:49:50  in bed, zone bed
+#   t=  450s  03:52:30  in bed, zone bed
+#
+# ANNOTATOR'S NOTES ON THE SCENARIO ITSELF (Claude, claude-opus-5)
+# The returns-to-bed window starts at t=270, when Jean is only sitting up in bed. She is not
+# lying down (in_bed) until t=290. If the window started at t=290, NICE-05 would cleanly
+# support must_not say:any ('stay silent') for the settled period. As it stands, the window
+# mixes a brief wind-down moment with the settled period.
+# ==============================================================================
+
+scenario: silent-wander-02
+reviewed: false
+
+checkpoints:
+
+  # ----------------------------------------------------------------------------
+  # CHECKPOINT at-the-door: window t=30-239s (03:45:30-03:48:59)
+  # QUESTION: The person walks to the door without speaking and stands there. What should
+  # the agent do, and what must it not do?
+  # ANNOTATOR'S DOUBTS (Claude, claude-opus-5): I did not set an escalate_by. Standing still
+  # at the door for three minutes is not a fall, and nothing in the timeline suggests
+  # danger. Still, AA-05's 'with supervision' and her unsteadiness could justify a
+  # caregiver-set deadline for an info or attention notification, for example 180 s from
+  # t=30. That number would be a placeholder for the caregiver to set, not something a
+  # clause gives. I also left out phase OBSERVING because pure watching would pass the
+  # checkpoint trivially. A reviewer may decide that watching quietly without cues is also
+  # acceptable.
+  # Labels below: proposed by the annotator, Claude, claude-opus-5. Edit freely.
+  # ----------------------------------------------------------------------------
+  - id: at-the-door
+    acceptable:
+      - {strategy: path_light}
+      - {goal: restroom}
+      - {strategy: ambient_orient}
+      - {strategy: soft_greeting}
+      - {strategy: validate_and_redirect}
+      - {strategy: orient_time_place}
+      - {notify: info}
+      - {notify: attention}
+    must_not:
+      - {notify: critical}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      At 03:45 Jean gets up without speaking, walks to the door and stands there for about three minutes
+      (t=60–240). She is unsteady at night and uses a walker. TOIL-01 and DICE-01 treat restless silent
+      walking as a possible toileting or way-finding need, and TOIL-02 and TOIL-04 make lighting the route
+      to the toilet a strong choice. NICE-02, AA-01, AA-02 and AA-04 support a calm first response: ambient
+      cues, a soft greeting, gently saying it is night-time, or validating and redirecting. AA-05 allows
+      walking with supervision, which supports an info or attention note to the caregiver. It also rules
+      out a critical call just because she is walking and standing.
+    cites: [TOIL-01, TOIL-02, TOIL-04, DICE-01, NICE-02, AA-01, AA-02, AA-04, AA-05]
+    reason: ''
+
+  # ----------------------------------------------------------------------------
+  # CHECKPOINT returns-to-bed: window t=270-450s (03:49:30-03:52:30)
+  # QUESTION: The person walks back and gets into bed on their own. What should the agent do
+  # now?
+  # ANNOTATOR'S DOUBTS (Claude, claude-opus-5): NICE-05 reads as 'no say, no notify', which
+  # would support must_not say:any and must_not notify:any. I held back on both for two
+  # reasons. First, the window opens at t=270, while she is still sitting up, before she
+  # lies down at t=290, so one short closing sentence then seems reasonable. Second, an
+  # info-level note for the record after a night episode fits AA-05's supervision point. If
+  # the reviewer reads NICE-05 strictly, both should go into must_not.
+  # Labels below: proposed by the annotator, Claude, claude-opus-5. Edit freely.
+  # ----------------------------------------------------------------------------
+  - id: returns-to-bed
+    acceptable:
+      - {phase: COOLDOWN}
+      - {phase: IDLE}
+    must_not:
+      - {strategy: orient_time_place}
+      - {notify: critical}
+      - {notify: attention}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      Jean walks back on her own, sits on the bed at t=270 and is lying in bed from t=290 to t=450. NICE-05
+      says that once the person settles by themselves, the agent should support rest and stay quiet: it
+      should not rouse her to orient her, and it should not ask the caregiver to act. So the right response
+      is to wind down (COOLDOWN) or go back to IDLE. Starting an orientation strategy, or sending an attention
+      or critical notification, would work against a person who has already settled.
+    cites: [NICE-05, AA-05]
+    reason: ''

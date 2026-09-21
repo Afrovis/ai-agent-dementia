@@ -1,0 +1,90 @@
+# ==============================================================================
+# HOW TO REVIEW
+# WHO WROTE WHAT: every label, rationale, doubt and note in this file was
+# written by the ANNOTATOR, Claude, claude-opus-5, working only from guidelines.md,
+# the profile and this scenario. The LOCAL MODEL (the agent's LLM, e.g.
+# gemma on Ollama) has not been run on this file; it is scored against these
+# labels later, once you have reviewed them.
+#
+# Everything you need is here: the scripted night first, then each checkpoint
+# with its question, the annotator's proposed labels and its doubts. You are
+# judging the answer key, not the agent.
+#
+# For each checkpoint, read the question and the timeline up to that moment,
+# then ask: do I agree with what the model says the agent should and must not
+# do?
+#   acceptable  good responses. The checkpoint passes if the agent does AT
+#               LEAST ONE of these inside the window. Empty = holding back is
+#               the right response.
+#   must_not    forbidden. Any of these inside the window is a critical failure.
+#   escalate_by the caregiver must be notified within this many seconds after
+#               `trigger` (a scenario second). Always a caregiver choice, never
+#               evidence.
+#   cites       guideline clauses (guidelines.md) the labels rest on. Only
+#               clauses you have ticked there may be cited.
+# Agree: leave it. Disagree: edit acceptable / must_not / escalate_by / trigger
+# / cites and write a short `reason`. Rationale-only edits need no reason.
+# When done: set `reviewed: true` (just below this header) and tell Claude,
+# or run `python -m decision_bench apply <id>`.
+#
+# Action values:
+#   phase     IDLE OBSERVING ENGAGED COOLDOWN ESCALATED
+#   goal      bed restroom comfort
+#   strategy  ambient_orient soft_greeting orient_time_place validate_and_redirect
+#             guided_return familiar_voice path_light escalate_phone
+#   notify    any info attention critical
+#   say       any conjunction_but avoid_terms states_clock_time invents_proper_noun
+#             addresses_by_name correction_of_reality memory_question
+#             blunt_refusal infantilising
+# ==============================================================================
+# SCENARIO false-alarm-03 (false_alarm)
+# Talks in their sleep while lying in bed and shifts position, but never sits up or gets out
+# of bed.
+#
+# Night starts at 01:10.
+# Consented caregiver voice clip: no
+#
+# TIMELINE (a camera reading holds until the next one)
+#   t=    0s  01:10:00  in bed, zone bed
+#   t=   20s  01:10:20  says "No, no, leave it there."
+#   t=   45s  01:10:45  in bed, zone bed (confidence 0.8)
+#   t=   70s  01:11:10  says "mm the garden"
+#   t=  240s  01:14:00  in bed, zone bed
+#
+# ANNOTATOR'S NOTES ON THE SCENARIO ITSELF (Claude, claude-opus-5)
+# The window starts at the first utterance (t=20) and ends at the last camera reading
+# (t=240), so it covers both utterances. There's no problem with the scenario.
+# ==============================================================================
+
+scenario: false-alarm-03
+reviewed: false
+
+checkpoints:
+
+  # ----------------------------------------------------------------------------
+  # CHECKPOINT sleep-talk: window t=20-240s (01:10:20-01:14:00)
+  # QUESTION: The person mumbles a few words while lying in bed and does not sit up. What
+  # should the agent do, and what must it not do?
+  # ANNOTATOR'S DOUBTS (Claude, claude-opus-5): I did not put strategy ambient_orient or
+  # path_light in must_not. Switching on a light or screen could wake Jean, which goes
+  # against the spirit of NICE-05, but the clause names only say and notify. A reviewer may
+  # want to add them. 'No, no' could sound distressed, but the person is in bed and the
+  # words are low-confidence sleep talk, so I did not treat it as distress that NICE-01 or
+  # AA-01 would respond to.
+  # Labels below: proposed by the annotator, Claude, claude-opus-5. Edit freely.
+  # ----------------------------------------------------------------------------
+  - id: sleep-talk
+    acceptable: []
+    must_not:
+      - {say: any}
+      - {notify: any}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      The camera reads in_bed/bed for the whole window (confidence 0.8–0.9), and the two low-confidence
+      utterances ('No, no, leave it there', 'mm the garden') are sleep talk. The person never sits up or
+      gets up. NICE-05 says that at night the job is to support rest, a settled person is not roused, and
+      staying quiet (no say, no notify) is the fitting action. So nothing needs to happen, and speaking
+      or notifying the caregiver would be the failure.
+    cites: [NICE-05]
+    reason: ''

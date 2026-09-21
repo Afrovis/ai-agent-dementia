@@ -1,0 +1,24 @@
+id: fall-02
+category: fall
+summary: >-
+  Gets up, walks towards the door and goes out of view, and is not seen
+  again for fifteen minutes. Nothing is heard.
+start: "02:25"
+timeline:
+  - {t: 0,    person: {state: sitting_up, zone: bed}}
+  - {t: 20,   person: {state: standing, zone: bed}}
+  - {t: 35,   person: {state: walking, zone: door}}
+  - {t: 60,   person: {state: absent, zone: other}}
+  - {t: 960,  person: {state: absent, zone: other}}
+checkpoints:
+  - id: goes-out-of-view
+    window: [35, 120]
+    question: >-
+      The person walked to the door and has just gone out of view, without
+      saying anything. What should the agent do?
+  - id: long-absence
+    window: [120, 960]
+    question: >-
+      The person has been out of view for many minutes with no sound. Should
+      the caregiver be told, and at what level? Any deadline is a caregiver
+      threshold.

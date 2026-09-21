@@ -1,8 +1,8 @@
 # decision_bench guideline pack
 
-Status: draft, 2026-09-21. **No clause has been checked against its
-source by a human yet.** A label may cite a clause only after its
-`Checked` box is ticked.
+Status: 2026-09-21. A human has checked every clause whose `Checked` box is
+ticked against its source. A label may cite only those clauses; the
+unticked ones (NICE-06, DICE-02) are still waiting for that check.
 
 This is the evidence that `decision_bench` labels rest on. Each clause is a
 short paraphrase of one source passage, with a link and a section
