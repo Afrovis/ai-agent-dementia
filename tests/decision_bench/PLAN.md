@@ -1,7 +1,9 @@
 # decision_bench plan
 
-Status: planned, 2026-09-21. Nothing is built yet. The user-facing
-description is in [README.md](README.md).
+Status: phase 1 in progress, 2026-09-21. `guidelines.md`,
+`decision_bench/schema.py` and seven unlabelled pilot scenarios exist; the
+clause text awaits human review. The user-facing description is in
+[README.md](README.md).
 
 ## Goal
 
@@ -136,8 +138,11 @@ tests/decision_bench/
 
 ## Build order
 
-1. **Guideline pack, schema and 5 pilot scenarios** (one per category
+1. **Guideline pack, schema and 7 pilot scenarios** (one per category
    except `false_alarm`, which gets two). The human reviews the clause text.
+   The pilots carry timelines and checkpoint questions only: labelling them
+   is step 3, so the first labels come from the annotator and not from
+   someone who has read the agent code.
 2. **Harness and scoring**, with unit tests on a stubbed LLM, plus a
    report on one local model.
 3. **Annotator.** Pick the shell, label the pilot, run the human review,
@@ -149,8 +154,9 @@ tests/decision_bench/
 
 - Which annotator shell to use: a Claude Code skill running an Opus agent,
   or something else.
-- Whether `familiar_voice` belongs in `acceptable` sets when the profile has
-  no consented clip. Probably the profile fixture should state whether a
-  clip exists.
+- ~~Whether `familiar_voice` belongs in `acceptable` sets when the profile
+  has no consented clip.~~ Settled in phase 1: a scenario sets
+  `voice_clip: true` when a clip exists, and the schema rejects
+  `familiar_voice` in `acceptable` otherwise.
 - How strict the `window` for "stay quiet" on false alarms should be. That
   depends on the configured `OBSERVING` wait, which labels must not copy.

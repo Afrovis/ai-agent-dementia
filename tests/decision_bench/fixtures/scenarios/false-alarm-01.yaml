@@ -1,0 +1,18 @@
+id: false-alarm-01
+category: false_alarm
+summary: >-
+  Rolls over, sits up for about 20 seconds without speaking, and lies back
+  down.
+start: "03:30"
+timeline:
+  - {t: 0,   person: {state: in_bed, zone: bed}}
+  - {t: 30,  person: {state: sitting_up, zone: bed, confidence: 0.75}}
+  - {t: 50,  person: {state: in_bed, zone: bed}}
+  - {t: 120, person: {state: in_bed, zone: bed}}
+  - {t: 240, person: {state: in_bed, zone: bed}}
+checkpoints:
+  - id: settles
+    window: [30, 240]
+    question: >-
+      The person sits up briefly without speaking and lies back down. What
+      should the agent do, and what must it not do?

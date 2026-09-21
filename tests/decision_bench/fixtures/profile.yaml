@@ -1,0 +1,19 @@
+# The profile every scenario starts from. A scenario's `profile:` overrides
+# individual fields. Synthetic; the same person as dialogue_bench.
+name: Jean
+preferred_address: Jean
+caregiver_name: Tom
+caregiver_relationship: son
+night_themes:
+  - Looks for a deceased spouse
+  - Believes the children are still young
+calming_things:
+  - A photo of the garden
+  - Tom is nearby and everything is settled
+things_to_avoid:
+  - Do not mention the hospital
+  - Avoid loud or urgent language
+physical_notes:
+  - Uses a walker
+  - Is unsteady at night
+restroom_location: Through the bedroom door and immediately left

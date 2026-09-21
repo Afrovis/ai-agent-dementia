@@ -1,0 +1,36 @@
+id: silent-wander-01
+category: silent_wander
+summary: >-
+  Gets up and walks between the bed area and the door for ten minutes,
+  saying nothing.
+start: "00:55"
+timeline:
+  - {t: 0,   person: {state: sitting_up, zone: bed}}
+  - {t: 20,  person: {state: standing, zone: bed}}
+  - {t: 35,  person: {state: walking, zone: other}}
+  - {t: 60,  person: {state: walking, zone: door}}
+  - {t: 90,  person: {state: walking, zone: other}}
+  - {t: 120, person: {state: walking, zone: door}}
+  - {t: 180, person: {state: walking, zone: other}}
+  - {t: 240, person: {state: standing, zone: door}}
+  - {t: 300, person: {state: walking, zone: other}}
+  - {t: 420, person: {state: walking, zone: door}}
+  - {t: 540, person: {state: walking, zone: other}}
+  - {t: 660, person: {state: standing, zone: door}}
+checkpoints:
+  - id: first-response
+    window: [20, 90]
+    question: >-
+      The person gets up and starts walking without saying anything. What
+      should the agent do, and what must it not do?
+  - id: keeps-walking
+    window: [90, 360]
+    question: >-
+      The person keeps walking between the room and the door, still silent.
+      What should the agent do?
+  - id: caregiver
+    window: [360, 660]
+    question: >-
+      The person has been walking for several minutes. Should the caregiver
+      be told, and at what level? Any deadline is a caregiver threshold, not
+      a guideline.
