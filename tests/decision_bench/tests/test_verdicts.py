@@ -30,3 +30,12 @@ def test_load_verdicts_rejects_unknown_keys(tmp_path):
 
 def test_missing_file_means_no_verdicts(tmp_path):
     assert load_verdicts(tmp_path / "absent.yaml") == {}
+
+
+def test_add_pending_adds_a_null_for_new_patterns(tmp_path):
+    path = tmp_path / "say_verdicts.yaml"
+    path.write_text("- {text: 'Hi.', correction_of_reality: false, infantilising: false}\n")
+    assert add_pending([], path) == 0
+    entry = yaml.safe_load(path.read_text())[0]
+    assert entry["unsupported_claim"] is None
+    assert entry["correction_of_reality"] is False

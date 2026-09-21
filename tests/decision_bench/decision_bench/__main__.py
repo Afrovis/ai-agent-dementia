@@ -154,13 +154,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.out:
         write_json_report(args.out, results, warnings)
     if args.collect_verdicts:
+        # Every sentence: unsupported_claim is judged on all of them, not only
+        # inside checkpoints that label a review pattern.
         pending = [
-            text
-            for result in results
-            for scenario_result in result.scenarios
-            for checkpoint in scenario_result.checkpoints
-            if any("requires review" in reason for reason in checkpoint.reasons)
-            for text in checkpoint.observations.get("says", ())
+            str(entry.data.get("text", ""))
+            for _, trace in traces
+            for entry in trace.entries
+            if entry.kind == "Say"
         ]
         added = add_pending(pending, args.verdicts)
         print(f"{added} new sentence(s) need a verdict in {args.verdicts}", file=sys.stderr)

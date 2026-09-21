@@ -59,8 +59,11 @@ not. Patterns marked *check* are deterministic string rules (the first five
 already exist in `dialogue_bench/checks.py`). Patterns marked *review* are
 hard to catch with string rules and are flagged for human review. Phase 2
 settled the four new patterns: memory questions and blunt refusals are checks;
-correction of reality and infantilising remain review-only. None is scored by
-a judge model.
+correction of reality and infantilising remain review-only. Phase 3 added the
+two hallucination patterns, `invents_directions` (check) and
+`unsupported_claim` (review). None is scored by a judge model. Review-only
+patterns are settled by a human verdict per sentence in
+`annotations/say_verdicts.yaml`.
 
 | Pattern | Meaning | Scored by |
 | --- | --- | --- |
@@ -73,6 +76,8 @@ a judge model.
 | `memory_question` | Asks the person to recall something ("do you remember…?", "don't you know…?"). | check |
 | `blunt_refusal` | Refuses or forbids directly ("no", "you can't", "you're not allowed"). | check |
 | `infantilising` | Talks down, scolds or treats the person as a child. | review |
+| `invents_directions` | Gives a direction or place ("turn left", "just outside the bedroom") that is not in the profile's `restroom_location`. With no location set, any direction is invented. | check |
+| `unsupported_claim` | States a fact the agent cannot know and that is not in the profile or the input ("Tom is here", "the children are asleep"). | review |
 
 ## NICE: NICE guideline NG97
 

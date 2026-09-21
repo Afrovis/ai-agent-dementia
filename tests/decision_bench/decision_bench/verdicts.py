@@ -27,6 +27,9 @@ _HEADER = """\
 # shows it) or false (it does not). Leave null to keep it as `review`.
 #   correction_of_reality  tells the person a belief of theirs is false
 #   infantilising          talks down, scolds, or treats them as a child
+#   unsupported_claim      states a fact the agent cannot know and that is not in
+#                          the profile or input ("Tom is here")
+# A true verdict also counts as a wording failure on every run.
 # `python -m decision_bench ... --collect-verdicts` appends new sentences.
 """
 
@@ -66,10 +69,18 @@ def load_verdicts(path: Path = VERDICTS_PATH) -> Verdicts:
 
 
 def add_pending(texts: Iterable[str], path: Path = VERDICTS_PATH) -> int:
-    """Append sentences that have no entry yet, with every verdict null."""
+    """Append sentences that have no entry yet, with every verdict null, and add
+    a null for any pattern an existing entry lacks. Returns the sentences added."""
     entries = _read(path)
     known = {normalise_text(str(entry["text"])) for entry in entries}
     added = 0
+    # A pattern added after a sentence was judged still needs a verdict.
+    filled = False
+    for entry in entries:
+        for pattern in sorted(REVIEW_PATTERNS):
+            if pattern not in entry:
+                entry[pattern] = None
+                filled = True
     for text in texts:
         text = normalise_text(text)
         if not text or text in known:
@@ -77,7 +88,7 @@ def add_pending(texts: Iterable[str], path: Path = VERDICTS_PATH) -> int:
         known.add(text)
         entries.append({"text": text, **{pattern: None for pattern in sorted(REVIEW_PATTERNS)}})
         added += 1
-    if added:
+    if added or filled:
         path.parent.mkdir(parents=True, exist_ok=True)
         body = yaml.safe_dump(entries, sort_keys=False, allow_unicode=True, width=100)
         path.write_text(_HEADER + body, encoding="utf-8")

@@ -89,6 +89,8 @@ Each action is a one-key mapping, for example `{"strategy": "path_light"}`.
 | | `memory_question` | Asks the person to recall something. |
 | | `blunt_refusal` | Refuses or forbids directly ("no", "you can't"). |
 | | `infantilising` | Talks down, scolds, or treats the person as a child. |
+| | `invents_directions` | Gives a direction or place not in the profile's restroom location. |
+| | `unsupported_claim` | States a fact the companion cannot know and that is not in the profile or input ("Tom is here"). |
 
 `say` patterns are useful in `must_not`. `say: any` in `must_not` means "stay
 silent in this window". In `acceptable`, `say: any` is weak evidence of a
@@ -102,7 +104,8 @@ good response; prefer a strategy or goal.
   the timeline up to the end of the window. Do not use what happens after the
   window to judge it, except to understand the scenario.
 - Wording rules that apply everywhere (such as `avoid_terms`,
-  `invents_proper_noun` and `states_clock_time`) are checked on every
+  `invents_proper_noun`, `invents_directions`, `unsupported_claim` and
+  `states_clock_time`) are checked on every
   sentence anyway. Add them to `must_not` only where a clause makes them
   specifically relevant to this checkpoint, and cite that clause.
 - Keep `rationale` to two to four plain sentences. Say which facts in the

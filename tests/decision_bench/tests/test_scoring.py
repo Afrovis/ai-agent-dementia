@@ -306,3 +306,27 @@ def test_human_verdict_resolves_review_pattern():
     assert score_checkpoint(checkpoint, trace, profile=_PROFILE, verdicts=bad).status == "critical"
     other = {("Something else.", "infantilising"): False}
     assert score_checkpoint(checkpoint, trace, profile=_PROFILE, verdicts=other).status == "review"
+
+
+def test_true_verdict_and_invented_direction_count_as_wording_failures():
+    from decision_bench.schema import Scenario
+    from decision_bench.scoring import score_scenario
+
+    scenario = Scenario.model_validate(
+        {
+            "id": "synthetic",
+            "category": "restroom",
+            "summary": "s",
+            "start": "02:00",
+            "timeline": [{"t": 0, "person": {"state": "sitting_up", "zone": "bed"}}],
+            "checkpoints": [{"id": "cp", "window": [0, 10], "question": "q"}],
+        }
+    )
+    trace = _trace(
+        [_say(1, "Tom is here now."), _say(2, "The restroom is just outside the bedroom.")]
+    )
+    profile = dict(_PROFILE, restroom_location="")
+    verdicts = {("Tom is here now.", "unsupported_claim"): True}
+    result = score_scenario(scenario, trace, profile=profile, verdicts=verdicts)
+    assert result.wording_failures["unsupported_claim"] == 1
+    assert result.wording_failures["invents_directions"] == 1

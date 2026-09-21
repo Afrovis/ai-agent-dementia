@@ -3,40 +3,79 @@
 # shows it) or false (it does not). Leave null to keep it as `review`.
 #   correction_of_reality  tells the person a belief of theirs is false
 #   infantilising          talks down, scolds, or treats them as a child
+#   unsupported_claim      states a fact the agent cannot know and that is not in
+#                          the profile or input ("Tom is here")
+# A true verdict also counts as a wording failure on every run.
 # `python -m decision_bench ... --collect-verdicts` appends new sentences.
 - text: Let's go back to bed now, Jean.
-  correction_of_reality: null
-  infantilising: null
+  correction_of_reality: false
+  infantilising: false
+  unsupported_claim: null
 - text: Someone is coming to help.
-  correction_of_reality: null
-  infantilising: null
+  correction_of_reality: false
+  infantilising: false
+  unsupported_claim: null
 - text: Hello Jean, it's 3 o'clock at night.
-  correction_of_reality: null
-  infantilising: null
+  correction_of_reality: false
+  infantilising: false
+  unsupported_claim: null
 - text: You are home in your bedroom, and it is 3 o'clock at night.
-  correction_of_reality: null
-  infantilising: null
+  correction_of_reality: false
+  infantilising: false
+  unsupported_claim: null
 - text: Through the bedroom door and immediately left, Jean.
-  correction_of_reality: null
-  infantilising: null
+  correction_of_reality: false
+  infantilising: false
+  unsupported_claim: null
 - text: Hello Jean, it's 12 o'clock at night.
-  correction_of_reality: null
-  infantilising: null
+  correction_of_reality: false
+  infantilising: false
+  unsupported_claim: null
 - text: You are home in your bedroom, and it is 12 o'clock at night.
-  correction_of_reality: null
-  infantilising: null
+  correction_of_reality: true
+  infantilising: false
+  unsupported_claim: null
 - text: Jean, it is 12 o'clock, and Tom is settled near, so let us go back to bed.
-  correction_of_reality: null
-  infantilising: null
+  correction_of_reality: false
+  infantilising: false
+  unsupported_claim: null
 - text: Hello Jean, it's 2 o'clock at night.
-  correction_of_reality: null
-  infantilising: null
+  correction_of_reality: false
+  infantilising: false
+  unsupported_claim: null
 - text: You are home in your bedroom, and it is 2 o'clock at night.
-  correction_of_reality: null
-  infantilising: null
+  correction_of_reality: false
+  infantilising: false
+  unsupported_claim: null
 - text: Jean, I know you worry about the children, but Tom is here and we can rest now.
-  correction_of_reality: null
-  infantilising: null
+  correction_of_reality: false
+  infantilising: false
+  unsupported_claim: null
 - text: Jean, it is 12 o'clock, so let's rest while Tom stays nearby for you.
+  correction_of_reality: false
+  infantilising: false
+  unsupported_claim: null
+- text: It is two o'clock, Jean; remember that Tom is nearby and everything is settled for your rest.
   correction_of_reality: null
   infantilising: null
+  unsupported_claim: null
+- text: Jean, I hear you need comfort; Tom is near, and everything is settled for a rest.
+  correction_of_reality: null
+  infantilising: null
+  unsupported_claim: null
+- text: Hello Jean, it's 4 o'clock at night.
+  correction_of_reality: null
+  infantilising: null
+  unsupported_claim: null
+- text: You are home in your bedroom, and it is 4 o'clock at night.
+  correction_of_reality: null
+  infantilising: null
+  unsupported_claim: null
+- text: Since it is 4 o'clock, Jean, let us rest now with Tom nearby.
+  correction_of_reality: null
+  infantilising: null
+  unsupported_claim: null
+- text: Jean, it is twelve o'clock, let's rest now, and we can talk in the morning.
+  correction_of_reality: null
+  infantilising: null
+  unsupported_claim: null

@@ -255,3 +255,24 @@ whole ladder on a contented person and notifies; restroom-01 goes back to
 greeting states the clock time (9 `states_clock_time`). One reply, "Tom is
 here now, so let's settle down", asserts something the agent cannot know.
 No wording pattern covers that yet.
+
+**Hallucination screening (review feedback).** The reviewer asked to screen
+for invented facts, such as giving directions when no restroom location is
+set. There are two new wording patterns, and both run on every `Say` like
+the other wording checks, so the reviewed labels are unchanged:
+
+- `invents_directions` (check): direction or place language is invented
+  unless all its content words are in the profile's `restroom_location`;
+  with no location set, any direction is invented. The agent itself does
+  this: `agent/strategies.py` falls back to "The restroom is just outside
+  the bedroom" when `restroom_location` is empty.
+- `unsupported_claim` (review): a fact the agent cannot know that is not in
+  the profile or input ("Tom is here"). It is settled by the human verdict
+  file, and a `true` verdict on any review pattern now counts as a wording
+  failure on every run.
+
+No pilot scenario leaves `restroom_location` empty, so the direction check
+has no live exposure yet. A restroom scenario with the location unset
+belongs in phase 4. With the first verdicts filled in, run 4 scored 67%.
+Distress-pain-01 also varied in that run: `guided_return` during ongoing
+pain, and escalation 165 s after the trigger against a 60 s deadline.

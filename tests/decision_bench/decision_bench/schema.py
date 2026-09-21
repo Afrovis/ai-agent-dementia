@@ -76,6 +76,8 @@ SAY_PATTERNS = frozenset(
         "memory_question",
         "blunt_refusal",
         "infantilising",
+        "invents_directions",
+        "unsupported_claim",
     }
 )
 

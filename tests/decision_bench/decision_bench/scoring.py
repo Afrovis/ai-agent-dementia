@@ -14,6 +14,7 @@ from dialogue_bench.checks import CheckContext
 
 from decision_bench.checks import (
     INFORMATIONAL_PATTERNS,
+    REVIEW_PATTERNS,
     WORDING_FAILURE_PATTERNS,
     PatternResult,
     check_pattern,
@@ -359,12 +360,17 @@ def score_checkpoint(
 
 
 def _wording_failures(
-    trace: Trace, profile: dict[str, object]
+    trace: Trace, profile: dict[str, object], verdicts: Verdicts | None = None
 ) -> tuple[dict[str, int], tuple[PatternResult, ...]]:
+    # Review-only patterns count once a human verdict says the sentence shows them.
     results = tuple(
-        check_pattern(str(say.data.get("text", "")), pattern, _context(trace, say, profile))
+        _with_verdict(
+            check_pattern(str(say.data.get("text", "")), pattern, _context(trace, say, profile)),
+            str(say.data.get("text", "")),
+            verdicts,
+        )
         for say in (entry for entry in trace.entries if entry.kind == "Say")
-        for pattern in sorted(WORDING_FAILURE_PATTERNS | INFORMATIONAL_PATTERNS)
+        for pattern in sorted(WORDING_FAILURE_PATTERNS | INFORMATIONAL_PATTERNS | REVIEW_PATTERNS)
     )
     counts = Counter(
         item.pattern
@@ -384,7 +390,7 @@ def score_scenario(
 ) -> ScenarioResult:
     """Score every checkpoint and Say in one scenario trace."""
     profile = (load_default_profile() | scenario.profile) if profile is None else profile
-    wording, _ = _wording_failures(trace, profile)
+    wording, _ = _wording_failures(trace, profile, verdicts)
     return ScenarioResult(
         scenario_id=scenario.id,
         category=scenario.category,
