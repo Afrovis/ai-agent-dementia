@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -229,7 +230,13 @@ def run_claude(
     model: str,
     effort: str,
 ) -> dict[str, object]:
-    """Run Claude in an isolated empty directory and return its structured result."""
+    """Run Claude in an isolated empty directory and return its structured result.
+
+    This is the Claude Code CLI on the logged-in claude.ai subscription. API-key
+    variables are removed from its environment so a run can never fall back to
+    paid API billing; `total_cost_usd` is Claude Code's list-price estimate,
+    not a charge.
+    """
     executable = shutil.which("claude")
     if executable is None:
         raise AnnotatorError("claude executable was not found on PATH")
@@ -263,6 +270,7 @@ def run_claude(
                 timeout=900,
                 cwd=directory,
                 check=False,
+                env=_subscription_env(),
             )
     except subprocess.TimeoutExpired as exc:
         raise AnnotatorError("claude annotation timed out after 900 seconds") from exc
@@ -287,6 +295,18 @@ def run_claude(
         "session_id": payload.get("session_id"),
         "total_cost_usd": payload.get("total_cost_usd", 0),
     }
+
+
+_API_KEY_VARIABLES = (
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+)
+
+
+def _subscription_env() -> dict[str, str]:
+    return {key: value for key, value in os.environ.items() if key not in _API_KEY_VARIABLES}
 
 
 Runner = Callable[[Path, str, dict[str, object], str, str], dict[str, object]]
@@ -427,7 +447,7 @@ def write_annotation_files(
             "date": date.today().isoformat(),
             "attempts": result["attempts"],
             "session_id": result.get("session_id"),
-            "cost_usd": result.get("total_cost_usd", 0),
+            "list_price_usd": result.get("total_cost_usd", 0),
             "prompt_sha256": hashlib.sha256(ANNOTATOR_PROMPT_PATH.read_bytes()).hexdigest(),
             "guidelines_sha256": hashlib.sha256(guidelines_text.encode()).hexdigest(),
             "scenario_sha256": hashlib.sha256(scenario_section(scenario).encode()).hexdigest(),
@@ -650,6 +670,9 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(str(exc)) from exc
         cost = float(result.get("total_cost_usd", 0))
         total += cost
-        print(f"{scenario.id}: attempts={result['attempts']} cost=${cost:.2f} {model_path}")
-    print(f"total cost: ${total:.2f}")
+        print(f"{scenario.id}: attempts={result['attempts']} {model_path}")
+    print(
+        f"subscription usage, list-price equivalent ${total:.2f} (not billed: claude.ai login, "
+        "no API key)"
+    )
     return 0

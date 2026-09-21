@@ -155,14 +155,20 @@ any edits.
 
 ### Verdicts on spoken sentences
 
-`correction_of_reality` and `infantilising` have no string rule, and no
-judge model scores them. `annotations/say_verdicts.yaml` holds a human
-verdict (`true`, `false` or `null`) for each distinct sentence, and scoring
-reuses it. A sentence with no verdict leaves its checkpoint as `review`.
-`--collect-verdicts` appends the sentences from a run that still need a
-verdict. Verdicts are per sentence, not per context, which fits the agent's
-templated replies. A sentence that is only a correction in one situation
-should be judged for the scenarios it appears in.
+`correction_of_reality`, `infantilising` and `unsupported_claim` have no
+string rule. With `--judge`, each new sentence goes to an isolated Claude
+evidence judge: `claude -p` with no tools, on the claude.ai subscription,
+never an API key. The judge sees the profile and that sentence's context:
+the time words, the person's last words, the camera reading, and whether a
+caregiver was notified. It decides each pattern and quotes its evidence.
+Its answer is stored under `judge:` in `annotations/say_verdicts.yaml`.
+
+The top-level values in that file are the human's. A human value always
+wins, and every place where it disagrees with the judge is printed after the
+report. A `true` verdict counts as a wording failure on every run.
+Verdicts are per sentence, and the judge sees the context of the sentence's
+first occurrence. `--collect-verdicts` adds new sentences without judging
+them.
 
 ## Running
 
@@ -184,7 +190,7 @@ python -m decision_bench --model gemma4:e4b-mlx --model llama3.1:8b
 python -m decision_bench --backend openai --base-url http://127.0.0.1:11435 --model <mlx-model>
 python -m decision_bench --category fall --scenario fall-01   # narrow the run
 python -m decision_bench --backend stub --json --out decision-report.json
-python -m decision_bench --model gemma4:e4b-mlx --collect-verdicts   # queue sentences for review
+python -m decision_bench --model gemma4:e4b-mlx --judge   # evidence-check new sentences (subscription)
 ```
 
 ## Caveats

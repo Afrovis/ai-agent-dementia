@@ -61,9 +61,10 @@ hard to catch with string rules and are flagged for human review. Phase 2
 settled the four new patterns: memory questions and blunt refusals are checks;
 correction of reality and infantilising remain review-only. Phase 3 added the
 two hallucination patterns, `invents_directions` (check) and
-`unsupported_claim` (review). None is scored by a judge model. Review-only
-patterns are settled by a human verdict per sentence in
-`annotations/say_verdicts.yaml`.
+`unsupported_claim` (review). Review-only patterns are decided per sentence
+by an isolated Claude evidence judge, which works from the profile and the
+sentence's context. A human verdict in `annotations/say_verdicts.yaml`
+overrides it.
 
 | Pattern | Meaning | Scored by |
 | --- | --- | --- |

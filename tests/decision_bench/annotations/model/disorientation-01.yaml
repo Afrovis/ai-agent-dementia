@@ -5,7 +5,7 @@ annotator:
   date: '2026-09-21'
   attempts: 1
   session_id: ff4523ed-74b7-486c-afb6-5dafdca053c1
-  cost_usd: 0.208295
+  list_price_usd: 0.208295
   prompt_sha256: 88b0397f9b351cca6328e0d6260352c45348bd0a530f25959fcc953c1d3544d3
   guidelines_sha256: 2f98e13091b45c58040ac1906b3c3e0d5db140a0dcc7cf5a9eb2b2374246f717
   scenario_sha256: 090cfd9d5c77df44b5f5059bef469746b6283f852dda5d71ed55a2fb564a3b08
