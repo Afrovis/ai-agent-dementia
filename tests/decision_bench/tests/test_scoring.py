@@ -279,3 +279,30 @@ def test_aggregates_by_category_and_clean_noisy():
     assert result.unlabelled_count == 1
     assert result.llm_errors == 1
     assert result.llm_none == 2
+
+
+def test_escalate_by_met_by_earlier_notify_while_still_escalated():
+    trace = _trace([_state(0), _notify(5), _state(5, phase="ESCALATED")])
+    checkpoint = _checkpoint(window=(10.0, 40.0), escalate_by=30, trigger=10)
+    result = score_checkpoint(checkpoint, trace, profile=_PROFILE)
+    assert result.status == "pass"
+    assert result.escalation_latency == 0.0
+
+
+def test_escalate_by_earlier_notify_does_not_count_after_leaving_escalated():
+    trace = _trace([_state(0), _notify(5), _state(5, phase="ESCALATED"), _state(8, phase="IDLE")])
+    checkpoint = _checkpoint(window=(10.0, 40.0), escalate_by=30, trigger=10)
+    result = score_checkpoint(checkpoint, trace, profile=_PROFILE)
+    assert result.status == "critical"
+    assert result.escalation_latency is None
+
+
+def test_human_verdict_resolves_review_pattern():
+    trace = _trace([_state(0), _say(12, "Hello  Jean, it's night.")])
+    checkpoint = _checkpoint(must_not=(Action(say="infantilising"),))
+    fine = {("Hello Jean, it's night.", "infantilising"): False}
+    assert score_checkpoint(checkpoint, trace, profile=_PROFILE, verdicts=fine).status == "pass"
+    bad = {("Hello Jean, it's night.", "infantilising"): True}
+    assert score_checkpoint(checkpoint, trace, profile=_PROFILE, verdicts=bad).status == "critical"
+    other = {("Something else.", "infantilising"): False}
+    assert score_checkpoint(checkpoint, trace, profile=_PROFILE, verdicts=other).status == "review"

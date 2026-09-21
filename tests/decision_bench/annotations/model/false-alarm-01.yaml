@@ -1,0 +1,35 @@
+scenario: false-alarm-01
+annotator:
+  model: claude-opus-5
+  effort: high
+  date: '2026-09-21'
+  attempts: 1
+  session_id: 820753e3-1027-44ac-8846-ec501221004d
+  cost_usd: 0.1916295
+  prompt_sha256: 88b0397f9b351cca6328e0d6260352c45348bd0a530f25959fcc953c1d3544d3
+  guidelines_sha256: 2f98e13091b45c58040ac1906b3c3e0d5db140a0dcc7cf5a9eb2b2374246f717
+  scenario_sha256: 3fb6fc4cfbed31dee65f598f8c46ea079466bf3f6d0163a03e0e32978a64d4f9
+scenario_notes: The single window [30, 240] covers both the short sit-up and the time after Jean has settled
+  again. If those were separate checkpoints, a silent light cue during the sit-up could be judged apart
+  from staying quiet once she is back in bed.
+checkpoints:
+  - id: settles
+    acceptable: []
+    must_not:
+      - {say: any}
+      - {notify: any}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      Jean sits up at t=30 (confidence 0.75), says nothing, lies back down at t=50 and stays in bed to
+      t=240. There is no utterance, no distress and no sign of a need, so she settled on her own. NICE-05
+      says the right action for a person who settles without help is to stay quiet: no speech and no caregiver
+      notification. It also says a settled person should not be woken to be oriented. Holding back is
+      the correct behaviour, so acceptable is left empty and only the must_not labels are judged.
+    cites: [NICE-05]
+    uncertain: The window starts at t=30, which includes the 20 seconds Jean is sitting up. A short soft
+      greeting during that time could be seen as a reasonable response to someone getting up (AA-01).
+      I still banned all speech for the whole window, because she gives no sign of distress or a need
+      and speech risks waking her further. A silent ambient_orient (soft light) during the sit-up is not
+      banned. It is a judgement call whether light would also rouse her, and no clause clearly rules it
+      out. OBSERVING is not required because being quietly IDLE is also fine.

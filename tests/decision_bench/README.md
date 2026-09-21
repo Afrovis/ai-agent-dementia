@@ -12,10 +12,9 @@ caregiver, and how quickly.
 It is not a CI gate. Run it when you change the session rules, the strategy
 order, the prompts or the model, and compare the reports.
 
-> Status: phase 2 of [PLAN.md](PLAN.md). The real-agent replay harness,
-> scoring, reports, CLI and seven unlabelled pilot scenarios exist. Reviewed
-> labels are phase 3, so the pilots currently produce review summaries rather
-> than pass rates.
+> Status: phase 3 of [PLAN.md](PLAN.md). The seven pilot scenarios carry
+> human-reviewed labels drafted by the isolated annotator, so runs produce
+> pass rates. Scaling up to about 30 scenarios is phase 4.
 
 ## What it measures
 
@@ -125,6 +124,46 @@ Time thresholds such as "escalate within N seconds" do not come from the
 guidelines. They are marked `threshold_source: caregiver` and are never
 attributed to the evidence.
 
+### Annotating and reviewing
+
+The project skill `.claude/skills/decision-bench-annotate` runs this loop.
+By hand:
+
+```sh
+python -m decision_bench annotate --dry-run --scenario <id>   # print the exact prompt
+python -m decision_bench annotate --scenario <id>             # Opus drafts labels
+# edit annotations/review/<id>.yaml, set reviewed: true
+python -m decision_bench apply <id>                           # labels into the fixture
+```
+
+`annotate` runs `claude -p --model opus` with no tools and no settings from
+an empty temp directory. It sends the prompt in
+`decision_bench/annotator_prompt.md` plus `guidelines.md`, the profile and
+the scenario without any existing labels, so the annotator cannot see the
+agent or its config. It may cite only clauses whose `Checked` box is ticked.
+Its output must pass the schema, and it gets one retry with the problems
+listed. It writes `annotations/model/<id>.yaml` (the untouched draft, with
+the model id, cost and hashes of the prompt, guidelines and scenario) and
+`annotations/review/<id>.yaml`. The review file is self-contained: the
+timeline with clock times, each checkpoint's question, the annotator's labels
+and its doubts, each marked as the annotator's. `apply` refuses an
+unreviewed file or a changed checkpoint without a `reason`, rewrites only the
+fixture's `checkpoints:` block, and logs each change in
+`annotations/disagreements.yaml`. `annotate --review-only --force` rebuilds
+the review files from the drafts without calling the annotator, overwriting
+any edits.
+
+### Verdicts on spoken sentences
+
+`correction_of_reality` and `infantilising` have no string rule, and no
+judge model scores them. `annotations/say_verdicts.yaml` holds a human
+verdict (`true`, `false` or `null`) for each distinct sentence, and scoring
+reuses it. A sentence with no verdict leaves its checkpoint as `review`.
+`--collect-verdicts` appends the sentences from a run that still need a
+verdict. Verdicts are per sentence, not per context, which fits the agent's
+templated replies. A sentence that is only a correction in one situation
+should be judged for the scenarios it appears in.
+
 ## Running
 
 The scenario clock ticks once per second. Person readings repeat at
@@ -145,6 +184,7 @@ python -m decision_bench --model gemma4:e4b-mlx --model llama3.1:8b
 python -m decision_bench --backend openai --base-url http://127.0.0.1:11435 --model <mlx-model>
 python -m decision_bench --category fall --scenario fall-01   # narrow the run
 python -m decision_bench --backend stub --json --out decision-report.json
+python -m decision_bench --model gemma4:e4b-mlx --collect-verdicts   # queue sentences for review
 ```
 
 ## Caveats

@@ -62,9 +62,18 @@ def test_pilot_scenarios_load():
     assert by_category == {c: 2 if c == "false_alarm" else 1 for c in CATEGORIES}
 
 
-def test_pilot_scenarios_are_unlabelled_until_annotated():
-    for scenario in load_scenarios():
-        assert not scenario.labelled, scenario.id
+def test_labels_come_from_the_annotation_workflow():
+    # A labelled clean scenario needs an annotator draft and a reviewed human copy,
+    # so labels are never hand-copied from what the agent does.
+    annotations = Path(__file__).parents[1] / "annotations"
+    scenarios = load_scenarios()
+    for scenario in scenarios:
+        if not scenario.labelled or scenario.noise_of is not None:
+            continue
+        assert (annotations / "model" / f"{scenario.id}.yaml").exists(), scenario.id
+        review = yaml.safe_load((annotations / "review" / f"{scenario.id}.yaml").read_text())
+        assert review["reviewed"] is True, scenario.id
+    assert citation_problems(scenarios, guideline_clauses()) == []
 
 
 def test_default_profile_loads():

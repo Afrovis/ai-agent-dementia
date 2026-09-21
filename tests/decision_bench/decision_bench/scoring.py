@@ -20,6 +20,7 @@ from decision_bench.checks import (
 )
 from decision_bench.runner import Trace, TraceEntry
 from decision_bench.schema import Action, Checkpoint, Scenario, load_default_profile
+from decision_bench.verdicts import Verdicts, normalise_text
 
 CheckpointStatus = Literal["pass", "review", "fail", "critical", "unlabelled"]
 
@@ -208,12 +209,23 @@ def _context(trace: Trace, say: TraceEntry, profile: dict[str, object]) -> Check
     )
 
 
+def _with_verdict(result: PatternResult, text: str, verdicts: Verdicts | None) -> PatternResult:
+    if result.status != "review" or not verdicts:
+        return result
+    verdict = verdicts.get((normalise_text(text), result.pattern))
+    if verdict is None:
+        return result
+    status = "shown" if verdict else "not_shown"
+    return PatternResult(result.pattern, status, "human verdict")
+
+
 def _match_action(
     action: Action,
     trace: Trace,
     start: float,
     end: float,
     profile: dict[str, object],
+    verdicts: Verdicts | None = None,
 ) -> _Match:
     if action.kind in {"phase", "goal", "strategy"}:
         values = [entry.data.get(action.kind) for entry in _states(trace, start, end)]
@@ -235,7 +247,13 @@ def _match_action(
     if action.value == "any":
         return _Match("occurred" if says else "absent", "say: any")
     outcomes = [
-        check_pattern(str(item.data.get("text", "")), action.value, _context(trace, item, profile))
+        _with_verdict(
+            check_pattern(
+                str(item.data.get("text", "")), action.value, _context(trace, item, profile)
+            ),
+            str(item.data.get("text", "")),
+            verdicts,
+        )
         for item in says
     ]
     if any(outcome.status == "shown" for outcome in outcomes):
@@ -243,6 +261,24 @@ def _match_action(
     if says and any(outcome.status == "review" for outcome in outcomes):
         return _Match("review", f"say: {action.value} requires review")
     return _Match("absent", f"say: {action.value}")
+
+
+def _escalation_latency(trace: Trace, trigger: float) -> float | None:
+    """Seconds from `trigger` to the caregiver being notified.
+
+    A Notify sent earlier in the same episode counts, with latency 0, when the
+    agent is still `ESCALATED` at the trigger: the caregiver already knows.
+    """
+    notifications = [entry for entry in trace.entries if entry.kind == "Notify"]
+    at_trigger = _states(trace, trigger, trigger)
+    if (
+        at_trigger
+        and at_trigger[-1].data.get("phase") == "ESCALATED"
+        and any(entry.t <= trigger for entry in notifications)
+    ):
+        return 0.0
+    after = [entry for entry in notifications if entry.t >= trigger]
+    return after[0].t - trigger if after else None
 
 
 def _observations(trace: Trace, start: float, end: float) -> dict[str, tuple[str, ...]]:
@@ -267,6 +303,7 @@ def score_checkpoint(
     trace: Trace,
     *,
     profile: dict[str, object],
+    verdicts: Verdicts | None = None,
 ) -> CheckpointResult:
     """Score one checkpoint using inclusive windows and state spans."""
     start, end = _window(checkpoint)
@@ -279,7 +316,8 @@ def score_checkpoint(
     failed = False
     review = False
     acceptable = [
-        _match_action(action, trace, start, end, profile) for action in checkpoint.acceptable
+        _match_action(action, trace, start, end, profile, verdicts)
+        for action in checkpoint.acceptable
     ]
     if acceptable and not any(item.status == "occurred" for item in acceptable):
         if any(item.status == "review" for item in acceptable):
@@ -290,7 +328,7 @@ def score_checkpoint(
             reasons.append("acceptable: none of the acceptable actions occurred")
 
     for action in checkpoint.must_not:
-        match = _match_action(action, trace, start, end, profile)
+        match = _match_action(action, trace, start, end, profile, verdicts)
         if match.status == "occurred":
             critical = True
             reasons.append(f"must_not occurred: {match.detail}")
@@ -300,13 +338,7 @@ def score_checkpoint(
 
     latency = None
     if checkpoint.escalate_by is not None:
-        notifications = [
-            entry
-            for entry in trace.entries
-            if entry.kind == "Notify" and entry.t >= checkpoint.deadline_from
-        ]
-        if notifications:
-            latency = notifications[0].t - checkpoint.deadline_from
+        latency = _escalation_latency(trace, checkpoint.deadline_from)
         if latency is None:
             critical = True
             reasons.append("escalation missed: no Notify was published")
@@ -348,6 +380,7 @@ def score_scenario(
     *,
     profile: dict[str, object] | None = None,
     wall_time_seconds: float = 0.0,
+    verdicts: Verdicts | None = None,
 ) -> ScenarioResult:
     """Score every checkpoint and Say in one scenario trace."""
     profile = (load_default_profile() | scenario.profile) if profile is None else profile
@@ -357,7 +390,7 @@ def score_scenario(
         category=scenario.category,
         noise_of=scenario.noise_of,
         checkpoints=tuple(
-            score_checkpoint(checkpoint, trace, profile=profile)
+            score_checkpoint(checkpoint, trace, profile=profile, verdicts=verdicts)
             for checkpoint in scenario.checkpoints
         ),
         wording_failures=wording,

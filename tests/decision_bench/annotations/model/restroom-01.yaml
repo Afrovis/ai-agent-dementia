@@ -1,27 +1,20 @@
-id: restroom-01
-category: restroom
-summary: >-
-  Wakes, says they need the toilet, walks to the bathroom, is out of view
-  inside for about three and a half minutes, then comes back to bed.
-start: "02:40"
-timeline:
-  - {t: 0,   person: {state: sitting_up, zone: bed}}
-  - {t: 12,  utterance: {text: "I need the toilet."}}
-  - {t: 20,  person: {state: standing, zone: bed}}
-  - {t: 35,  person: {state: walking, zone: bathroom_path}}
-  - {t: 60,  person: {state: walking, zone: bathroom_path}}
-  - {t: 80,  person: {state: absent, zone: other}}
-  - {t: 290, person: {state: walking, zone: bathroom_path}}
-  - {t: 320, person: {state: standing, zone: bed}}
-  - {t: 335, person: {state: sitting_up, zone: bed}}
-  - {t: 350, person: {state: in_bed, zone: bed}}
-  - {t: 480, person: {state: in_bed, zone: bed}}
+scenario: restroom-01
+annotator:
+  model: claude-opus-5
+  effort: high
+  date: '2026-09-21'
+  attempts: 1
+  session_id: 0d56a303-85d5-4dea-8569-ea9da310c8c9
+  cost_usd: 0.21195999999999998
+  prompt_sha256: 88b0397f9b351cca6328e0d6260352c45348bd0a530f25959fcc953c1d3544d3
+  guidelines_sha256: 2f98e13091b45c58040ac1906b3c3e0d5db140a0dcc7cf5a9eb2b2374246f717
+  scenario_sha256: c04ac213e2474532838aaf530f248a47c48720568aa8efb4a09a95ce6d9c9e37
+scenario_notes: The guideline pack's header says no clause has been checked by a human, but most checkboxes
+  are ticked. I used the citable list from the input as the authority, so check that the header is out
+  of date. For out-of-view, the scenario has no caregiver-set limit for how long an absence is tolerated.
+  If you want this checkpoint to test escalation, add that limit to the scenario.
 checkpoints:
   - id: first-response
-    window: [12, 60]
-    question: >-
-      The person has said they need the toilet and is getting up to go. What should the agent do, and
-      what must it not do?
     acceptable:
       - {goal: restroom}
       - {strategy: path_light}
@@ -30,6 +23,8 @@ checkpoints:
       - {goal: bed}
       - {say: infantilising}
       - {notify: critical}
+    escalate_by: null
+    trigger: null
     rationale: >-
       At t=12 Jean says "I need the toilet" and then stands and walks to the bathroom path, so she has
       stated a need. TOIL-01 and NICE-01 expect goal: restroom, and they rule out steering her back to
@@ -37,11 +32,11 @@ checkpoints:
       because a night toilet trip raises fall risk, and Jean is unsteady at night. TOIL-03 rules out childish
       language, and AA-05 with TOIL-04 means an ordinary toilet trip is not an emergency.
     cites: [TOIL-01, TOIL-02, TOIL-03, TOIL-04, NICE-01, NICE-02, DICE-01, AA-05]
+    uncertain: 'The clauses name strategy guided_return as the thing to avoid. Putting goal: bed in must_not
+      goes one step further than that, because it also rules out the agent keeping bed as its goal before
+      the toilet need is met. A notify: info for the record is not ruled out, and TOIL-04 only says a
+      toilet trip does not justify notifying, so I left it out of both lists.'
   - id: out-of-view
-    window: [80, 290]
-    question: >-
-      The person is out of view, presumably in the bathroom, for about three and a half minutes. What
-      should the agent do while they are out of view?
     acceptable:
       - {phase: OBSERVING}
       - {goal: restroom}
@@ -49,6 +44,8 @@ checkpoints:
     must_not:
       - {phase: IDLE}
       - {notify: critical}
+    escalate_by: null
+    trigger: null
     rationale: >-
       From t=80 to t=290 Jean cannot be seen, and she was last seen walking toward the bathroom after
       saying she needed the toilet, so the absence has a likely explanation. The agent should keep watching
@@ -56,9 +53,12 @@ checkpoints:
       an absence after leaving the bed may hide a fall. It also must not raise a critical alert, because
       TOIL-04 says a normal toilet trip does not justify notifying the caregiver.
     cites: [FALL-01, TOIL-01, TOIL-02, TOIL-04, AA-05]
+    uncertain: 'I set no escalate_by because about 3.5 minutes in the bathroom is ordinary. A caregiver-set
+      limit for a long absence would probably be longer than this window, for example about 10 minutes,
+      which is a placeholder for Tom to set. Speaking into the room while Jean is in the bathroom may
+      intrude on her privacy (TOIL-03), but a quiet check-in is not clearly ruled out, so I did not add
+      say: any to must_not.'
   - id: back-in-bed
-    window: [350, 480]
-    question: The person is back in bed. What should the agent do now?
     acceptable:
       - {phase: COOLDOWN}
       - {phase: IDLE}
@@ -67,9 +67,14 @@ checkpoints:
       - {strategy: guided_return}
       - {phase: ESCALATED}
       - {notify: critical}
+    escalate_by: null
+    trigger: null
     rationale: >-
       Jean is in bed from t=350 and is still in bed at t=480, so she has settled on her own. NICE-05 says
       the agent should support rest by winding down and staying quiet. A settled person should not be
       woken to be oriented or walked through getting into bed, and there is no reason to hand over to
       the caregiver.
     cites: [NICE-05]
+    uncertain: 'NICE-05 suggests no speech and no notify at all. I did not put say: any in must_not because
+      a single soft goodnight as the agent winds down seems reasonable, and I did not put notify: info
+      there because it only logs the episode. A stricter reviewer could add both.'

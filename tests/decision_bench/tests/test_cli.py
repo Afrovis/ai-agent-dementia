@@ -14,3 +14,10 @@ def test_trace_prints(capsys):
     output = capsys.readouterr().out
     assert "TRACE fall-01" in output
     assert "Notify[critical]" in output
+
+
+def test_annotate_dry_run_dispatches_without_claude(capsys):
+    assert main(["annotate", "--dry-run", "--scenario", "fall-01"]) == 0
+    output = capsys.readouterr().out
+    assert "annotator_prompt.md" in output
+    assert "on-floor" in output
