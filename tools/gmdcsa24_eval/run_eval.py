@@ -17,7 +17,7 @@ import re
 import shutil
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from capture.main import CaptureConfig, build_gate
@@ -25,7 +25,7 @@ from PIL import Image
 from perceive.backends import build_backend
 from perceive.classify import ground_zone_for_pose, zone_for_pose
 from perceive.main import PerceiveConfig, build_tracker
-from perceive.zones import ZoneMap
+from perceive.zones import ZoneMap, load_zones
 
 SRC = Path(
     "/Volumes/Mathias_SSD_2T/nighttime_ir_activity_data/extracted/gmdcsa24/"
@@ -102,10 +102,24 @@ def squash_jpeg(path: Path) -> bytes:
     return buf.getvalue()
 
 
-def predict(clip: Clip, backend, config: PerceiveConfig) -> list[dict]:
+def scene_setup(clip: Clip, config: PerceiveConfig, scenes: dict | None):
+    """Per-scene zones and settings from the zoning step (zone_scenes.py)."""
+    if scenes is None:
+        return ZoneMap(), config
+    scene = scenes["assign"][clip.key]
+    info = scenes["scenes"][scene]
+    zones = load_zones(OUT / "zones" / f"{scene}.yaml")
+    if info["ground_line"]:
+        config = replace(config, ground_line=tuple(info["ground_line"]))
+    if info["bed"]:  # CLAUDE.md: enable together with a calibrated bed zone
+        config = replace(config, bed_vanish_hold=True, sitting_thigh_ratio=0.55)
+    return zones, config
+
+
+def predict(clip: Clip, backend, config: PerceiveConfig, scenes: dict | None = None) -> list[dict]:
+    zones, config = scene_setup(clip, config, scenes)
     tracker = build_tracker(config)
     gate = build_gate(CaptureConfig.from_env())
-    zones = ZoneMap()
     rows = []
     with tempfile.TemporaryDirectory() as tmp_name:
         frames = extract_frames(clip.video, Path(tmp_name))
@@ -193,12 +207,19 @@ def main() -> None:
     parser.add_argument("--backend", default="yolo")
     parser.add_argument("--yolo-model", default="yolo11s-pose.pt")
     parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--no-zones", action="store_true", help="skip zoning (baseline only)")
     args = parser.parse_args()
 
     clips = load_clips()
     if args.limit:
         clips = clips[: args.limit]
-    tag = args.backend
+    scenes = None
+    if not args.no_zones:
+        scenes_file = OUT / "scenes.json"
+        if not scenes_file.exists():
+            raise SystemExit("run zone_scenes.py first: zoning always comes before the eval")
+        scenes = json.loads(scenes_file.read_text())
+    tag = args.backend if args.no_zones else f"{args.backend}-zoned"
     (OUT / "annotations").mkdir(parents=True, exist_ok=True)
     (OUT / "videos").mkdir(exist_ok=True)
     (OUT / "predictions" / tag).mkdir(parents=True, exist_ok=True)
@@ -224,7 +245,7 @@ def main() -> None:
         if cache.exists():
             preds[c.key] = json.loads(cache.read_text())
             continue
-        preds[c.key] = predict(c, backend, config)
+        preds[c.key] = predict(c, backend, config, scenes)
         cache.write_text(json.dumps(preds[c.key]))
         print(f"[{i}/{len(clips)}] {c.key}", flush=True)
     summary, report = score(clips, preds)
