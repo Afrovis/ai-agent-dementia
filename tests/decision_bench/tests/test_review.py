@@ -114,3 +114,19 @@ def test_edit_with_reason_logs_once_on_reapply(tmp_path):
     assert logged[0]["checkpoint"] == "settles"
     assert logged[0]["human"]["acceptable"] == [{"phase": "IDLE"}]
     assert load_scenario(fixture).labelled
+
+
+def test_model_accepted_review_cannot_carry_edits(tmp_path):
+    scenarios, annotations, fixture, review_path = _setup(tmp_path)
+    before = fixture.read_bytes()
+
+    def mutate(item):
+        item.update(acceptable=[{"phase": "IDLE"}], reason="changed")
+
+    _review(review_path, mutate)
+    raw = yaml.safe_load(review_path.read_text())
+    raw["reviewed_by"] = "model"
+    review_path.write_text(yaml.safe_dump(raw, sort_keys=False))
+    with pytest.raises(ReviewError, match="reviewed_by: human"):
+        apply_scenario("false-alarm-01", annotations_dir=annotations, scenarios_dir=scenarios)
+    assert fixture.read_bytes() == before

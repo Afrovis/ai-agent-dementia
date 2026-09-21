@@ -131,8 +131,9 @@ By hand:
 
 ```sh
 python -m decision_bench annotate --dry-run --scenario <id>   # print the exact prompt
-python -m decision_bench annotate --scenario <id>             # Opus drafts labels
-# edit annotations/review/<id>.yaml, set reviewed: true
+python -m decision_bench annotate --scenario <id>             # two Opus runs + triage;
+                                                              # unflagged scenarios are applied
+# only if flagged: edit annotations/review/<id>.yaml, set reviewed: true
 python -m decision_bench apply <id>                           # labels into the fixture
 ```
 
@@ -152,6 +153,26 @@ fixture's `checkpoints:` block, and logs each change in
 `annotations/disagreements.yaml`. `annotate --review-only --force` rebuilds
 the review files from the drafts without calling the annotator, overwriting
 any edits.
+
+### Triage: which labels need a human
+
+`annotate` runs the annotator twice, independently, and compares the runs
+(`decision_bench/triage.py`). A checkpoint is flagged for a human when:
+
+- either run sets `needs_review` (it could reasonably go either way);
+- the two runs have different `must_not` sets;
+- one run sets an escalation deadline and the other does not;
+- their `acceptable` sets have nothing in common.
+
+A different deadline *number* is not flagged, because it is a caregiver
+placeholder either way. A scenario with no flags is accepted as the model
+labelled it: its review file gets `reviewed_by: model` and `annotate`
+applies it straight away (`--no-apply` stops that). A flagged scenario waits
+for a human, and its review file marks each flagged checkpoint `NEEDS YOUR
+REVIEW` next to the second opinion's labels. Triage never accepts what it
+cannot check: a draft without the self-flag or without a second opinion is
+always flagged. Editing a model-accepted file requires
+`reviewed_by: human`.
 
 ### Verdicts on spoken sentences
 

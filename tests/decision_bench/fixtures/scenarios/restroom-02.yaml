@@ -20,13 +20,59 @@ checkpoints:
   - id: silent-start
     window: [15, 50]
     question: >-
-      The person has got up and is walking towards the bathroom path without
-      saying anything. What should the agent do?
+      The person has got up and is walking towards the bathroom path without saying anything. What should
+      the agent do?
+    acceptable:
+      - {strategy: path_light}
+      - {goal: restroom}
+      - {strategy: ambient_orient}
+      - {phase: OBSERVING}
+    must_not:
+      - {notify: critical}
+    rationale: >-
+      From t=15 to t=30 Jean stands up and walks silently toward the bathroom path, and there is no sign
+      of distress. TOIL-01 and DICE-01 treat silent walking toward the bathroom as a likely toileting
+      need, so lighting the path or taking up the restroom goal fits. TOIL-02 and TOIL-04 add that the
+      route should be lit because she is unsteady at night. AA-05 and NICE-02 support watching quietly
+      with ambient cues, and AA-05 rules out a critical alert just because she is walking alone.
+    cites: [TOIL-01, TOIL-02, TOIL-04, DICE-01, NICE-02, AA-05]
   - id: asks-the-way
     window: [55, 94]
     question: >-
-      The person stops and asks where the bathroom is because they cannot
-      find it. What should the agent do, and what must it not do?
+      The person stops and asks where the bathroom is because they cannot find it. What should the agent
+      do, and what must it not do?
+    acceptable:
+      - {goal: restroom}
+      - {strategy: path_light}
+      - {strategy: validate_and_redirect}
+    must_not:
+      - {strategy: guided_return}
+      - {notify: critical}
+      - {say: infantilising}
+      - {say: memory_question}
+      - {say: invents_directions}
+    rationale: >-
+      At t=55 Jean says "Where's the bathroom? I can't find it." This is a stated toileting need and a
+      way-finding problem. TOIL-01, NICE-01 and DICE-01 call for the restroom goal, and they rule out
+      steering her back to bed before the need is met. TOIL-02 makes path_light the strong choice, with
+      the route taken from the profile (through the bedroom door and immediately left). TOIL-03 rules
+      out childish language. VAL-01 rules out asking her to remember where the bathroom is. AA-05 rules
+      out a critical alert for an ordinary toilet trip.
+    cites: [TOIL-01, TOIL-02, TOIL-03, NICE-01, DICE-01, VAL-01, AA-01, AA-05, NICE-04]
   - id: back-in-bed
     window: [380, 540]
     question: The person is back in bed after the bathroom. What should the agent do now?
+    acceptable:
+      - {phase: COOLDOWN}
+      - {phase: IDLE}
+    must_not:
+      - {say: any}
+      - {notify: attention}
+      - {notify: critical}
+      - {phase: ESCALATED}
+    rationale: >-
+      Jean gets back into bed on her own at t=380 and stays there through t=540. NICE-05 says a person
+      who settles on their own should not be spoken to or woken further, so the companion should stay
+      silent and wind down. The need has been met, and nothing in the timeline calls for handing over
+      to the caregiver.
+    cites: [NICE-05, AA-05]

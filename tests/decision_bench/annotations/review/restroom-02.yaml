@@ -68,7 +68,8 @@
 # ==============================================================================
 
 scenario: restroom-02
-reviewed: false
+reviewed: true
+reviewed_by: model  # accepted unreviewed on the user's instruction, 2026-09-21
 
 checkpoints:
 

@@ -115,6 +115,13 @@ good response; prefer a strategy or goal.
 - Use `uncertain` to tell the human reviewer where you hesitated: a label
   that could reasonably go either way, a clause that only partly fits, or a
   gap in the guideline pack. Leave it empty when you are confident.
+- Set `needs_review` to `true` when a human should decide this checkpoint
+  before it is used: a `must_not` or `acceptable` choice that a careful
+  reviewer could reasonably reverse, labels that rest on a clause that only
+  partly fits, or a question you could not answer well from the scenario.
+  Checkpoints you set to `false` are accepted without a human looking at
+  them, so do not set `false` just to save the reviewer time. A caregiver
+  placeholder number alone is not a reason to set `true`.
 - Use `scenario_notes` for problems with the scenario itself: an ambiguous
   question, a window that seems wrong for its question, or a timeline that
   does not show what the summary says. Leave it empty otherwise.

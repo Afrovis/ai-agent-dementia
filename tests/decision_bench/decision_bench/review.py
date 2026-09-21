@@ -1,4 +1,9 @@
-"""Apply human-reviewed annotations to scenario fixtures."""
+"""Apply reviewed annotations to scenario fixtures.
+
+A review file's `reviewed_by` says who accepted the labels: `human`, or
+`model` when triage found nothing to flag (see `triage.py`). A file without
+the field predates triage and was reviewed by a human.
+"""
 
 from __future__ import annotations
 
@@ -205,6 +210,10 @@ def apply_scenario(
             raise ReviewError(f"{scenario_id}: model annotation lacks {checkpoint.id}")
         if not _different(model_item, human_item):
             continue
+        if review_doc.get("reviewed_by") == "model":
+            raise ReviewError(
+                f"{scenario_id}/{checkpoint.id}: labels were edited, so set reviewed_by: human"
+            )
         reason = human_item.get("reason")
         if not isinstance(reason, str) or not reason.strip():
             raise ReviewError(f"{scenario_id}/{checkpoint.id}: changed labels need a reason")

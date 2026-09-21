@@ -31,6 +31,7 @@ from decision_bench.schema import (
     load_default_profile,
     load_scenarios,
 )
+from decision_bench.triage import scenario_flags
 
 ANNOTATOR_PROMPT_PATH = Path(__file__).with_name("annotator_prompt.md")
 ANNOTATIONS_DIR = PACKAGE_ROOT / "annotations"
@@ -122,6 +123,7 @@ def output_schema(scenario: Scenario, citable: list[str]) -> dict[str, object]:
             "rationale": {"type": "string"},
             "cites": {"type": "array", "items": {"enum": citable}},
             "uncertain": {"type": "string"},
+            "needs_review": {"type": "boolean"},
         },
         "required": [
             "id",
@@ -132,6 +134,7 @@ def output_schema(scenario: Scenario, citable: list[str]) -> dict[str, object]:
             "rationale",
             "cites",
             "uncertain",
+            "needs_review",
         ],
         "additionalProperties": False,
     }
@@ -414,6 +417,7 @@ def _checkpoint_output(raw: dict[str, object], checkpoint: Checkpoint) -> dict[s
         "rationale": _Folded(checkpoint.rationale or ""),
         "cites": _FlowList(checkpoint.cites),
         "uncertain": str(raw.get("uncertain", "")),
+        "needs_review": bool(raw.get("needs_review", False)),
     }
 
 
@@ -429,8 +433,13 @@ def write_annotation_files(
     effort: str,
     guidelines_text: str,
     force: bool,
+    second: dict[str, object] | None = None,
 ) -> tuple[Path, Path]:
-    """Write the durable model draft and human review copy."""
+    """Write the durable model draft and the review copy.
+
+    `second` is an independent second annotator run; its labels are stored
+    for triage and shown to the reviewer, never applied.
+    """
     model_path = annotations_dir / "model" / f"{scenario.id}.yaml"
     review_path = annotations_dir / "review" / f"{scenario.id}.yaml"
     if model_path.exists() and not force:
@@ -455,6 +464,19 @@ def write_annotation_files(
         "scenario_notes": output.get("scenario_notes", ""),
         "checkpoints": [_checkpoint_output(raw_by_id[item.id], item) for item in checkpoints],
     }
+    if second is not None:
+        second_output = second["structured_output"]
+        assert isinstance(second_output, dict)
+        second_raw = {item["id"]: item for item in second_output["checkpoints"]}
+        model_doc["second_opinion"] = {
+            "model": second["model"],
+            "attempts": second["attempts"],
+            "list_price_usd": second.get("total_cost_usd", 0),
+            "scenario_notes": second_output.get("scenario_notes", ""),
+            "checkpoints": [
+                _checkpoint_output(second_raw[item.id], item) for item in second["checkpoints"]
+            ],
+        }
     model_path.parent.mkdir(parents=True, exist_ok=True)
     review_path.parent.mkdir(parents=True, exist_ok=True)
     model_path.write_text(_dump(model_doc), encoding="utf-8")
@@ -554,7 +576,34 @@ def review_text(scenario: Scenario, model_doc: dict[str, object]) -> str:
     if notes:
         lines += ["#", f"# ANNOTATOR'S NOTES ON THE SCENARIO ITSELF ({annotator_name})"]
         lines += _comment(notes, "")
-    lines += [rule, "", f"scenario: {scenario.id}", "reviewed: false", "", "checkpoints:"]
+    flags = scenario_flags(model_doc)
+    lines += ["#", "# TRIAGE"]
+    if flags:
+        lines += _comment(
+            f"{len(flags)} of {len(model_doc['checkpoints'])} checkpoint(s) need you: "
+            f"{', '.join(flags)}. Look for NEEDS YOUR REVIEW below. The others were "
+            "accepted as the model labelled them. Set reviewed: true when done."
+        )
+    else:
+        lines += _comment(
+            "Nothing flagged: the annotator asked for no review and the second opinion "
+            "agreed, so these labels were accepted as the model labelled them "
+            "(reviewed_by: model). Edit and set reviewed_by: human to overrule."
+        )
+    reviewed = "false" if flags else "true"
+    lines += [
+        rule,
+        "",
+        f"scenario: {scenario.id}",
+        f"reviewed: {reviewed}",
+        f"reviewed_by: {'human' if flags else 'model'}",
+        "",
+        "checkpoints:",
+    ]
+    second_by_id = {
+        str(item["id"]): item
+        for item in (model_doc.get("second_opinion") or {}).get("checkpoints") or ()
+    }
 
     by_id = {checkpoint.id: checkpoint for checkpoint in scenario.checkpoints}
     for item in model_doc["checkpoints"]:
@@ -571,12 +620,33 @@ def review_text(scenario: Scenario, model_doc: dict[str, object]) -> str:
             lines.append(f"  # CHECKPOINT {checkpoint.id}")
         if checkpoint.question:
             lines += _comment(f"QUESTION: {checkpoint.question}", "  ")
+        if checkpoint.id in flags:
+            lines.append("  # >>> NEEDS YOUR REVIEW <<<")
+            for reason in flags[checkpoint.id]:
+                lines += _comment(f"  why: {reason}", "  ")
+        second = second_by_id.get(checkpoint.id)
+        if second is not None and checkpoint.id in flags:
+
+            def fmt(actions: object) -> str:
+                return (
+                    ", ".join(f"{k}: {v}" for a in actions or () for k, v in dict(a).items())
+                    or "none"
+                )
+
+            lines += _comment(
+                f"SECOND OPINION: acceptable [{fmt(second.get('acceptable'))}]; must_not "
+                f"[{fmt(second.get('must_not'))}]; escalate_by {second.get('escalate_by')} "
+                f"from {second.get('trigger')}. {second.get('uncertain') or ''}",
+                "  ",
+            )
         uncertain = str(item.get("uncertain") or "").strip()
         if uncertain:
             lines += _comment(f"ANNOTATOR'S DOUBTS ({annotator_name}): {uncertain}", "  ")
         lines.append(f"  # Labels below: proposed by the annotator, {annotator_name}. Edit freely.")
         lines.append("  # " + "-" * 76)
-        review_item = {key: value for key, value in item.items() if key != "uncertain"}
+        review_item = {
+            key: value for key, value in item.items() if key not in {"uncertain", "needs_review"}
+        }
         review_item["acceptable"] = _action_list(review_item.get("acceptable"))
         review_item["must_not"] = _action_list(review_item.get("must_not"))
         review_item["rationale"] = _Folded(str(review_item.get("rationale") or ""))
@@ -601,6 +671,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="rebuild review files from existing model annotations without calling claude",
     )
     parser.add_argument("--annotations", type=Path, default=ANNOTATIONS_DIR)
+    parser.add_argument(
+        "--no-second-opinion",
+        action="store_true",
+        help="skip the independent second annotator run used for triage",
+    )
+    parser.add_argument(
+        "--no-apply",
+        action="store_true",
+        help="do not apply scenarios whose labels triage accepted without a human",
+    )
     return parser
 
 
@@ -658,19 +738,47 @@ def main(argv: list[str] | None = None) -> int:
                 model=args.model,
                 effort=args.effort,
             )
-            model_path, _ = write_annotation_files(
+            second = None
+            if not args.no_second_opinion:
+                second = annotate_scenario(
+                    scenario,
+                    profile=profile | scenario.profile,
+                    guidelines_text=guidelines_text,
+                    citable=citable,
+                    model=args.model,
+                    effort=args.effort,
+                )
+            model_path, review_path = write_annotation_files(
                 scenario,
                 result,
                 annotations_dir=args.annotations,
                 effort=args.effort,
                 guidelines_text=guidelines_text,
                 force=args.force,
+                second=second,
             )
         except AnnotatorError as exc:
             raise SystemExit(str(exc)) from exc
         cost = float(result.get("total_cost_usd", 0))
+        if second is not None:
+            cost += float(second.get("total_cost_usd", 0))
         total += cost
-        print(f"{scenario.id}: attempts={result['attempts']} {model_path}")
+        flags = scenario_flags(yaml.safe_load(model_path.read_text(encoding="utf-8")))
+        if flags:
+            status = f"{len(flags)} checkpoint(s) need review: {', '.join(flags)} -> {review_path}"
+        elif args.no_apply:
+            status = "accepted by triage, not applied (--no-apply)"
+        else:
+            from decision_bench.review import ReviewError, apply_scenario
+
+            try:
+                applied, _ = apply_scenario(
+                    scenario.id, annotations_dir=args.annotations, scenarios_dir=args.scenarios
+                )
+            except ReviewError as exc:
+                raise SystemExit(str(exc)) from exc
+            status = f"accepted by triage, {applied} checkpoint(s) applied"
+        print(f"{scenario.id}: attempts={result['attempts']} {status}")
     print(
         f"subscription usage, list-price equivalent ${total:.2f} (not billed: claude.ai login, "
         "no API key)"

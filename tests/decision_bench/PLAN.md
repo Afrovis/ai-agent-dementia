@@ -24,7 +24,7 @@ human settles them.
 | Evidence | NICE NG97, Alzheimer's Association guidance, validation therapy and person-centred care, DICE, and nighttime falls and toileting evidence. |
 | Disagreements | The model annotates first with citations. The human reviews every label and makes the final call, and disagreements are logged. |
 | Annotator | Headless `claude -p --model opus` with no tools, no settings and an empty temp directory as cwd, run by `python -m decision_bench annotate` and wrapped by the project skill `decision-bench-annotate`. The isolation is enforced, not requested: the annotator cannot read the repository. |
-| Human review | A self-contained YAML file per scenario (`annotations/review/<id>.yaml`) holding the timeline, questions, the annotator's labels and doubts. `python -m decision_bench apply` merges it and logs disagreements. |
+| Human review | Triage first (`triage.py`): two independent annotator runs plus self-flags, and only flagged checkpoints go to a human. Then a self-contained YAML file per scenario (`annotations/review/<id>.yaml`) holding the timeline, questions, the annotator's labels and doubts. `python -m decision_bench apply` merges it and logs disagreements. |
 | CI | None. On-demand only, like `dialogue_bench`. |
 
 ## What already exists (research, 2026-09-21)
@@ -297,3 +297,14 @@ restroom-01 back-in-bed and one "but".
 All Claude calls here (annotator and judge) go through the Claude Code CLI
 on the claude.ai login. `list_price_usd` in the annotation drafts is Claude
 Code's list-price estimate of subscription usage, not a charge.
+
+**Batch 2 and triage (2026-09-21).** Seven more scenarios were added:
+restroom-02, disorientation-02/-03, distress-pain-02, fall-02, false-alarm-03
+and silent-wander-02. Opus labelled each on the first attempt. The reviewer
+accepted all seven without reviewing them, so their review files say
+`reviewed_by: model`, and results on them measure agreement with Opus, not
+with a human. The reviewer asked for a more automated review, which is now
+the default: two independent annotator runs, per-checkpoint `needs_review`
+self-flags, and disagreement rules in `triage.py`. Only flagged checkpoints
+go to a human. Batch 2 predates triage, so none of its scenarios has a
+second opinion.

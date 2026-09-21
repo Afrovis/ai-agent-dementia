@@ -17,8 +17,10 @@ environment where `decision_bench` is installed (see its README, "Running").
   "improve" model labels yourself, and never pass the annotator anything from
   `config/` or `services/agent/`. If the annotator's output looks wrong, that
   is a finding for the human review, not something to fix quietly.
-- **The human decides.** Do not edit `annotations/review/<id>.yaml` for the
-  user, and do not set `reviewed: true`. You may explain a label, point at
+- **The human decides what triage flags.** Do not edit
+  `annotations/review/<id>.yaml` for the user, and do not set
+  `reviewed: true` on a flagged file unless the user explicitly tells you to
+  accept it. Record that as `reviewed_by: model`, since no human read it. You may explain a label, point at
   the clause it cites, or say what the current agent would do. Say that the
   last one is not evidence.
 - Only clauses whose `Checked` box is ticked in `guidelines.md` can be cited.
@@ -33,7 +35,10 @@ environment where `decision_bench` is installed (see its README, "Running").
    `--dry-run` first if the prompt or the guidelines changed, and check the
    prompt has no strategy-config or agent content. Each run costs Opus usage;
    do not re-run a labelled scenario without `--force` and a reason.
-2. **Hand over for review.** Tell the user which files to review
+   `annotate` makes two independent Opus runs per scenario and triages
+   them (`decision_bench/triage.py`). Scenarios with no flags are applied
+   automatically with `reviewed_by: model`; report which ones.
+2. **Hand over only what triage flagged.** Tell the user which files to review
    (`annotations/review/<id>.yaml`). For each scenario, summarise in a few
    lines what the annotator chose and quote its `uncertain` notes and
    `scenario_notes` (in `annotations/model/<id>.yaml`). The review file is
