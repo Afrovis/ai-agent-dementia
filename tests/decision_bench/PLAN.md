@@ -308,3 +308,29 @@ the default: two independent annotator runs, per-checkpoint `needs_review`
 self-flags, and disagreement rules in `triage.py`. Only flagged checkpoints
 go to a human. Batch 2 predates triage, so none of its scenarios has a
 second opinion.
+
+**First multi-run result (2026-09-21).** `gemma4:e4b-mlx`, all 14
+scenarios, 3 runs each with `--judge`, one scenario per command
+(`../data-ai-agent-dementia/analysis/decision-bench/2026-09-21-full14/`):
+
+- **83% overall (80/96)**; per run 81%, 88%, 81%. Human-reviewed labels:
+  82% (37/45). Model-accepted labels: 84% (43/51).
+- By category: distress_pain, fall and silent_wander 100%; disorientation
+  74%; false_alarm and restroom 67%.
+- **Fails every run (agent logic, not the LLM):**
+  - false-alarm-02, restroom-01 and restroom-02 back-in-bed: after the
+    person settles, the strategy ladder keeps running, ends in
+    `escalate_phone` and pages the caregiver.
+  - disorientation-02 back-to-bed: the agent stays `ESCALATED` after the
+    person returns to bed. By design `escalate_phone` holds until the
+    caregiver acknowledges, while the model-accepted label expects
+    winding down. That is a label-versus-design question for a human.
+- **Intermittent (LLM wording):** "but" in validate-and-redirect replies (5
+  in 3 runs), making disorientation-01 and -02 critical in 2 of 3 runs.
+- **Hallucinations the judge caught:** 8 distinct sentences, 6 hits across
+  the 3 runs. Most promote the profile's calming thing "Tom is nearby"
+  into "Tom is here", "Tom helps you settle in" or "so Tom can check on
+  you". Two describe the person ("you're awake", "settling back into bed")
+  while the camera reports `absent`, which means speaking to an empty room.
+- `states_clock_time`: 70 in 3 runs, from the greeting templates.
+- The judge flagged no conflict with any human verdict.
