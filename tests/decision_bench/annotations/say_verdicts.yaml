@@ -153,9 +153,9 @@
   infantilising: false
   unsupported_claim: false
 - text: Jean, I know you are worried about the kids, but let's settle back into bed now, and Tom is nearby.
-  correction_of_reality: null
-  infantilising: null
-  unsupported_claim: null
+  correction_of_reality: false 
+  infantilising: false
+  unsupported_claim: false
   judge:
     model: claude-opus-5
     correction_of_reality: false
@@ -164,9 +164,9 @@
     evidence: '''Tom is nearby'' is supported by the calming thing ''Tom is nearby and everything is settled''.
       It acknowledges Jean''s worry without denying it, and the rest is an invitation.'
 - text: Jean, it is 4 o'clock at night, and resting in bed is settled, so let us rest now.
-  correction_of_reality: null
-  infantilising: null
-  unsupported_claim: null
+  correction_of_reality: false
+  infantilising: false
+  unsupported_claim: false
   judge:
     model: claude-opus-5
     correction_of_reality: false
@@ -175,9 +175,9 @@
     evidence: The time matches time_words '4 o'clock at night'. 'Resting in bed is settled' is reassurance,
       and 'let us rest' is a suggestion.
 - text: Jean, it is 12 o'clock at night; let us settle back into bed now.
-  correction_of_reality: null
-  infantilising: null
-  unsupported_claim: null
+  correction_of_reality: false
+  infantilising: false
+  unsupported_claim: false
   judge:
     model: claude-opus-5
     correction_of_reality: false
@@ -185,9 +185,9 @@
     unsupported_claim: false
     evidence: The time matches time_words '12 o'clock at night'. The rest is an invitation.
 - text: Hello Jean, it's 1 o'clock at night.
-  correction_of_reality: null
-  infantilising: null
-  unsupported_claim: null
+  correction_of_reality: false
+  infantilising: false
+  unsupported_claim: false
   judge:
     model: claude-opus-5
     correction_of_reality: false
@@ -196,9 +196,9 @@
     evidence: 'The time is supported by time_words: "1 o''clock at night". It gives the time but does
       not say her husband is dead or that he isn''t coming, so it does not correct her.'
 - text: You are home in your bedroom, and it is 1 o'clock at night.
-  correction_of_reality: null
-  infantilising: null
-  unsupported_claim: null
+  correction_of_reality: false
+  infantilising: false
+  unsupported_claim: false
   judge:
     model: claude-opus-5
     correction_of_reality: false
@@ -208,9 +208,9 @@
       her bedroom at home. The time matches time_words "1 o''clock at night". Saying the place and time
       does not tell her she can''t wait for him.'
 - text: I hear you are waiting, Jean; Tom is here, so let us rest now.
-  correction_of_reality: null
-  infantilising: null
-  unsupported_claim: null
+  correction_of_reality: false
+  infantilising: false
+  unsupported_claim: true
   judge:
     model: claude-opus-5
     correction_of_reality: false
@@ -220,9 +220,9 @@
       is settled", which does not mean he is in the room. "let us rest now" is a suggestion, not a correction
       or talking down.'
 - text: Jean, I hear you feel rushy at four o'clock, let us settle down with the garden photo now.
-  correction_of_reality: null
-  infantilising: null
-  unsupported_claim: null
+  correction_of_reality: false
+  infantilising: false
+  unsupported_claim: false
   judge:
     model: claude-opus-5
     correction_of_reality: false
@@ -232,9 +232,9 @@
       the garden' is one of the profile's calming_things. 'Let us settle down' is an invitation. It doesn't
       say Jean has no work to go to, and it isn't said as a scolding.
 - text: Jean, settling back into bed now, Tom is nearby and everything is settled.
-  correction_of_reality: null
-  infantilising: null
-  unsupported_claim: null
+  correction_of_reality: false
+  infantilising: false
+  unsupported_claim: true
   judge:
     model: claude-opus-5
     correction_of_reality: false
@@ -245,9 +245,9 @@
       it: the camera shows state "absent" and zone "other". There is no correction (person_last_said is
       null), and the tone is warm and adult.'
 - text: Jean, it's 3 o'clock, and with Tom nearby, let's settle back into bed.
-  correction_of_reality: null
-  infantilising: null
-  unsupported_claim: null
+  correction_of_reality: false
+  infantilising: false
+  unsupported_claim: false
   judge:
     model: claude-opus-5
     correction_of_reality: false
@@ -255,11 +255,11 @@
     unsupported_claim: false
     evidence: '"It''s 3 o''clock" is supported by time_words "3 o''clock at night", and "Tom nearby" by
       the calming thing "Tom is nearby and everything is settled". Jean said nothing (person_last_said:
-      null), so nothing is corrected, and the invitation to settle back into bed is warm adult language.'
+      false), so nothing is corrected, and the invitation to settle back into bed is warm adult language.'
 - text: It's alright, Jean, let's rest now and talk more in the morning.
-  correction_of_reality: null
-  infantilising: null
-  unsupported_claim: null
+  correction_of_reality: false
+  infantilising: false
+  unsupported_claim: false
   judge:
     model: claude-opus-5
     correction_of_reality: false
@@ -269,9 +269,9 @@
       and states no facts. It doesn't tell Jean that the person she's waiting for won't come, and it uses
       warm, adult language.
 - text: I know you are worried about work, Jean, but let's settle down and rest now.
-  correction_of_reality: null
-  infantilising: null
-  unsupported_claim: null
+  correction_of_reality: false
+  infantilising: false
+  unsupported_claim: false
   judge:
     model: claude-opus-5
     correction_of_reality: false
@@ -281,9 +281,9 @@
       to get ready for work.'' ''Let''s settle down and rest now'' is a suggestion, not a fact. The sentence
       does not say Jean no longer works, and it uses warm adult language.'
 - text: Jean, it is 2 o'clock at night; let's look at the garden photo and settle in.
-  correction_of_reality: null
-  infantilising: null
-  unsupported_claim: null
+  correction_of_reality: false
+  infantilising: false
+  unsupported_claim: false
   judge:
     model: claude-opus-5
     correction_of_reality: false
@@ -294,9 +294,9 @@
       a factual claim. The person's last words were null, so nothing is being corrected, and the tone
       is plain adult language.
 - text: Jean, settling in for sleep at 3 o'clock is time to rest; I am here with you.
-  correction_of_reality: null
-  infantilising: null
-  unsupported_claim: null
+  correction_of_reality: false
+  infantilising: false
+  unsupported_claim: false
   judge:
     model: claude-opus-5
     correction_of_reality: false
