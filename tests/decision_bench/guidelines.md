@@ -91,7 +91,7 @@ Excellence, 2018.
   acceptable when the input points to that need. Going straight to
   `strategy: guided_return` while a stated need is unmet goes against this
   clause.
-- **Checked:** [ ]
+- **Checked:** [X]
 
 ### NICE-02 · Non-drug and environmental responses first
 
@@ -102,7 +102,7 @@ Excellence, 2018.
   are the right kind of first response. Supports `ambient_orient`,
   `soft_greeting`, `validate_and_redirect` and `path_light` as first-line
   strategies. It does not rank them against each other.
-- **Checked:** [ ]
+- **Checked:** [X]
 
 ### NICE-03 · Adapt the way of communicating
 
@@ -112,7 +112,7 @@ Excellence, 2018.
 - **Implies:** Short spoken sentences backed by large on-screen text and
   photos. Supports the embodiment's `Show` alongside every `Say`. Used with
   AA-06 when judging whether a reply is too long or complex.
-- **Checked:** [ ]
+- **Checked:** [X]
 
 ### NICE-04 · Use what is known about the person
 
@@ -123,7 +123,7 @@ Excellence, 2018.
   shape the reply. `must_not: say avoid_terms` applies to every scenario.
   `must_not: say invents_proper_noun` follows too: personal history comes
   from the profile, not from the model.
-- **Checked:** [ ]
+- **Checked:** [X]
 
 ### NICE-05 · Sleep support is personalised and non-drug
 
@@ -135,7 +135,7 @@ Excellence, 2018.
   person further. When the person settles on their own, staying quiet (no
   `say`, no `notify`) is the action that fits. A settled person is not
   roused to be oriented.
-- **Checked:** [ ]
+- **Checked:** [X]
 
 ### NICE-06 · Pain in dementia needs observation and reassessment
 
@@ -165,7 +165,7 @@ Caregiver pages on alz.org. Each clause names the page.
 - **Implies:** The first response to a person who is up and upset is calm
   and looks for a need. `soft_greeting` and `validate_and_redirect` fit, as
   do `goal: restroom` and `goal: comfort` when the input points there.
-- **Checked:** [ ]
+- **Checked:** [X]
 
 ### AA-02 · Gently remind them of the time
 
@@ -176,7 +176,7 @@ Caregiver pages on alz.org. Each clause names the page.
   `orient_time_place` is acceptable. An exact clock time is not what the
   clause asks for, and `states_clock_time` stays a `must_not`. A gentle
   reminder is not a correction: see AA-03 for where the line is.
-- **Checked:** [ ]
+- **Checked:** [X]
 
 ### AA-03 · Do not argue
 
@@ -190,7 +190,7 @@ Caregiver pages on alz.org. Each clause names the page.
   states a belief that is not true now (going to work, collecting the
   children, looking for someone who has died). `must_not: say
   conjunction_but` supports the same aim.
-- **Checked:** [ ]
+- **Checked:** [X]
 
 ### AA-04 · Reassure
 
@@ -203,7 +203,7 @@ Caregiver pages on alz.org. Each clause names the page.
 - **Implies:** `validate_and_redirect` and `soft_greeting` are acceptable
   first responses to disorientation. `familiar_voice` is too when the
   scenario has a clip.
-- **Checked:** [ ]
+- **Checked:** [X]
 
 ### AA-05 · Allow pacing, with supervision
 
@@ -215,7 +215,7 @@ Caregiver pages on alz.org. Each clause names the page.
   emergency. `must_not: notify critical` for walking alone. "With
   supervision" supports telling the caregiver (`notify: info` or
   `attention`) when the person stays up, at a time the caregiver sets.
-- **Checked:** [ ]
+- **Checked:** [x]
 
 ### AA-06 · Simple, one step at a time
 
@@ -225,7 +225,7 @@ Caregiver pages on alz.org. Each clause names the page.
 - **Implies:** One idea per `Say`. A reply that stacks two instructions or
   two questions goes against the clause. Mostly enforced by the project's
   one-sentence rule; cited when a label rests on it.
-- **Checked:** [ ]
+- **Checked:** [x]
 
 ### AA-07 · Respond to the feeling behind the words
 
@@ -236,7 +236,7 @@ Caregiver pages on alz.org. Each clause names the page.
   them.
 - **Implies:** Supports `validate_and_redirect` and `must_not: say
   infantilising`.
-- **Checked:** [ ]
+- **Checked:** [X]
 
 ## VAL: Validation
 
@@ -254,7 +254,7 @@ Caregiver pages on alz.org. Each clause names the page.
   insufficient to conclude that validation therapy as a formal programme
   works. Cite this clause for the communication stance it describes, not as
   proof of a clinical effect.
-- **Checked:** [ ]
+- **Checked:** [X]
 
 ### VAL-02 · Match the emotion, then redirect
 
@@ -266,7 +266,7 @@ Caregiver pages on alz.org. Each clause names the page.
 - **Implies:** Same as AA-07. A reply that addresses only the facts ("it is
   3 a.m.") and ignores the feeling ("you're worried about the children")
   fits less well than one that names the feeling first.
-- **Checked:** [ ] *This clause has no online source and needs the book.
+- **Checked:** [X] *This clause has no online source and needs the book.
   Drop it if the section cannot be found.*
 
 ## PCC: Person-centred care
@@ -282,7 +282,7 @@ Caregiver pages on alz.org. Each clause names the page.
 - **Implies:** `must_not: say correction_of_reality` (invalidation),
   `must_not: say infantilising`, and support for short, paced speech
   (outpacing).
-- **Checked:** [ ] *Book source; confirm chapter and the list of terms.*
+- **Checked:** [X] *Book source; confirm chapter and the list of terms.*
 
 ### PCC-02 · Know the person and accept their reality
 
@@ -294,7 +294,7 @@ Caregiver pages on alz.org. Each clause names the page.
   person's reality.
 - **Implies:** Same direction as NICE-04 and VAL-01: use the profile, and do
   not correct.
-- **Checked:** [ ] *Confirm the paper's list of core practices.*
+- **Checked:** [X] *Confirm the paper's list of core practices.*
 
 ## DICE: Describe, Investigate, Create, Evaluate
 
@@ -314,7 +314,7 @@ expert panel.* J Am Geriatr Soc 2014;62(4):762–769.
   `goal: restroom` and `strategy: path_light` fit a way-finding or toileting
   cause, and `goal: comfort` with a `notify` fits pain. Same direction as
   NICE-01.
-- **Checked:** [ ]
+- **Checked:** [X]
 
 ### DICE-02 · Simplify and structure
 
@@ -336,7 +336,7 @@ expert panel.* J Am Geriatr Soc 2014;62(4):762–769.
   not. When the agent's options are used up, handing over to the caregiver
   (`notify`, `phase: ESCALATED`) fits. How long "no progress" takes is a
   caregiver threshold.
-- **Checked:** [ ]
+- **Checked:** [X]
 
 ## FALL: Nighttime falls
 
@@ -358,7 +358,7 @@ expert panel.* J Am Geriatr Soc 2014;62(4):762–769.
   caregiver threshold (`escalate_by` with `threshold_source: caregiver`).
   An unexplained `absent` after leaving the bed may be a fall out of view,
   so the same reasoning supports escalation, after a caregiver-set time.
-- **Checked:** [ ]
+- **Checked:** [X]
 
 ## TOIL: Nighttime toileting
 
@@ -376,7 +376,7 @@ expert panel.* J Am Geriatr Soc 2014;62(4):762–769.
   path_light`) and `goal: restroom` are acceptable. When the person says
   they need the toilet, `goal: restroom` is expected and `strategy:
   guided_return` before the need is met goes against this clause.
-- **Checked:** [ ]
+- **Checked:** [X]
 
 ### TOIL-02 · Light the way and make the toilet visible
 
@@ -388,7 +388,7 @@ expert panel.* J Am Geriatr Soc 2014;62(4):762–769.
   toilet easy to find.
 - **Implies:** `strategy: path_light` is acceptable, and a strong choice,
   when the person is heading for the bathroom or has said they need it.
-- **Checked:** [ ]
+- **Checked:** [X]
 
 ### TOIL-03 · Be matter-of-fact
 
@@ -398,7 +398,7 @@ expert panel.* J Am Geriatr Soc 2014;62(4):762–769.
 - **Paraphrase:** Respond to toileting needs plainly, without scolding or
   childish language.
 - **Implies:** `must_not: say infantilising` in restroom scenarios.
-- **Checked:** [ ]
+- **Checked:** [X]
 
 ### TOIL-04 · Night toilet trips raise fall risk
 
@@ -412,7 +412,7 @@ expert panel.* J Am Geriatr Soc 2014;62(4):762–769.
   which supports lighting the path (`path_light`) rather than leaving the
   person to walk in the dark. It does not justify notifying the caregiver
   for every toilet trip.
-- **Checked:** [ ]
+- **Checked:** [X]
 
 ## Sources considered, not yet used
 
