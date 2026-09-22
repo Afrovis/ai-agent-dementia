@@ -110,7 +110,7 @@ strategies:
     brightness: 0.5
     headline: "Hello, {name}"
     body: "It is {time_words}."
-    say: "Hello {name}, it's {time_words}."
+    say: "Hello {name}, it's night-time."
 
   - id: orient_time_place
     order: 3
@@ -122,7 +122,7 @@ strategies:
     brightness: 0.5
     headline: "You are home"
     body: "You are in your bedroom, and it is {time_words}."
-    say: "You are home in your bedroom, and it is {time_words}."
+    say: "You are home in your bedroom, and it is night-time."
     photo_id: demo_room
 
   - id: validate_and_redirect

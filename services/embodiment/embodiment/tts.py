@@ -24,8 +24,8 @@ DEFAULT_VOICE_MODEL = Path("/app/models/piper/en_US-lessac-medium.onnx")
 DEFAULT_CACHE_DIR = Path("/tmp/night-companion-tts")
 DEFAULT_SPEED = 0.85
 DEFAULT_STRATEGY_TEMPLATES = (
-    "Hello {name}, it's {time_words}.",
-    "You are home in your bedroom, and it is {time_words}.",
+    "Hello {name}, it's night-time.",
+    "You are home in your bedroom, and it is night-time.",
     "It's alright{name_vocative}, let's rest now and talk more in the morning.",
     "Let's go back to bed now{name_vocative}.",
     "Someone is coming to help.",
@@ -154,9 +154,10 @@ def load_prerender_phrases(
 ) -> tuple[str, ...]:
     """Expand configured fixed Say templates into phrases to warm at startup.
 
-    The production greeting includes the person's name and one of twelve
-    hour phrases.  Expanding each possible hour makes its first use a cache
-    hit while leaving LLM-composed responses to be synthesized on demand.
+    The built-in greetings say only that it is night-time. A caregiver may
+    still configure any fixed template with `{time_words}`; expanding all
+    twelve hours for those templates makes their first use a cache hit while
+    leaving LLM-composed responses to be synthesized on demand.
     Invalid/missing caregiver files degrade to the safe built-in templates;
     their contents are never logged.
     """

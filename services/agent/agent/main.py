@@ -78,7 +78,7 @@ from agent.goals import GOALS
 from agent.llm import ClaudeLLM, FallbackLLM, LLMClient
 from agent.llm import local_llm as build_local_llm
 from agent.profile import DEFAULT_PROFILE, PersonProfile, load_profile
-from agent.rules import Phase, validate_say
+from agent.rules import Phase, validate_composition, validate_say
 from agent.session import Session, Transition
 from agent.strategies import (
     ESCALATE_PHONE_ID,
@@ -246,6 +246,20 @@ def _maybe_publish_say(
     if strategy is None or strategy.say_template is None:
         return
 
+    # Occupancy suppresses only ordinary bedside speech. The Show still
+    # updates, the ladder and its dwell timers continue unchanged, and the
+    # terminal escalation sentence remains audible in case a person fell
+    # just outside the camera's view. The latest raw reading is used rather
+    # than waiting for rule 5's absence limit: speaking to a room currently
+    # believed empty has no benefit during that grace period.
+    if session.last_person_state == "absent" and not strategy.terminal:
+        _log(
+            "suppressed ordinary Say while person is absent",
+            event_type="Say",
+            strategy=strategy.id,
+        )
+        return
+
     text = render_template(strategy.say_template, profile, time_words=time_as_words(now))
     if llm is not None and strategy.id == "validate_and_redirect":
         composition = llm.compose(
@@ -263,7 +277,18 @@ def _maybe_publish_say(
         if composition is None:
             _log("LLM composition unavailable; using caregiver fallback", level=logging.WARNING)
         else:
-            text = composition.text
+            composition_result = validate_composition(composition.text, profile)
+            if not composition_result.accepted:
+                # Log the deterministic reason only. The candidate may
+                # paraphrase a private utterance and must never be copied
+                # into operational logs merely because it was unsafe.
+                _log(
+                    "rejected LLM composition; using caregiver fallback",
+                    level=logging.WARNING,
+                    reason=composition_result.reason,
+                )
+            else:
+                text = composition.text
     # The minimum-silence gap paces ordinary strategy speech, one sentence
     # then quiet. A terminal strategy (`escalate_phone`) is not ordinary
     # speech: it is the single sentence telling a person who may be on the

@@ -223,6 +223,24 @@ class Session:
     _recent_utterances: list[str] = field(default_factory=list, init=False, repr=False)
     _last_scene_note: str | None = field(default=None, init=False, repr=False)
 
+    # The most recent perception state is retained separately from the
+    # phase timers because `agent.main` needs one small, read-only fact at
+    # publication time: ordinary strategy speech must not be played into a
+    # room perception currently considers empty. It is intentionally not
+    # inferred from rule 5's timers -- those express duration, not the
+    # latest reading, and an `absent` grace period must still suppress
+    # ordinary speech immediately.
+    _last_person_state: str | None = field(default=None, init=False, repr=False)
+
+    # Why the current ESCALATED phase began, plus the narrow observation
+    # needed to resolve a strategies-exhausted escalation when the person
+    # returns to bed unaided. These are deliberately not derived from the
+    # current goal: every escalation uses `wait_for_caregiver`, including
+    # rule 5 and distress paths that must keep the longer in-bed stability
+    # rule. The explicit reason preserves that safety distinction.
+    _escalation_reason: str | None = field(default=None, init=False, repr=False)
+    _away_from_bed_while_escalated: bool = field(default=False, init=False, repr=False)
+
     def __post_init__(self) -> None:
         self._engine = StrategyEngine(self.strategies)
 
@@ -344,7 +362,19 @@ class Session:
             if strategy is None:
                 raise AssertionError("session logic entered ENGAGED with no strategy available")
             self.strategy_index = self._engine.index_of(strategy.id)
+            # `OBSERVING` does not normally track in-bed stability, but
+            # clearing this explicitly makes the ENGAGED invariant local:
+            # only a fresh `in_bed` reading received after engagement may
+            # hold the ladder or start its stability clock.
+            self._in_bed_since = None
         elif target == Phase.ESCALATED:
+            # A new escalation always starts a fresh cause/observation
+            # window, including rule 5 firing from COOLDOWN after an older
+            # strategies-exhausted episode. A stale "away" observation
+            # must never allow that new safety escalation to wind down on
+            # the first bed-zone reading.
+            self._escalation_reason = reason
+            self._away_from_bed_while_escalated = False
             # Rule 5 escalating (or strategies exhausting) sets
             # `wait_for_caregiver`, from whatever goal was active -- see
             # the module docstring for why this goal's success condition
@@ -382,6 +412,8 @@ class Session:
         self._consecutive_distress = 0
         self._recent_utterances.clear()
         self._last_scene_note = None
+        self._escalation_reason = None
+        self._away_from_bed_while_escalated = False
         self._engine.reset()
 
     def record_utterance(self, text: str) -> None:
@@ -405,6 +437,18 @@ class Session:
     @property
     def last_scene_note(self) -> str | None:
         return self._last_scene_note
+
+    @property
+    def last_person_state(self) -> str | None:
+        """The newest `PersonState.state` supplied to this session.
+
+        Read-only by design: perception updates it through
+        `on_person_state`, while publication code may inspect it without
+        being able to manufacture occupancy state. It survives timer
+        resets because it describes the latest room observation, not one
+        particular nudging session.
+        """
+        return self._last_person_state
 
     def _update_rule5_timers(self, state: str, now: datetime) -> None:
         if state == "on_floor":
@@ -497,6 +541,7 @@ class Session:
         Returns the `Transition` to publish, or `None` if this update did
         not change anything.
         """
+        self._last_person_state = state
         self._update_rule5_timers(state, now)
 
         rule5 = self._rule5_transition(now)
@@ -521,7 +566,9 @@ class Session:
             return None
 
         if self.phase in (Phase.ENGAGED, Phase.ESCALATED):
-            phase_transition = self._track_in_bed_stability(state, now)
+            phase_transition = self._track_return_after_strategy_escalation(state, zone, now)
+            if phase_transition is None:
+                phase_transition = self._track_in_bed_stability(state, now)
             if phase_transition is None:
                 phase_transition = self._run_strategy_engine(now, state=state, zone=zone)
             goal_change = self._update_goal_from_zone(zone, state, now)
@@ -780,6 +827,17 @@ class Session:
         if self.phase != Phase.ENGAGED:
             return None
 
+        # `_track_in_bed_stability` runs before this method on every fresh
+        # person reading and maintains `_in_bed_since`; `tick` then sees
+        # the same marker between readings. Once the person is actually in
+        # bed, advancing or exhausting the strategy ladder would create
+        # fresh speech and possibly an attention alert during the intended
+        # 120-second settling window. Hold the ladder completely until a
+        # non-`in_bed` reading clears the marker or stability moves the
+        # session to COOLDOWN.
+        if self._in_bed_since is not None:
+            return None
+
         if state is not None and self._is_progress(state, zone or ""):
             # Extends the dwell window, but only up to
             # `strategies.MAX_PROGRESS_DWELL_MULTIPLIER` times this
@@ -849,6 +907,43 @@ class Session:
         if elapsed >= self.config.in_bed_stable_seconds:
             self._cooldown_since = now
             return self._apply(Phase.COOLDOWN, reason="in_bed_stable", now=now)
+        return None
+
+    def _track_return_after_strategy_escalation(
+        self, state: str, zone: str, now: datetime
+    ) -> Transition | None:
+        """Resolve only the self-corrected strategies-exhausted case.
+
+        The caregiver was already notified when the ladder exhausted. If,
+        after that notification, perception sees the person away from the
+        bed and then sees them sitting on or settled into it, the terminal
+        "someone is coming" presentation is no longer the appropriate
+        bedside mode and the session can wind down through COOLDOWN.
+
+        Both guards are safety boundaries rather than general progress
+        detection: the recorded cause excludes rule-5 and distress
+        escalations, and the intervening away observation prevents an
+        ambiguous bed-zone reading present at escalation time from ending
+        it immediately. The explicit states also avoid treating someone
+        merely standing beside the bed as returned.
+        """
+        if self.phase != Phase.ESCALATED or self._escalation_reason != "strategies_exhausted":
+            return None
+
+        if zone != "bed" or state in ("standing", "walking"):
+            self._away_from_bed_while_escalated = True
+
+        if (
+            self._away_from_bed_while_escalated
+            and zone == "bed"
+            and state in ("sitting_up", "in_bed")
+        ):
+            self._cooldown_since = now
+            return self._apply(
+                Phase.COOLDOWN,
+                reason="returned_to_bed_after_escalation",
+                now=now,
+            )
         return None
 
     def tick(self, now: datetime) -> Transition | None:

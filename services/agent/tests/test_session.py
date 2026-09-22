@@ -605,6 +605,79 @@ def test_exhausting_every_strategy_escalates_and_publishes_a_notify():
     assert session.phase == Phase.ESCALATED
 
 
+def test_in_bed_holds_the_ladder_until_stability_moves_to_cooldown():
+    """A short final strategy dwell must not outrun the longer settling
+    window and manufacture a strategies-exhausted caregiver alert while
+    the person remains in bed."""
+    session = make_session(
+        strategies=small_strategies(dwell=10.0, cooldown=1000.0, n=1),
+        observe_seconds=1.0,
+        in_bed_stable_seconds=120.0,
+    )
+    session.on_person_state("standing", "other", NIGHT)
+    session.tick(NIGHT + timedelta(seconds=2))
+    assert session.phase == Phase.ENGAGED
+
+    session.on_person_state("in_bed", "bed", NIGHT + timedelta(seconds=5))
+    # Far beyond the only strategy's dwell, a time-only tick still holds
+    # because no newer non-in-bed reading has cleared the stability marker.
+    assert session.tick(NIGHT + timedelta(seconds=124)) is None
+    assert session.phase == Phase.ENGAGED
+
+    transition = session.on_person_state("in_bed", "bed", NIGHT + timedelta(seconds=125))
+    assert transition is not None
+    assert transition.phase == Phase.COOLDOWN
+    assert transition.reason == "in_bed_stable"
+    assert transition.notify is None
+
+
+def test_strategies_exhausted_deescalates_after_away_then_return_to_bed():
+    session = make_session(
+        strategies=small_strategies(dwell=1.0, cooldown=1000.0, n=1),
+        observe_seconds=1.0,
+        in_bed_stable_seconds=120.0,
+    )
+    session.on_person_state("standing", "other", NIGHT)
+    session.tick(NIGHT + timedelta(seconds=2))
+    escalation = session.on_person_state("standing", "other", NIGHT + timedelta(seconds=4))
+    assert escalation is not None
+    assert escalation.reason == "strategies_exhausted"
+    assert session.phase == Phase.ESCALATED
+
+    # The away observation must happen while already escalated; only then
+    # does sitting on the bed prove the terminal presentation can wind down.
+    assert session.on_person_state("walking", "other", NIGHT + timedelta(seconds=5)) is None
+    returned = session.on_person_state("sitting_up", "bed", NIGHT + timedelta(seconds=6))
+    assert returned is not None
+    assert returned.phase == Phase.COOLDOWN
+    assert returned.reason == "returned_to_bed_after_escalation"
+    assert returned.notify is None
+
+
+def test_rule5_escalation_does_not_use_the_quick_return_to_bed_path():
+    session = make_session(floor_limit_seconds=0.0, in_bed_stable_seconds=120.0)
+    session.on_person_state("on_floor", "other", NIGHT)
+    assert session.phase == Phase.ESCALATED
+    session.on_person_state("walking", "other", NIGHT + timedelta(seconds=1))
+
+    assert session.on_person_state("sitting_up", "bed", NIGHT + timedelta(seconds=2)) is None
+    assert session.phase == Phase.ESCALATED
+
+
+def test_distress_escalation_does_not_use_the_quick_return_to_bed_path():
+    session = make_session(observe_seconds=1.0, in_bed_stable_seconds=120.0)
+    session.on_person_state("standing", "other", NIGHT)
+    session.tick(NIGHT + timedelta(seconds=2))
+    session.on_interpretation("unclear", 2, NIGHT + timedelta(seconds=3))
+    escalation = session.on_interpretation("unclear", 3, NIGHT + timedelta(seconds=4))
+    assert escalation is not None
+    assert escalation.reason == "distress_detected_twice"
+
+    session.on_person_state("walking", "other", NIGHT + timedelta(seconds=5))
+    assert session.on_person_state("sitting_up", "bed", NIGHT + timedelta(seconds=6)) is None
+    assert session.phase == Phase.ESCALATED
+
+
 def test_escalate_phone_is_selected_on_escalation_and_stays_selected():
     # Uses the real `DEFAULT_STRATEGIES` catalogue (the default when no
     # `strategies=` override is given): `escalate_phone` is only in the
