@@ -1,0 +1,20 @@
+id: silent-wander-07
+category: silent_wander
+summary: >-
+  Gets up, walks around, and sits in a chair in the room for about ten minutes without speaking.
+start: "00:35"
+timeline:
+  - {t: 0, person: {state: sitting_up, zone: bed}}
+  - {t: 15, person: {state: walking, zone: other}}
+  - {t: 45, person: {state: sitting_up, zone: other}}
+  - {t: 300, person: {state: sitting_up, zone: other}}
+  - {t: 645, person: {state: sitting_up, zone: other}}
+checkpoints:
+  - id: sits-in-chair
+    window: [45, 299]
+    question: >-
+      The person walks around and then sits in a chair, silent. What should the agent do?
+  - id: stays-in-chair
+    window: [300, 645]
+    question: >-
+      The person has sat in the chair for several minutes. What should the agent do, and should the caregiver be told?

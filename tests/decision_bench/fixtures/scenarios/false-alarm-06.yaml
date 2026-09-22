@@ -1,0 +1,20 @@
+id: false-alarm-06
+category: false_alarm
+summary: >-
+  Sits up in bed reading late in the evening and says they will just finish their chapter.
+start: "23:15"
+timeline:
+  - {t: 0, person: {state: sitting_up, zone: bed, scene_note: person is reading a book}}
+  - {t: 60, utterance: {text: I'll just finish my chapter.}}
+  - {t: 120, person: {state: sitting_up, zone: bed, scene_note: person is reading a book}}
+  - {t: 420, person: {state: in_bed, zone: bed}}
+  - {t: 560, person: {state: in_bed, zone: bed}}
+checkpoints:
+  - id: reading
+    window: [0, 419]
+    question: >-
+      The person is sitting up in bed reading, content. What should the agent do, and what must it not do?
+  - id: lies-down
+    window: [420, 560]
+    question: >-
+      The person lies down to sleep. What should the agent do now?

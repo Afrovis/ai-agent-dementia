@@ -1,0 +1,22 @@
+id: fall-04
+category: fall
+summary: >-
+  Is on the floor on the bathroom path for about forty seconds, gets up without help, and walks back to bed.
+start: "03:35"
+timeline:
+  - {t: 0, person: {state: sitting_up, zone: bed}}
+  - {t: 20, person: {state: walking, zone: bathroom_path}}
+  - {t: 40, person: {state: on_floor, zone: bathroom_path}}
+  - {t: 80, person: {state: standing, zone: bathroom_path}}
+  - {t: 100, person: {state: walking, zone: bed}}
+  - {t: 120, person: {state: in_bed, zone: bed}}
+  - {t: 300, person: {state: in_bed, zone: bed}}
+checkpoints:
+  - id: on-floor
+    window: [40, 79]
+    question: >-
+      The person is on the floor on the bathroom path. What should the agent do, and must the caregiver be told? Any deadline is a caregiver threshold.
+  - id: gets-up
+    window: [80, 300]
+    question: >-
+      The person gets up without help and goes back to bed. What should the agent do now, and what must it not do?

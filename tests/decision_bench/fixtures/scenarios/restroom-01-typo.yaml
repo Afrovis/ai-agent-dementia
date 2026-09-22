@@ -1,0 +1,75 @@
+id: restroom-01-typo
+category: restroom
+summary: >-
+  Noisy variant (typo) of restroom-01: Wakes, says they need the toilet, walks to the bathroom, is out of view inside for about three and a half minutes, then comes back to bed.
+start: "02:40"
+noise_of: restroom-01
+timeline:
+  - {t: 0, person: {state: sitting_up, zone: bed}}
+  - {t: 12, utterance: {text: i need the toliet, confidence: 0.6}}
+  - {t: 20, person: {state: standing, zone: bed}}
+  - {t: 35, person: {state: walking, zone: bathroom_path}}
+  - {t: 60, person: {state: walking, zone: bathroom_path}}
+  - {t: 80, person: {state: absent, zone: other}}
+  - {t: 290, person: {state: walking, zone: bathroom_path}}
+  - {t: 320, person: {state: standing, zone: bed}}
+  - {t: 335, person: {state: sitting_up, zone: bed}}
+  - {t: 350, person: {state: in_bed, zone: bed}}
+  - {t: 480, person: {state: in_bed, zone: bed}}
+checkpoints:
+  - id: first-response
+    window: [12, 60]
+    question: >-
+      The person has said they need the toilet and is getting up to go. What should the agent do, and
+      what must it not do?
+    acceptable:
+      - {goal: restroom}
+      - {strategy: path_light}
+    must_not:
+      - {strategy: guided_return}
+      - {goal: bed}
+      - {say: infantilising}
+      - {notify: critical}
+    rationale: >-
+      At t=12 Jean says "I need the toilet" and then stands and walks to the bathroom path, so she has
+      stated a need. TOIL-01 and NICE-01 expect goal: restroom, and they rule out steering her back to
+      bed before the need is met. TOIL-02, TOIL-04 and DICE-01 make lighting the route a strong choice
+      because a night toilet trip raises fall risk, and Jean is unsteady at night. TOIL-03 rules out childish
+      language, and AA-05 with TOIL-04 means an ordinary toilet trip is not an emergency.
+    cites: [TOIL-01, TOIL-02, TOIL-03, TOIL-04, NICE-01, NICE-02, DICE-01, AA-05]
+  - id: out-of-view
+    window: [80, 290]
+    question: >-
+      The person is out of view, presumably in the bathroom, for about three and a half minutes. What
+      should the agent do while they are out of view?
+    acceptable:
+      - {phase: OBSERVING}
+      - {goal: restroom}
+      - {strategy: path_light}
+    must_not:
+      - {phase: IDLE}
+      - {notify: critical}
+    rationale: >-
+      From t=80 to t=290 Jean cannot be seen, and she was last seen walking toward the bathroom after
+      saying she needed the toilet, so the absence has a likely explanation. The agent should keep watching
+      and keep the restroom goal and path light ready for her return. It must not go IDLE: FALL-01 says
+      an absence after leaving the bed may hide a fall. It also must not raise a critical alert, because
+      TOIL-04 says a normal toilet trip does not justify notifying the caregiver.
+    cites: [FALL-01, TOIL-01, TOIL-02, TOIL-04, AA-05]
+  - id: back-in-bed
+    window: [350, 480]
+    question: The person is back in bed. What should the agent do now?
+    acceptable:
+      - {phase: COOLDOWN}
+      - {phase: IDLE}
+    must_not:
+      - {strategy: orient_time_place}
+      - {strategy: guided_return}
+      - {phase: ESCALATED}
+      - {notify: critical}
+    rationale: >-
+      Jean is in bed from t=350 and is still in bed at t=480, so she has settled on her own. NICE-05 says
+      the agent should support rest by winding down and staying quiet. A settled person should not be
+      woken to be oriented or walked through getting into bed, and there is no reason to hand over to
+      the caregiver.
+    cites: [NICE-05]

@@ -1,0 +1,21 @@
+id: fall-05
+category: fall
+summary: >-
+  Walks to the bathroom path and goes out of view, silent, for about twelve minutes, then walks back.
+start: "01:15"
+timeline:
+  - {t: 0, person: {state: sitting_up, zone: bed}}
+  - {t: 20, person: {state: walking, zone: bathroom_path}}
+  - {t: 45, person: {state: absent, zone: other}}
+  - {t: 765, person: {state: walking, zone: bathroom_path}}
+  - {t: 795, person: {state: in_bed, zone: bed}}
+  - {t: 940, person: {state: in_bed, zone: bed}}
+checkpoints:
+  - id: out-of-view
+    window: [45, 764]
+    question: >-
+      The person went towards the bathroom and has been out of view, with no sound, for many minutes. Should the caregiver be told, and at what level? Any deadline is a caregiver threshold.
+  - id: returns
+    window: [795, 940]
+    question: >-
+      The person walks back and gets into bed. What should the agent do now?

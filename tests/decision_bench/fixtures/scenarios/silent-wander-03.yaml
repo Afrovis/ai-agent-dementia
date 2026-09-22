@@ -1,0 +1,24 @@
+id: silent-wander-03
+category: silent_wander
+summary: >-
+  Walks back and forth between the bed and the door for about eight minutes without speaking.
+start: "02:10"
+timeline:
+  - {t: 0, person: {state: sitting_up, zone: bed}}
+  - {t: 15, person: {state: walking, zone: door}}
+  - {t: 60, person: {state: walking, zone: bed}}
+  - {t: 100, person: {state: walking, zone: door}}
+  - {t: 150, person: {state: walking, zone: bed}}
+  - {t: 200, person: {state: walking, zone: door}}
+  - {t: 300, person: {state: walking, zone: bed}}
+  - {t: 400, person: {state: walking, zone: door}}
+  - {t: 500, person: {state: walking, zone: other}}
+checkpoints:
+  - id: pacing
+    window: [15, 199]
+    question: >-
+      The person paces between the bed and the door without speaking. What should the agent do?
+  - id: keeps-pacing
+    window: [200, 500]
+    question: >-
+      The person is still pacing after several minutes. Should the caregiver be told, and at what level? Any deadline is a caregiver threshold.

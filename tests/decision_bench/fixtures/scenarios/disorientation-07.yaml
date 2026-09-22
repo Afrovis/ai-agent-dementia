@@ -1,0 +1,23 @@
+id: disorientation-07
+category: disorientation
+summary: >-
+  Calls for their son and waits at the door; the caregiver has recorded a consented voice message.
+start: "01:50"
+voice_clip: true
+timeline:
+  - {t: 0, person: {state: sitting_up, zone: bed}}
+  - {t: 15, utterance: {text: 'Tom? Tom, where are you?'}}
+  - {t: 30, person: {state: standing, zone: bed}}
+  - {t: 45, person: {state: walking, zone: door}}
+  - {t: 70, utterance: {text: 'Tom? Are you there?'}}
+  - {t: 100, person: {state: standing, zone: door}}
+  - {t: 260, person: {state: standing, zone: door}}
+checkpoints:
+  - id: calls-for-son
+    window: [15, 69]
+    question: >-
+      The person calls for their son Tom and walks to the door. What should the agent do?
+  - id: still-calling
+    window: [70, 260]
+    question: >-
+      The person keeps calling for Tom at the door. What should the agent do next, and should the caregiver be told? Any deadline is a caregiver threshold.

@@ -1,0 +1,36 @@
+id: false-alarm-01-flicker
+category: false_alarm
+summary: >-
+  Noisy variant (flicker) of false-alarm-01: Rolls over, sits up for about 20 seconds without speaking, and lies back down.
+start: "03:30"
+noise_of: false-alarm-01
+timeline:
+  - {t: 0, person: {state: in_bed, zone: bed}}
+  - {t: 30, person: {state: sitting_up, zone: bed, confidence: 0.75}}
+  - {t: 32, person: {state: in_bed, zone: bed, confidence: 0.6}}
+  - {t: 34, person: {state: sitting_up, zone: bed, confidence: 0.75}}
+  - {t: 50, person: {state: in_bed, zone: bed}}
+  - {t: 52, person: {state: sitting_up, zone: bed, confidence: 0.6}}
+  - {t: 54, person: {state: in_bed, zone: bed}}
+  - {t: 120, person: {state: in_bed, zone: bed}}
+  - {t: 122, person: {state: sitting_up, zone: bed, confidence: 0.6}}
+  - {t: 124, person: {state: in_bed, zone: bed}}
+  - {t: 240, person: {state: in_bed, zone: bed}}
+  - {t: 242, person: {state: sitting_up, zone: bed, confidence: 0.6}}
+  - {t: 244, person: {state: in_bed, zone: bed}}
+checkpoints:
+  - id: settles
+    window: [30, 240]
+    question: >-
+      The person sits up briefly without speaking and lies back down. What should the agent do, and what
+      must it not do?
+    must_not:
+      - {say: any}
+      - {notify: any}
+    rationale: >-
+      Jean sits up at t=30 (confidence 0.75), says nothing, lies back down at t=50 and stays in bed to
+      t=240. There is no utterance, no distress and no sign of a need, so she settled on her own. NICE-05
+      says the right action for a person who settles without help is to stay quiet: no speech and no caregiver
+      notification. It also says a settled person should not be woken to be oriented. Holding back is
+      the correct behaviour, so acceptable is left empty and only the must_not labels are judged.
+    cites: [NICE-05]

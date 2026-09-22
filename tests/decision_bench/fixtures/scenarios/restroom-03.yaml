@@ -1,0 +1,28 @@
+id: restroom-03
+category: restroom
+summary: >-
+  Says they need to pee, walks slowly to the bathroom with a walker, and is out of view for about six minutes before coming back to bed.
+start: "04:15"
+timeline:
+  - {t: 0, person: {state: sitting_up, zone: bed}}
+  - {t: 8, utterance: {text: I need to pee.}}
+  - {t: 25, person: {state: standing, zone: bed}}
+  - {t: 45, person: {state: walking, zone: bathroom_path}}
+  - {t: 70, person: {state: absent, zone: other}}
+  - {t: 430, person: {state: walking, zone: bathroom_path}}
+  - {t: 470, person: {state: standing, zone: bed}}
+  - {t: 490, person: {state: in_bed, zone: bed}}
+  - {t: 640, person: {state: in_bed, zone: bed}}
+checkpoints:
+  - id: first-response
+    window: [8, 44]
+    question: >-
+      The person says they need to pee and gets up slowly with a walker. What should the agent do, and what must it not do?
+  - id: long-bathroom-visit
+    window: [70, 429]
+    question: >-
+      The person has been out of view, presumably in the bathroom, for about six minutes. What should the agent do, and should the caregiver be told? Any deadline is a caregiver threshold.
+  - id: back-in-bed
+    window: [490, 640]
+    question: >-
+      The person is back in bed. What should the agent do now?

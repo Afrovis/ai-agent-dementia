@@ -1,0 +1,28 @@
+id: disorientation-05
+category: disorientation
+summary: >-
+  In the middle of the night, believes it is morning and says they must make breakfast for the children.
+start: "03:00"
+timeline:
+  - {t: 0, person: {state: sitting_up, zone: bed}}
+  - {t: 10, utterance: {text: 'Is it morning? I have to make the children''s breakfast.'}}
+  - {t: 25, person: {state: standing, zone: bed}}
+  - {t: 40, person: {state: walking, zone: door}}
+  - {t: 100, person: {state: standing, zone: door}}
+  - {t: 200, person: {state: walking, zone: bed}}
+  - {t: 230, person: {state: sitting_up, zone: bed}}
+  - {t: 290, person: {state: in_bed, zone: bed}}
+  - {t: 440, person: {state: in_bed, zone: bed}}
+checkpoints:
+  - id: breakfast
+    window: [10, 99]
+    question: >-
+      The person thinks it is morning and wants to make breakfast for their children, who are grown up. What should the agent say, and what must it not say?
+  - id: returns
+    window: [200, 289]
+    question: >-
+      The person walks back and sits on the bed. What should the agent do?
+  - id: settled
+    window: [290, 440]
+    question: >-
+      The person is lying in bed again. What should the agent do now?

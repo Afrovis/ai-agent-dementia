@@ -1,0 +1,21 @@
+id: fall-06
+category: fall
+summary: >-
+  Is reported on the floor by the door with moderate confidence and calls for their son.
+start: "04:30"
+timeline:
+  - {t: 0, person: {state: standing, zone: bed}}
+  - {t: 20, person: {state: walking, zone: door}}
+  - {t: 35, person: {state: on_floor, zone: door, confidence: 0.6}}
+  - {t: 45, utterance: {text: Tom!}}
+  - {t: 90, person: {state: on_floor, zone: door, confidence: 0.6}}
+  - {t: 250, person: {state: on_floor, zone: door, confidence: 0.6}}
+checkpoints:
+  - id: on-floor
+    window: [35, 120]
+    question: >-
+      The camera reports the person on the floor by the door with moderate confidence, and they call for Tom. What should the agent do, and must the caregiver be told? Any deadline is a caregiver threshold.
+  - id: still-down
+    window: [121, 250]
+    question: >-
+      The person is still reported on the floor. What should the agent do now?

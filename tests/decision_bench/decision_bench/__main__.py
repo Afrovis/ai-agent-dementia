@@ -125,6 +125,10 @@ def main(argv: list[str] | None = None) -> int:
         from decision_bench.annotate import main as annotate_main
 
         return annotate_main(argv[1:])
+    if argv and argv[0] == "noise":
+        from decision_bench.noise import main as noise_main
+
+        return noise_main(argv[1:])
     if argv and argv[0] == "apply":
         from decision_bench.review import main as review_main
 

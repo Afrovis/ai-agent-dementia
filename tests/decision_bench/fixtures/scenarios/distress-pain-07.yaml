@@ -1,0 +1,21 @@
+id: distress-pain-07
+category: distress_pain
+summary: >-
+  Says their head is pounding, later says it is a bit better, and lies down.
+start: "00:45"
+timeline:
+  - {t: 0, person: {state: sitting_up, zone: bed}}
+  - {t: 10, utterance: {text: My head is pounding.}}
+  - {t: 40, person: {state: sitting_up, zone: bed}}
+  - {t: 120, utterance: {text: It's a bit better now.}}
+  - {t: 140, person: {state: in_bed, zone: bed}}
+  - {t: 300, person: {state: in_bed, zone: bed}}
+checkpoints:
+  - id: headache
+    window: [10, 119]
+    question: >-
+      The person says their head is pounding. What should the agent do, and should the caregiver be told?
+  - id: better
+    window: [120, 300]
+    question: >-
+      The person says it is a bit better and lies down. What should the agent do now?

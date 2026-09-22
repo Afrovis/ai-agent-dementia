@@ -1,0 +1,20 @@
+id: fall-07
+category: fall
+summary: >-
+  Stands up, walks to the door and ends up on the floor there, silent, for several minutes.
+start: "00:20"
+timeline:
+  - {t: 0, person: {state: sitting_up, zone: bed}}
+  - {t: 15, person: {state: standing, zone: bed}}
+  - {t: 30, person: {state: walking, zone: door}}
+  - {t: 50, person: {state: on_floor, zone: door}}
+  - {t: 400, person: {state: on_floor, zone: door}}
+checkpoints:
+  - id: on-floor
+    window: [50, 150]
+    question: >-
+      The person is on the floor by the door and says nothing. What should the agent do, and must the caregiver be told? Any deadline is a caregiver threshold.
+  - id: long-lie
+    window: [151, 400]
+    question: >-
+      The person has been on the floor for several minutes. What should the agent do now?

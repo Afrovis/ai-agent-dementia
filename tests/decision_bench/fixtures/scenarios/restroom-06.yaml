@@ -1,0 +1,28 @@
+id: restroom-06
+category: restroom
+summary: >-
+  Makes a toilet trip, settles back in bed, and about twenty minutes later gets up again saying they need the toilet.
+start: "01:25"
+timeline:
+  - {t: 0, person: {state: sitting_up, zone: bed}}
+  - {t: 10, utterance: {text: I need the loo.}}
+  - {t: 25, person: {state: walking, zone: bathroom_path}}
+  - {t: 50, person: {state: absent, zone: other}}
+  - {t: 230, person: {state: walking, zone: bathroom_path}}
+  - {t: 260, person: {state: in_bed, zone: bed}}
+  - {t: 1200, person: {state: sitting_up, zone: bed}}
+  - {t: 1210, utterance: {text: I need the loo again.}}
+  - {t: 1225, person: {state: walking, zone: bathroom_path}}
+  - {t: 1250, person: {state: absent, zone: other}}
+  - {t: 1430, person: {state: walking, zone: bathroom_path}}
+  - {t: 1460, person: {state: in_bed, zone: bed}}
+  - {t: 1600, person: {state: in_bed, zone: bed}}
+checkpoints:
+  - id: second-trip
+    window: [1210, 1249]
+    question: >-
+      About twenty minutes after the last toilet trip the person gets up and says they need the loo again. What should the agent do, and what must it not do?
+  - id: after-second-trip
+    window: [1460, 1600]
+    question: >-
+      The person is back in bed after the second trip. What should the agent do, and should the caregiver be told about the repeated trips?
