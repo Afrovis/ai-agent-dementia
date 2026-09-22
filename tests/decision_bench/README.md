@@ -12,10 +12,9 @@ caregiver, and how quickly.
 It is not a CI gate. Run it when you change the session rules, the strategy
 order, the prompts or the model, and compare the reports.
 
-> Status: phase 2 of [PLAN.md](PLAN.md). The real-agent replay harness,
-> scoring, reports, CLI and seven unlabelled pilot scenarios exist. Reviewed
-> labels are phase 3, so the pilots currently produce review summaries rather
-> than pass rates.
+> Status: phase 3 of [PLAN.md](PLAN.md). The seven pilot scenarios carry
+> human-reviewed labels drafted by the isolated annotator, so runs produce
+> pass rates. Scaling up to about 30 scenarios is phase 4.
 
 ## What it measures
 
@@ -125,6 +124,73 @@ Time thresholds such as "escalate within N seconds" do not come from the
 guidelines. They are marked `threshold_source: caregiver` and are never
 attributed to the evidence.
 
+### Annotating and reviewing
+
+The project skill `.claude/skills/decision-bench-annotate` runs this loop.
+By hand:
+
+```sh
+python -m decision_bench annotate --dry-run --scenario <id>   # print the exact prompt
+python -m decision_bench annotate --scenario <id>             # two Opus runs + triage;
+                                                              # unflagged scenarios are applied
+# only if flagged: edit annotations/review/<id>.yaml, set reviewed: true
+python -m decision_bench apply <id>                           # labels into the fixture
+```
+
+`annotate` runs `claude -p --model opus` with no tools and no settings from
+an empty temp directory. It sends the prompt in
+`decision_bench/annotator_prompt.md` plus `guidelines.md`, the profile and
+the scenario without any existing labels, so the annotator cannot see the
+agent or its config. It may cite only clauses whose `Checked` box is ticked.
+Its output must pass the schema, and it gets one retry with the problems
+listed. It writes `annotations/model/<id>.yaml` (the untouched draft, with
+the model id, cost and hashes of the prompt, guidelines and scenario) and
+`annotations/review/<id>.yaml`. The review file is self-contained: the
+timeline with clock times, each checkpoint's question, the annotator's labels
+and its doubts, each marked as the annotator's. `apply` refuses an
+unreviewed file or a changed checkpoint without a `reason`, rewrites only the
+fixture's `checkpoints:` block, and logs each change in
+`annotations/disagreements.yaml`. `annotate --review-only --force` rebuilds
+the review files from the drafts without calling the annotator, overwriting
+any edits.
+
+### Triage: which labels need a human
+
+`annotate` runs the annotator twice, independently, and compares the runs
+(`decision_bench/triage.py`). A checkpoint is flagged for a human when:
+
+- either run sets `needs_review` (it could reasonably go either way);
+- the two runs have different `must_not` sets;
+- one run sets an escalation deadline and the other does not;
+- their `acceptable` sets have nothing in common.
+
+A different deadline *number* is not flagged, because it is a caregiver
+placeholder either way. A scenario with no flags is accepted as the model
+labelled it: its review file gets `reviewed_by: model` and `annotate`
+applies it straight away (`--no-apply` stops that). A flagged scenario waits
+for a human, and its review file marks each flagged checkpoint `NEEDS YOUR
+REVIEW` next to the second opinion's labels. Triage never accepts what it
+cannot check: a draft without the self-flag or without a second opinion is
+always flagged. Editing a model-accepted file requires
+`reviewed_by: human`.
+
+### Verdicts on spoken sentences
+
+`correction_of_reality`, `infantilising` and `unsupported_claim` have no
+string rule. With `--judge`, each new sentence goes to an isolated Claude
+evidence judge: `claude -p` with no tools, on the claude.ai subscription,
+never an API key. The judge sees the profile and that sentence's context:
+the time words, the person's last words, the camera reading, and whether a
+caregiver was notified. It decides each pattern and quotes its evidence.
+Its answer is stored under `judge:` in `annotations/say_verdicts.yaml`.
+
+The top-level values in that file are the human's. A human value always
+wins, and every place where it disagrees with the judge is printed after the
+report. A `true` verdict counts as a wording failure on every run.
+Verdicts are per sentence, and the judge sees the context of the sentence's
+first occurrence. `--collect-verdicts` adds new sentences without judging
+them.
+
 ## Running
 
 The scenario clock ticks once per second. Person readings repeat at
@@ -145,6 +211,7 @@ python -m decision_bench --model gemma4:e4b-mlx --model llama3.1:8b
 python -m decision_bench --backend openai --base-url http://127.0.0.1:11435 --model <mlx-model>
 python -m decision_bench --category fall --scenario fall-01   # narrow the run
 python -m decision_bench --backend stub --json --out decision-report.json
+python -m decision_bench --model gemma4:e4b-mlx --judge   # evidence-check new sentences (subscription)
 ```
 
 ## Caveats

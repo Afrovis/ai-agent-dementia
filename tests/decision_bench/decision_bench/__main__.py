@@ -9,12 +9,15 @@ from time import perf_counter
 
 from agent.llm import local_llm
 
+from decision_bench.annotate import AnnotatorError
+from decision_bench.judge import first_occurrences, judge_sentences, sentences_from_trace
 from decision_bench.report import print_json_report, print_report, print_trace, write_json_report
-from decision_bench.runner import run_scenario
+from decision_bench.runner import Trace, run_scenario
 from decision_bench.schema import (
     CATEGORIES,
     DEFAULT_PROFILE_PATH,
     SCENARIOS_DIR,
+    Scenario,
     citation_problems,
     guideline_clauses,
     load_default_profile,
@@ -22,6 +25,14 @@ from decision_bench.schema import (
 )
 from decision_bench.scoring import ModelResult, score_scenario
 from decision_bench.stub_llm import StubLLM
+from decision_bench.verdicts import (
+    VERDICTS_PATH,
+    add_pending,
+    conflicts,
+    load_verdicts,
+    record_judgements,
+    unjudged,
+)
 
 DEFAULT_MODELS = ("llama3.1:8b", "qwen2.5:7b", "mistral:7b")
 
@@ -49,6 +60,25 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--trace", action="store_true")
     parser.add_argument("--out", type=Path, help="also write the JSON report to this path")
     parser.add_argument(
+        "--verdicts",
+        type=Path,
+        default=VERDICTS_PATH,
+        help="human verdicts on sentences for the review-only wording patterns",
+    )
+    parser.add_argument(
+        "--judge",
+        action="store_true",
+        help="check new sentences against the profile with an isolated Claude judge "
+        "(Claude Code on the claude.ai subscription, not the API)",
+    )
+    parser.add_argument("--judge-model", default="opus")
+    parser.add_argument("--judge-effort", default="medium")
+    parser.add_argument(
+        "--collect-verdicts",
+        action="store_true",
+        help="append sentences still needing a human verdict to --verdicts",
+    )
+    parser.add_argument(
         "--no-warmup",
         action="store_true",
         help="skip the untimed model call that loads the model before the first scenario",
@@ -63,7 +93,42 @@ def _client(backend: str, model: str, args: argparse.Namespace):
     return local_llm(backend, url=url, model=model, timeout_seconds=args.timeout)
 
 
+def _judge(runs, args: argparse.Namespace) -> None:
+    sentences = [
+        sentence
+        for model_runs in runs.values()
+        for _, trace, _, profile in model_runs
+        for sentence in sentences_from_trace(trace, profile)
+    ]
+    pending = first_occurrences(sentences, unjudged((s.text for s in sentences), args.verdicts))
+    if not pending:
+        print("judge: every sentence already checked", file=sys.stderr)
+        return
+    try:
+        judged, used_model = judge_sentences(
+            pending, model=args.judge_model, effort=args.judge_effort
+        )
+    except AnnotatorError as exc:
+        raise SystemExit(str(exc)) from exc
+    recorded = record_judgements(
+        ((s.text, verdict) for s, verdict in zip(pending, judged, strict=True)),
+        used_model,
+        args.verdicts,
+    )
+    print(f"judge ({used_model}): checked {recorded} sentence(s)", file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
+    if argv is None:
+        argv = sys.argv[1:]
+    if argv and argv[0] == "annotate":
+        from decision_bench.annotate import main as annotate_main
+
+        return annotate_main(argv[1:])
+    if argv and argv[0] == "apply":
+        from decision_bench.review import main as review_main
+
+        return review_main(argv[1:])
     args = build_arg_parser().parse_args(argv)
     if args.timeout <= 0:
         raise SystemExit("--timeout must be greater than zero")
@@ -79,12 +144,13 @@ def main(argv: list[str] | None = None) -> int:
         scenarios = [item for item in scenarios if item.id in wanted]
     warnings = citation_problems(scenarios, guideline_clauses())
     models = args.models or (["stub"] if args.backend == "stub" else list(DEFAULT_MODELS))
-    results: list[ModelResult] = []
+    runs: dict[str, list[tuple[Scenario, Trace, float, dict[str, object]]]] = {}
+    wall_times: dict[str, float] = {}
     traces = []
 
     for model in models:
         started = perf_counter()
-        scenario_results = []
+        runs[model] = []
         client = _client(args.backend, model, args)
         if args.backend != "stub" and not args.no_warmup:
             # A cold model can exceed --timeout on its first calls, which would
@@ -100,17 +166,36 @@ def main(argv: list[str] | None = None) -> int:
             )
             elapsed = perf_counter() - scenario_started
             profile = load_default_profile(args.profile) | scenario.profile
-            scenario_results.append(
-                score_scenario(scenario, trace, profile=profile, wall_time_seconds=elapsed)
-            )
+            runs[model].append((scenario, trace, elapsed, profile))
             traces.append((model, trace))
-        results.append(
-            ModelResult(
-                model=model,
-                scenarios=tuple(scenario_results),
-                wall_time_seconds=perf_counter() - started,
-            )
+        wall_times[model] = perf_counter() - started
+
+    if args.collect_verdicts or args.judge:
+        texts = [
+            str(entry.data.get("text", ""))
+            for _, trace in traces
+            for entry in trace.entries
+            if entry.kind == "Say"
+        ]
+        added = add_pending(texts, args.verdicts)
+        print(f"{added} new sentence(s) added to {args.verdicts}", file=sys.stderr)
+    if args.judge:
+        _judge(runs, args)
+
+    verdicts = load_verdicts(args.verdicts)
+    results = [
+        ModelResult(
+            model=model,
+            scenarios=tuple(
+                score_scenario(
+                    scenario, trace, profile=profile, wall_time_seconds=elapsed, verdicts=verdicts
+                )
+                for scenario, trace, elapsed, profile in model_runs
+            ),
+            wall_time_seconds=wall_times[model],
         )
+        for model, model_runs in runs.items()
+    ]
 
     if args.json:
         print_json_report(results, warnings)
@@ -124,6 +209,13 @@ def main(argv: list[str] | None = None) -> int:
             print_trace(trace, file=destination)
     if args.out:
         write_json_report(args.out, results, warnings)
+    disputed = conflicts(args.verdicts)
+    if disputed:
+        destination = sys.stderr if args.json else None
+        print(f"\n{len(disputed)} human verdict(s) the judge disagrees with:", file=destination)
+        for text, pattern, human, judged, evidence in disputed:
+            print(f"  {pattern}: human {human}, judge {judged}: {text!r}", file=destination)
+            print(f"    judge's evidence: {evidence}", file=destination)
     return 0
 
 

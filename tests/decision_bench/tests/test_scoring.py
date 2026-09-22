@@ -279,3 +279,54 @@ def test_aggregates_by_category_and_clean_noisy():
     assert result.unlabelled_count == 1
     assert result.llm_errors == 1
     assert result.llm_none == 2
+
+
+def test_escalate_by_met_by_earlier_notify_while_still_escalated():
+    trace = _trace([_state(0), _notify(5), _state(5, phase="ESCALATED")])
+    checkpoint = _checkpoint(window=(10.0, 40.0), escalate_by=30, trigger=10)
+    result = score_checkpoint(checkpoint, trace, profile=_PROFILE)
+    assert result.status == "pass"
+    assert result.escalation_latency == 0.0
+
+
+def test_escalate_by_earlier_notify_does_not_count_after_leaving_escalated():
+    trace = _trace([_state(0), _notify(5), _state(5, phase="ESCALATED"), _state(8, phase="IDLE")])
+    checkpoint = _checkpoint(window=(10.0, 40.0), escalate_by=30, trigger=10)
+    result = score_checkpoint(checkpoint, trace, profile=_PROFILE)
+    assert result.status == "critical"
+    assert result.escalation_latency is None
+
+
+def test_human_verdict_resolves_review_pattern():
+    trace = _trace([_state(0), _say(12, "Hello  Jean, it's night.")])
+    checkpoint = _checkpoint(must_not=(Action(say="infantilising"),))
+    fine = {("Hello Jean, it's night.", "infantilising"): False}
+    assert score_checkpoint(checkpoint, trace, profile=_PROFILE, verdicts=fine).status == "pass"
+    bad = {("Hello Jean, it's night.", "infantilising"): True}
+    assert score_checkpoint(checkpoint, trace, profile=_PROFILE, verdicts=bad).status == "critical"
+    other = {("Something else.", "infantilising"): False}
+    assert score_checkpoint(checkpoint, trace, profile=_PROFILE, verdicts=other).status == "review"
+
+
+def test_true_verdict_and_invented_direction_count_as_wording_failures():
+    from decision_bench.schema import Scenario
+    from decision_bench.scoring import score_scenario
+
+    scenario = Scenario.model_validate(
+        {
+            "id": "synthetic",
+            "category": "restroom",
+            "summary": "s",
+            "start": "02:00",
+            "timeline": [{"t": 0, "person": {"state": "sitting_up", "zone": "bed"}}],
+            "checkpoints": [{"id": "cp", "window": [0, 10], "question": "q"}],
+        }
+    )
+    trace = _trace(
+        [_say(1, "Tom is here now."), _say(2, "The restroom is just outside the bedroom.")]
+    )
+    profile = dict(_PROFILE, restroom_location="")
+    verdicts = {("Tom is here now.", "unsupported_claim"): True}
+    result = score_scenario(scenario, trace, profile=profile, verdicts=verdicts)
+    assert result.wording_failures["unsupported_claim"] == 1
+    assert result.wording_failures["invents_directions"] == 1

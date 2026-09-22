@@ -1,0 +1,58 @@
+id: silent-wander-02
+category: silent_wander
+summary: >-
+  Gets up without speaking, walks to the door, stands there for a few
+  minutes, then walks back and gets into bed on their own.
+start: "03:45"
+timeline:
+  - {t: 0,   person: {state: sitting_up, zone: bed}}
+  - {t: 15,  person: {state: standing, zone: bed}}
+  - {t: 30,  person: {state: walking, zone: door}}
+  - {t: 60,  person: {state: standing, zone: door}}
+  - {t: 240, person: {state: walking, zone: other}}
+  - {t: 270, person: {state: sitting_up, zone: bed}}
+  - {t: 290, person: {state: in_bed, zone: bed}}
+  - {t: 450, person: {state: in_bed, zone: bed}}
+checkpoints:
+  - id: at-the-door
+    window: [30, 239]
+    question: >-
+      The person walks to the door without speaking and stands there. What should the agent do, and what
+      must it not do?
+    acceptable:
+      - {strategy: path_light}
+      - {goal: restroom}
+      - {strategy: ambient_orient}
+      - {strategy: soft_greeting}
+      - {strategy: validate_and_redirect}
+      - {strategy: orient_time_place}
+      - {notify: info}
+      - {notify: attention}
+    must_not:
+      - {notify: critical}
+    rationale: >-
+      At 03:45 Jean gets up without speaking, walks to the door and stands there for about three minutes
+      (t=60–240). She is unsteady at night and uses a walker. TOIL-01 and DICE-01 treat restless silent
+      walking as a possible toileting or way-finding need, and TOIL-02 and TOIL-04 make lighting the route
+      to the toilet a strong choice. NICE-02, AA-01, AA-02 and AA-04 support a calm first response: ambient
+      cues, a soft greeting, gently saying it is night-time, or validating and redirecting. AA-05 allows
+      walking with supervision, which supports an info or attention note to the caregiver. It also rules
+      out a critical call just because she is walking and standing.
+    cites: [TOIL-01, TOIL-02, TOIL-04, DICE-01, NICE-02, AA-01, AA-02, AA-04, AA-05]
+  - id: returns-to-bed
+    window: [270, 450]
+    question: The person walks back and gets into bed on their own. What should the agent do now?
+    acceptable:
+      - {phase: COOLDOWN}
+      - {phase: IDLE}
+    must_not:
+      - {strategy: orient_time_place}
+      - {notify: critical}
+      - {notify: attention}
+    rationale: >-
+      Jean walks back on her own, sits on the bed at t=270 and is lying in bed from t=290 to t=450. NICE-05
+      says that once the person settles by themselves, the agent should support rest and stay quiet: it
+      should not rouse her to orient her, and it should not ask the caregiver to act. So the right response
+      is to wind down (COOLDOWN) or go back to IDLE. Starting an orientation strategy, or sending an attention
+      or critical notification, would work against a person who has already settled.
+    cites: [NICE-05, AA-05]

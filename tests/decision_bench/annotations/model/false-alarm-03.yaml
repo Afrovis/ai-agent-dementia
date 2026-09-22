@@ -1,0 +1,33 @@
+scenario: false-alarm-03
+annotator:
+  model: claude-opus-5
+  effort: high
+  date: '2026-09-21'
+  attempts: 1
+  session_id: 5a08c97e-e8ba-4beb-b7e2-7edc17ab7b98
+  list_price_usd: 0.161265
+  prompt_sha256: 76eb2712d96cf8dd5c5e52f74c413014919e34ff1dc2abd6cebe6eb8c17a3941
+  guidelines_sha256: ee0ed966fce268e5baacea5d74db35489410f8f5429af7df3a8b8c86ac4f611d
+  scenario_sha256: 5df2643f666f16deb518380071c77371689383256e322a540f85b74199cfd268
+scenario_notes: The window starts at the first utterance (t=20) and ends at the last camera reading (t=240),
+  so it covers both utterances. There's no problem with the scenario.
+checkpoints:
+  - id: sleep-talk
+    acceptable: []
+    must_not:
+      - {say: any}
+      - {notify: any}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      The camera reads in_bed/bed for the whole window (confidence 0.8–0.9), and the two low-confidence
+      utterances ('No, no, leave it there', 'mm the garden') are sleep talk. The person never sits up
+      or gets up. NICE-05 says that at night the job is to support rest, a settled person is not roused,
+      and staying quiet (no say, no notify) is the fitting action. So nothing needs to happen, and speaking
+      or notifying the caregiver would be the failure.
+    cites: [NICE-05]
+    uncertain: I did not put strategy ambient_orient or path_light in must_not. Switching on a light or
+      screen could wake Jean, which goes against the spirit of NICE-05, but the clause names only say
+      and notify. A reviewer may want to add them. 'No, no' could sound distressed, but the person is
+      in bed and the words are low-confidence sleep talk, so I did not treat it as distress that NICE-01
+      or AA-01 would respond to.

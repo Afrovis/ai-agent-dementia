@@ -1,0 +1,91 @@
+scenario: disorientation-03
+annotator:
+  model: claude-opus-5
+  effort: high
+  date: '2026-09-21'
+  attempts: 1
+  session_id: 41e1c370-cff7-4709-b52b-1d3d4c467a64
+  list_price_usd: 0.20847
+  prompt_sha256: 76eb2712d96cf8dd5c5e52f74c413014919e34ff1dc2abd6cebe6eb8c17a3941
+  guidelines_sha256: ee0ed966fce268e5baacea5d74db35489410f8f5429af7df3a8b8c86ac4f611d
+  scenario_sha256: 02c38c6dee38f507b8a3da650444e9d32d61df4c8ab8673fb4c5246bc600fbe0
+scenario_notes: The 'door' zone is ambiguous. The profile puts the bathroom through the bedroom door and
+  to the left, so being at the door might mean she is heading for the toilet rather than trying to leave.
+  The still-up question only asks about notification, so I left strategies out of acceptable there. The
+  header of the guideline pack says no clause has been checked yet, but the individual Checked boxes are
+  ticked and the input lists the clauses as citable. I relied on the input's list.
+checkpoints:
+  - id: late-for-work
+    acceptable:
+      - {strategy: validate_and_redirect}
+      - {strategy: soft_greeting}
+      - {strategy: orient_time_place}
+    must_not:
+      - {say: correction_of_reality}
+      - {say: memory_question}
+      - {say: conjunction_but}
+      - {say: infantilising}
+      - {notify: critical}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      At t=15 Jean, sitting up at 04:40, says she is late for work. That belief is not true now, so the
+      companion must not argue with it or correct it (AA-03, VAL-01, PCC-01). A calm greeting, naming
+      the worry and gently redirecting, or gently saying it is still night-time are all good first responses
+      (AA-01, AA-02, AA-04, AA-07, VAL-02, NICE-02). She is standing but has not fallen, so a critical
+      alert is ruled out (AA-05).
+    cites: [AA-01, AA-02, AA-03, AA-04, AA-05, AA-07, VAL-01, VAL-02, PCC-01, NICE-02]
+    uncertain: orient_time_place is acceptable under AA-02, but if the companion answers 'it's night-time'
+      straight after 'I'm late for work', it could come across as a correction. The review judge has to
+      draw the AA-02/AA-03 line sentence by sentence.
+  - id: looking-for-clothes
+    acceptable:
+      - {strategy: validate_and_redirect}
+      - {strategy: guided_return}
+      - {goal: bed}
+      - {strategy: orient_time_place}
+      - {strategy: path_light}
+      - {goal: restroom}
+    must_not:
+      - {say: correction_of_reality}
+      - {say: memory_question}
+      - {say: unsupported_claim}
+      - {say: conjunction_but}
+      - {notify: critical}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      Jean has been walking around the room since t=40 and at t=90 asks where her work clothes are. No
+      other need has been stated, so acknowledging the wish and then gently redirecting towards bed fits
+      (AA-04, AA-07, VAL-01, VAL-02). Walking the whole time with no progress also supports trying something
+      else, such as lighting the path or offering the toilet, because pacing can be a sign she needs it
+      (DICE-03, DICE-01, TOIL-01, TOIL-04). The companion must not ask her to remember where she put the
+      clothes, must not say where they are (it cannot know), must not tell her she no longer works, and
+      must not raise a critical alert for walking (VAL-01, AA-03, NICE-04, AA-05).
+    cites: [AA-03, AA-04, AA-05, AA-07, VAL-01, VAL-02, DICE-01, DICE-03, TOIL-01, TOIL-04, NICE-04]
+    uncertain: Banning unsupported_claim here rests on NICE-04 and PCC-style reasoning (facts come from
+      the profile), not on a clause that is explicitly about hallucination. Allowing path_light or goal
+      restroom leans on TOIL-01's point that pacing can mean a toilet need. She never mentioned the toilet,
+      so a reviewer may want to drop these.
+  - id: still-up
+    acceptable:
+      - {notify: info}
+      - {notify: attention}
+      - {phase: ESCALATED}
+    must_not:
+      - {notify: critical}
+      - {phase: IDLE}
+    escalate_by: 300.0
+    trigger: 270.0
+    rationale: >-
+      By t=270 Jean has been up since t=25 (over four minutes). She is unsteady at night, uses a walker,
+      and has not settled despite the earlier checkpoints. From t=420 she is at the door. AA-05's 'with
+      supervision' and DICE-03's hand-over when strategies are not working support an info or attention
+      notification. AA-05 rules out a critical alert for walking alone, and she is clearly still up, so
+      IDLE is wrong. The 300 s deadline from t=270 is a placeholder for Tom to set, not a number taken
+      from any clause.
+    cites: [AA-05, DICE-03, FALL-01]
+    uncertain: Banning notify critical is a judgement call. She is unsteady, uses a walker and has reached
+      the door, so a careful caregiver might want 'come now'. AA-05 covers walking but was not written
+      with an unsteady walker-user in mind. I cite FALL-01 only for the higher fall risk behind the notification,
+      not as a reason to escalate to critical. The trigger and deadline are placeholders.

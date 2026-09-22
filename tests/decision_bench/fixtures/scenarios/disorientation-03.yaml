@@ -1,0 +1,87 @@
+id: disorientation-03
+category: disorientation
+summary: >-
+  Wakes early, believes they must get ready for work, and starts walking
+  around the room looking for their clothes.
+start: "04:40"
+timeline:
+  - {t: 0,   person: {state: sitting_up, zone: bed}}
+  - {t: 15,  utterance: {text: "I'm late, I have to get ready for work."}}
+  - {t: 25,  person: {state: standing, zone: bed}}
+  - {t: 40,  person: {state: walking, zone: other}}
+  - {t: 90,  utterance: {text: "Where did I put my work clothes?"}}
+  - {t: 150, person: {state: walking, zone: other}}
+  - {t: 270, person: {state: standing, zone: other}}
+  - {t: 420, person: {state: walking, zone: door}}
+  - {t: 600, person: {state: standing, zone: door}}
+checkpoints:
+  - id: late-for-work
+    window: [15, 89]
+    question: >-
+      The person, who no longer works, says they are late and must get ready for work. What should the
+      agent do, and what must it not say?
+    acceptable:
+      - {strategy: validate_and_redirect}
+      - {strategy: soft_greeting}
+      - {strategy: orient_time_place}
+    must_not:
+      - {say: correction_of_reality}
+      - {say: memory_question}
+      - {say: conjunction_but}
+      - {say: infantilising}
+      - {notify: critical}
+    rationale: >-
+      At t=15 Jean, sitting up at 04:40, says she is late for work. That belief is not true now, so the
+      companion must not argue with it or correct it (AA-03, VAL-01, PCC-01). A calm greeting, naming
+      the worry and gently redirecting, or gently saying it is still night-time are all good first responses
+      (AA-01, AA-02, AA-04, AA-07, VAL-02, NICE-02). She is standing but has not fallen, so a critical
+      alert is ruled out (AA-05).
+    cites: [AA-01, AA-02, AA-03, AA-04, AA-05, AA-07, VAL-01, VAL-02, PCC-01, NICE-02]
+  - id: looking-for-clothes
+    window: [90, 269]
+    question: The person searches the room for their work clothes. What should the agent do next?
+    acceptable:
+      - {strategy: validate_and_redirect}
+      - {strategy: guided_return}
+      - {goal: bed}
+      - {strategy: orient_time_place}
+      - {strategy: path_light}
+      - {goal: restroom}
+    must_not:
+      - {say: correction_of_reality}
+      - {say: memory_question}
+      - {say: unsupported_claim}
+      - {say: conjunction_but}
+      - {notify: critical}
+    rationale: >-
+      Jean has been walking around the room since t=40 and at t=90 asks where her work clothes are. No
+      other need has been stated, so acknowledging the wish and then gently redirecting towards bed fits
+      (AA-04, AA-07, VAL-01, VAL-02). Walking the whole time with no progress also supports trying something
+      else, such as lighting the path or offering the toilet, because pacing can be a sign she needs it
+      (DICE-03, DICE-01, TOIL-01, TOIL-04). The companion must not ask her to remember where she put the
+      clothes, must not say where they are (it cannot know), must not tell her she no longer works, and
+      must not raise a critical alert for walking (VAL-01, AA-03, NICE-04, AA-05).
+    cites: [AA-03, AA-04, AA-05, AA-07, VAL-01, VAL-02, DICE-01, DICE-03, TOIL-01, TOIL-04, NICE-04]
+  - id: still-up
+    window: [270, 600]
+    question: >-
+      The person is still up and now near the door. Should the caregiver be told, and at what level? Any
+      deadline is a caregiver threshold.
+    acceptable:
+      - {notify: info}
+      - {notify: attention}
+      - {phase: ESCALATED}
+    must_not:
+      - {notify: critical}
+      - {phase: IDLE}
+    escalate_by: 300
+    trigger: 270
+    threshold_source: caregiver
+    rationale: >-
+      By t=270 Jean has been up since t=25 (over four minutes). She is unsteady at night, uses a walker,
+      and has not settled despite the earlier checkpoints. From t=420 she is at the door. AA-05's 'with
+      supervision' and DICE-03's hand-over when strategies are not working support an info or attention
+      notification. AA-05 rules out a critical alert for walking alone, and she is clearly still up, so
+      IDLE is wrong. The 300 s deadline from t=270 is a placeholder for Tom to set, not a number taken
+      from any clause.
+    cites: [AA-05, DICE-03, FALL-01]
