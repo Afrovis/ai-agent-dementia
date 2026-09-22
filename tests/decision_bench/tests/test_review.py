@@ -10,7 +10,7 @@ from decision_bench.annotate import (
     write_annotation_files,
 )
 from decision_bench.review import ReviewError, apply_scenario
-from decision_bench.schema import Action, GUIDELINES_PATH, load_default_profile, load_scenario
+from decision_bench.schema import GUIDELINES_PATH, Action, load_default_profile, load_scenario
 
 FIXTURE = Path(__file__).parents[1] / "fixtures/scenarios/false-alarm-01.yaml"
 

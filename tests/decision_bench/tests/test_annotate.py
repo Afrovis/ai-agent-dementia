@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -9,9 +10,12 @@ from decision_bench.annotate import (
     annotate_scenario,
     annotator_input,
     citable_clauses,
+    normalize_ollama_output,
     output_schema,
+    run_ollama,
     validate_annotation,
     write_annotation_files,
+    write_local_annotation,
 )
 from decision_bench.annotate import (
     main as annotate_main,
@@ -102,6 +106,456 @@ def test_schema_covers_actions_and_citable_ids():
     }
     assert covered == {kind: set(values) for kind, values in ACTION_VALUES.items()}
     assert checkpoint["properties"]["cites"]["items"]["enum"] == citable_clauses()
+
+
+def test_run_ollama_sends_json_mode_schema_prompt_and_deterministic_options(monkeypatch):
+    scenario = load_scenario(FIXTURE)
+    output = _output(scenario, needs_review=False)
+    requests = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return json.dumps({"message": {"content": json.dumps(output)}}).encode()
+
+    def urlopen(request, timeout):
+        requests.append((request, timeout))
+        return Response()
+
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+    schema = output_schema(scenario, citable_clauses())
+    result = run_ollama(
+        ANNOTATOR_PROMPT_PATH,
+        "user prompt",
+        schema,
+        "qwen3.5:9b",
+        "high",
+    )
+
+    payload = json.loads(requests[0][0].data)
+    assert payload["format"] == "json"
+    assert payload["options"] == {"temperature": 0, "num_ctx": 32768, "num_predict": 4096}
+    assert "## Required output format" in payload["messages"][1]["content"]
+    assert json.dumps(schema, indent=2, sort_keys=True) in payload["messages"][1]["content"]
+    assert payload["think"] is True
+    assert requests[0][1] == 300
+    assert result["structured_output"] == output
+    assert result["backend"] == "ollama"
+    assert result["total_cost_usd"] == 0.0
+    assert result["normalization_changed"] is False
+    assert result["normalization_notes"] == []
+    assert result["attempt_temperatures"] == [0]
+
+
+@pytest.mark.parametrize(
+    "wrapped",
+    [
+        "```json\n{output}\n```",
+        "Here is the requested object:\n{output}\nEnd of response.",
+    ],
+)
+def test_run_ollama_parses_fence_and_prose_wrapped_replies(monkeypatch, wrapped):
+    scenario = load_scenario(FIXTURE)
+    output = _output(scenario, needs_review=False)
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            content = wrapped.format(output=json.dumps(output))
+            return json.dumps({"message": {"content": content}}).encode()
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda request, timeout: Response())
+    result = run_ollama(
+        ANNOTATOR_PROMPT_PATH,
+        "user prompt",
+        output_schema(scenario, citable_clauses()),
+        "qwen3.5:9b",
+        "high",
+    )
+    assert result["structured_output"] == output
+
+
+@pytest.mark.parametrize(
+    ("inner_value",),
+    [
+        (True,),
+        (None,),
+        ({},),
+        (1,),
+        ("ignored",),
+    ],
+)
+def test_normalize_ollama_output_collapses_nested_action_regardless_of_inner_value(inner_value):
+    action = {"say": {"correction_of_reality": inner_value}}
+    original = {"checkpoints": [{"id": "repeats", "acceptable": [action], "must_not": [action]}]}
+    normalized = normalize_ollama_output(original)
+    assert normalized["checkpoints"][0]["acceptable"] == [{"say": "correction_of_reality"}]
+    assert normalized["checkpoints"][0]["must_not"] == [{"say": "correction_of_reality"}]
+    assert original == {
+        "checkpoints": [{"id": "repeats", "acceptable": [action], "must_not": [action]}]
+    }
+
+
+@pytest.mark.parametrize(
+    ("action", "expected"),
+    [
+        ({"strategy": {"name": "guided_return"}}, {"strategy": "guided_return"}),
+        ({"say": {"name": "correction_of_reality"}}, {"say": "correction_of_reality"}),
+        (
+            {"strategy": {"name": "not_a_strategy"}},
+            {"strategy": {"name": "not_a_strategy"}},
+        ),
+        (
+            {"strategy": {"guided_return": "guided_return"}},
+            {"strategy": "guided_return"},
+        ),
+    ],
+)
+def test_normalize_ollama_output_collapses_nested_action_value(action, expected):
+    output = {"checkpoints": [{"id": "repeats", "acceptable": [action], "must_not": []}]}
+    normalized = normalize_ollama_output(output)
+    assert normalized["checkpoints"][0]["acceptable"] == [expected]
+
+
+@pytest.mark.parametrize(
+    ("action", "expected"),
+    [
+        ({"strategy": ["soft_greeting"]}, {"strategy": "soft_greeting"}),
+        ("say correction_of_reality", {"say": "correction_of_reality"}),
+        ("say: correction_of_reality", {"say": "correction_of_reality"}),
+        ("bed", {"goal": "bed"}),
+    ],
+)
+def test_normalize_ollama_output_repairs_other_known_action_shapes(action, expected):
+    original = {"checkpoints": [{"id": "repeats", "acceptable": [action], "must_not": [action]}]}
+    normalized = normalize_ollama_output(original)
+    assert normalized["checkpoints"][0]["acceptable"] == [expected]
+    assert normalized["checkpoints"][0]["must_not"] == [expected]
+
+
+def test_normalize_ollama_output_leaves_unknown_nested_action_for_validation():
+    scenario = load_scenario(FIXTURE)
+    output = _output(scenario, needs_review=False)
+    output["checkpoints"][0]["must_not"] = [{"say": {"not_a_real_value": {}}}]
+    normalized = normalize_ollama_output(output)
+    assert normalized["checkpoints"][0]["must_not"] == [{"say": {"not_a_real_value": {}}}]
+    _, problems = validate_annotation(scenario, normalized, citable_clauses())
+    assert problems
+
+
+def test_normalize_ollama_output_fills_only_absent_scalar_fields():
+    checkpoint = {
+        "id": "repeats",
+        "acceptable": [{"phase": "OBSERVING"}],
+        "must_not": [{"say": "any"}],
+    }
+    normalized = normalize_ollama_output({"checkpoints": [checkpoint]})
+    assert normalized["checkpoints"][0] == checkpoint | {
+        "escalate_by": None,
+        "trigger": None,
+        "uncertain": "",
+        "needs_review": False,
+        "cites": [],
+    }
+    assert "rationale" not in normalized["checkpoints"][0]
+
+
+def test_normalize_ollama_output_preserves_falsy_scalar_fields():
+    checkpoint = {
+        "id": "repeats",
+        "acceptable": [{"phase": "OBSERVING"}],
+        "must_not": [{"say": "any"}],
+        "trigger": 0,
+        "escalate_by": 0,
+    }
+    normalized = normalize_ollama_output({"checkpoints": [checkpoint]})
+    assert normalized["checkpoints"][0] == checkpoint | {
+        "uncertain": "",
+        "needs_review": False,
+        "cites": [],
+    }
+
+
+@pytest.mark.parametrize(
+    "escalate_by", [pytest.param(None, id="null"), pytest.param(..., id="absent")]
+)
+@pytest.mark.parametrize("field", ["trigger", "threshold_source"])
+def test_normalize_ollama_output_drops_threshold_without_escalate_by(escalate_by, field):
+    checkpoint = {
+        "id": "wants-home",
+        "acceptable": [{"phase": "OBSERVING"}],
+        "must_not": [{"say": "any"}],
+        field: 5,
+    }
+    if escalate_by is not ...:
+        checkpoint["escalate_by"] = escalate_by
+    notes = set()
+
+    normalized = normalize_ollama_output({"checkpoints": [checkpoint]}, notes=notes)
+
+    assert normalized["checkpoints"][0][field] is None
+    assert f"wants-home: dropped {field} without escalate_by" in notes
+
+
+@pytest.mark.parametrize("escalate_by", [0, 180])
+def test_normalize_ollama_output_keeps_thresholds_with_escalate_by(escalate_by):
+    checkpoint = {
+        "id": "wants-home",
+        "acceptable": [{"phase": "OBSERVING"}],
+        "must_not": [{"say": "any"}],
+        "escalate_by": escalate_by,
+        "trigger": 0,
+        "threshold_source": "caregiver",
+    }
+    notes = set()
+
+    normalized = normalize_ollama_output({"checkpoints": [checkpoint]}, notes=notes)
+
+    assert normalized["checkpoints"][0]["trigger"] == 0
+    assert normalized["checkpoints"][0]["threshold_source"] == "caregiver"
+    assert not any("dropped" in note for note in notes)
+
+
+def test_normalize_ollama_output_preserves_explicit_nulls():
+    checkpoint = {
+        "id": "repeats",
+        "acceptable": [{"phase": "OBSERVING"}],
+        "must_not": [{"say": "any"}],
+        "escalate_by": None,
+        "trigger": None,
+        "uncertain": None,
+        "needs_review": None,
+        "cites": None,
+        "rationale": None,
+    }
+    assert normalize_ollama_output({"checkpoints": [checkpoint]}) == {"checkpoints": [checkpoint]}
+
+
+@pytest.mark.parametrize(
+    ("cites", "expected", "note"),
+    [
+        (
+            ["NICE-01", "NICE-06", "DICE-01"],
+            ["NICE-01", "DICE-01"],
+            "chest-pain: dropped 1 invalid citation (NICE-06)",
+        ),
+        (
+            ["NICE-06", "MADE-UP"],
+            [],
+            "chest-pain: dropped 2 invalid citations (NICE-06, MADE-UP)",
+        ),
+    ],
+)
+def test_normalize_ollama_output_drops_invalid_citations(cites, expected, note):
+    checkpoint = {
+        "id": "chest-pain",
+        "acceptable": [{"phase": "OBSERVING"}],
+        "must_not": [{"say": "any"}],
+        "escalate_by": None,
+        "trigger": None,
+        "uncertain": "",
+        "needs_review": False,
+        "cites": cites,
+    }
+    notes = set()
+
+    normalized = normalize_ollama_output(
+        {"checkpoints": [checkpoint]}, notes=notes, citable=["NICE-01", "DICE-01"]
+    )
+
+    assert normalized["checkpoints"][0]["cites"] == expected
+    assert notes == {note}
+
+
+@pytest.mark.parametrize("missing", ["id", "acceptable", "must_not"])
+def test_normalize_ollama_output_leaves_checkpoint_missing_core_field_alone(missing):
+    checkpoint = {
+        "id": "repeats",
+        "acceptable": [{"say": {"correction_of_reality": {}}}],
+        "must_not": [],
+    }
+    del checkpoint[missing]
+    assert normalize_ollama_output({"checkpoints": [checkpoint]}) == {"checkpoints": [checkpoint]}
+
+
+def test_normalize_ollama_output_leaves_valid_actions_untouched():
+    output = {
+        "checkpoints": [{"acceptable": [{"phase": "OBSERVING"}], "must_not": [{"say": "any"}]}]
+    }
+    assert normalize_ollama_output(output) == output
+
+
+def test_normalize_ollama_output_leaves_unknown_junk_for_validation():
+    scenario = load_scenario(FIXTURE)
+    output = _output(scenario, needs_review=False)
+    output["checkpoints"][0]["acceptable"] = ["utter nonsense"]
+    normalized = normalize_ollama_output(output)
+    assert normalized["checkpoints"][0]["acceptable"] == ["utter nonsense"]
+    _, problems = validate_annotation(scenario, normalized, citable_clauses())
+    assert problems
+
+
+def test_run_ollama_retries_with_validation_feedback(monkeypatch):
+    scenario = load_scenario(FIXTURE)
+    output = _output(scenario, needs_review=False)
+    invalid = _output(scenario, needs_review=False)
+    invalid["checkpoints"][0]["acceptable"] = [{"say": "not_a_real_action"}]
+    responses = iter([json.dumps(invalid), json.dumps(output)])
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return json.dumps({"message": {"content": next(responses)}}).encode()
+
+    calls = []
+
+    def urlopen(request, timeout):
+        calls.append(request)
+        return Response()
+
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+    result = run_ollama(
+        ANNOTATOR_PROMPT_PATH,
+        "user prompt",
+        output_schema(scenario, citable_clauses()),
+        "qwen3.5:9b",
+        "high",
+    )
+    assert len(calls) == 2
+    assert result["runner_attempts"] == 2
+    assert result["attempt_temperatures"] == [0, 0.3]
+    assert len(result["parse_validation_failures"]) == 1
+    first_payload = json.loads(calls[0].data)
+    retry_payload = json.loads(calls[1].data)
+    assert first_payload["options"]["temperature"] == 0
+    assert retry_payload["options"]["temperature"] == 0.3
+    assert "seed" not in first_payload["options"]
+    assert "seed" not in retry_payload["options"]
+    retry_prompt = retry_payload["messages"][1]["content"]
+    assert "Your previous answer was rejected" in retry_prompt
+    assert "does not match exactly one schema" in retry_prompt
+    assert json.dumps(invalid) in retry_prompt
+
+
+def test_run_ollama_records_action_normalization(monkeypatch):
+    scenario = load_scenario(FIXTURE)
+    output = _output(scenario, needs_review=False)
+    output["checkpoints"][0]["must_not"] = [{"say": {"correction_of_reality": True}}]
+    del output["checkpoints"][0]["trigger"]
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return json.dumps({"message": {"content": json.dumps(output)}}).encode()
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda request, timeout: Response())
+    result = run_ollama(
+        ANNOTATOR_PROMPT_PATH,
+        "user prompt",
+        output_schema(scenario, citable_clauses()),
+        "qwen3.5:9b",
+        "high",
+    )
+    assert result["structured_output"]["checkpoints"][0]["must_not"] == [
+        {"say": "correction_of_reality"}
+    ]
+    assert result["normalization_changed"] is True
+    assert result["normalization_notes"] == [
+        "settles: collapsed nested say action",
+        "settles: filled missing trigger",
+    ]
+
+
+def test_run_ollama_filters_citations_using_schema(monkeypatch):
+    scenario = load_scenario(FIXTURE)
+    output = _output(scenario, needs_review=False)
+    output["checkpoints"][0]["cites"] = ["NICE-05", "NICE-06"]
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return json.dumps({"message": {"content": json.dumps(output)}}).encode()
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda request, timeout: Response())
+    result = run_ollama(
+        ANNOTATOR_PROMPT_PATH,
+        "user prompt",
+        output_schema(scenario, citable_clauses()),
+        "qwen3.5:9b",
+        "high",
+    )
+
+    assert result["structured_output"]["checkpoints"][0]["cites"] == ["NICE-05"]
+    assert result["normalization_notes"] == ["settles: dropped 1 invalid citation (NICE-06)"]
+
+
+def test_local_yaml_surfaces_normalization_notes(tmp_path):
+    scenario = load_scenario(FIXTURE)
+    output = _output(scenario, needs_review=False)
+
+    def runner(*args):
+        return _fake_result(output, model="gemma4:e4b-mlx") | {
+            "backend": "ollama",
+            "normalization_changed": True,
+            "normalization_notes": ["settles: filled missing trigger"],
+        }
+
+    result = annotate_scenario(
+        scenario,
+        profile=load_default_profile(),
+        guidelines_text=GUIDELINES_PATH.read_text(),
+        citable=citable_clauses(),
+        runner=runner,
+    )
+    path = write_local_annotation(
+        scenario,
+        result,
+        out_dir=tmp_path,
+        effort="high",
+        guidelines_text=GUIDELINES_PATH.read_text(),
+    )
+    annotator = yaml.safe_load(path.read_text())["annotator"]
+    assert annotator["normalization_changed"] is True
+    assert annotator["normalization_notes"] == ["settles: filled missing trigger"]
+
+
+def test_ollama_refuses_model_annotation_out_dir():
+    with pytest.raises(SystemExit, match="must not be annotations/model"):
+        annotate_main(
+            [
+                "--backend",
+                "ollama",
+                "--model",
+                "qwen3.5:9b",
+                "--out-dir",
+                str(Path(__file__).parents[1] / "annotations/model"),
+            ]
+        )
 
 
 def test_valid_output_writes_model_and_review(tmp_path):

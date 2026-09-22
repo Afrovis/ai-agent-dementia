@@ -1,0 +1,48 @@
+scenario: fall-07
+annotator:
+  model: gemma4:e4b-mlx
+  backend: ollama
+  effort: high
+  date: '2026-09-22'
+  attempts: 1
+  runner_attempts: 1
+  session_id: null
+  list_price_usd: 0.0
+  runtime_seconds: 12.268275375012308
+  parse_validation_failures: []
+  normalization_changed: false
+  normalization_notes: []
+  prompt_sha256: 751ed04a45dfacf07b4abd3521f4f9cf3f0e31ab27489dd6e1f5dde70e9603a9
+  guidelines_sha256: 6d40e2e8797e4a9924a806cc460dc1669759a48d06db21a2c22c4dd29161865e
+  scenario_sha256: 5e4b1cafc41c4dba5f19f5cb09f9c9c6ea566bcbba63916e2d48dc4aa8626a7e
+scenario_notes: ''
+checkpoints:
+  - id: on-floor
+    acceptable:
+      - {strategy: path_light}
+    must_not:
+      - {phase: IDLE}
+    escalate_by: 10.0
+    trigger: 50.0
+    rationale: >-
+      The person is on the floor, which is a high-risk situation. FALL-01 states that 'on_floor' needs
+      a caregiver notify without waiting for the person to ask, supporting immediate escalation. TOIL-04
+      supports lighting the path due to raised fall risk. The companion must not remain in IDLE phase.
+    cites: [FALL-01, TOIL-04]
+    uncertain: ''
+    needs_review: false
+  - id: long-lie
+    acceptable:
+      - {notify: critical}
+      - {phase: ESCALATED}
+    must_not:
+      - {phase: IDLE}
+    escalate_by: 10.0
+    trigger: 151.0
+    rationale: >-
+      The person has been on the floor for several minutes, which FALL-01 states is strongly associated
+      with serious injuries. This requires a critical caregiver notification and transition to the ESCALATED
+      phase. The companion must not remain in IDLE.
+    cites: [FALL-01]
+    uncertain: ''
+    needs_review: false

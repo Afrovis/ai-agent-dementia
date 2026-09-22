@@ -1,0 +1,54 @@
+scenario: silent-wander-07
+annotator:
+  model: gemma4:e4b-mlx
+  backend: ollama
+  effort: high
+  date: '2026-09-22'
+  attempts: 1
+  runner_attempts: 1
+  session_id: null
+  list_price_usd: 0.0
+  runtime_seconds: 17.320168042031582
+  parse_validation_failures: []
+  normalization_changed: true
+  normalization_notes:
+    - 'sits-in-chair: collapsed nested say action'
+    - 'sits-in-chair: dropped trigger without escalate_by'
+  prompt_sha256: 751ed04a45dfacf07b4abd3521f4f9cf3f0e31ab27489dd6e1f5dde70e9603a9
+  guidelines_sha256: 6d40e2e8797e4a9924a806cc460dc1669759a48d06db21a2c22c4dd29161865e
+  scenario_sha256: 68c4fda87914ffd8e8966cd60b2374fc0976f0099dce48da49b1141e364c54d6
+scenario_notes: ''
+checkpoints:
+  - id: sits-in-chair
+    acceptable:
+      - {strategy: ambient_orient}
+      - {strategy: soft_greeting}
+      - {strategy: validate_and_redirect}
+      - {goal: restroom}
+    must_not:
+      - {say: invents_proper_noun}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      The person is up and moving/sitting, indicating potential distress or need (TOIL-01). The initial
+      response should be calm and seek a need (AA-01). Since the person is silent, environmental cues
+      or gentle validation are appropriate (NICE-02, AA-04).
+    cites: [AA-01, AA-04, NICE-02, TOIL-01]
+    uncertain: ''
+    needs_review: false
+  - id: stays-in-chair
+    acceptable:
+      - {phase: OBSERVING}
+      - {strategy: ambient_orient}
+    must_not:
+      - {phase: IDLE}
+    escalate_by: 120.0
+    trigger: 300.0
+    rationale: >-
+      The person has been stationary for a while and is silent. The companion should continue observation
+      (NICE-05) as long as there is no clear sign of acute distress. If no change occurs, a low-level
+      notification to the caregiver is warranted to maintain safety (AA-05).
+    cites: [NICE-05, AA-05]
+    uncertain: The threshold of 120 seconds is a placeholder for the caregiver to set, as no clause specifies
+      a time limit for 'no progress'.
+    needs_review: false

@@ -1,0 +1,55 @@
+scenario: distress-pain-06
+annotator:
+  model: gemma4:e4b-mlx
+  backend: ollama
+  effort: high
+  date: '2026-09-22'
+  attempts: 1
+  runner_attempts: 1
+  session_id: null
+  list_price_usd: 0.0
+  runtime_seconds: 13.850219874992035
+  parse_validation_failures: []
+  normalization_changed: true
+  normalization_notes:
+    - 'first-call: collapsed nested say action'
+    - 'first-call: dropped trigger without escalate_by'
+    - 'repeated-calls: collapsed nested notify action'
+    - 'repeated-calls: collapsed nested phase action'
+  prompt_sha256: 751ed04a45dfacf07b4abd3521f4f9cf3f0e31ab27489dd6e1f5dde70e9603a9
+  guidelines_sha256: 6d40e2e8797e4a9924a806cc460dc1669759a48d06db21a2c22c4dd29161865e
+  scenario_sha256: 268c05d45d0b28afd71b5706978e3fd9e6f81cf582ff3ad961579b8fac3e109b
+scenario_notes: ''
+checkpoints:
+  - id: first-call
+    acceptable:
+      - {strategy: soft_greeting}
+      - {strategy: validate_and_redirect}
+      - {goal: restroom}
+      - {goal: comfort}
+      - {strategy: path_light}
+    must_not:
+      - {say: conjunction_but}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      The person is distressed and calling for help, which requires exploring the reason for distress
+      (NICE-01). The initial response should be calm and seek a need (AA-01). Since the distress is not
+      clearly linked to a fall risk yet, immediate critical escalation is not mandated.
+    cites: [AA-01, NICE-01, DICE-01]
+    uncertain: ''
+    needs_review: false
+  - id: repeated-calls
+    acceptable:
+      - {notify: attention}
+    must_not:
+      - {phase: IDLE}
+    escalate_by: 5.0
+    trigger: 40.0
+    rationale: >-
+      The person is repeatedly calling for help, indicating ongoing distress (NICE-01). While the agent
+      should continue to try to comfort or guide (DICE-03), the repeated nature warrants notifying the
+      caregiver (AA-05). A placeholder threshold of 5 seconds is used for the caregiver to set.
+    cites: [DICE-03, AA-05, NICE-01]
+    uncertain: ''
+    needs_review: false

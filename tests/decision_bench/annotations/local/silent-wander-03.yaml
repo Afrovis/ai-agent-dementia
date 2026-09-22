@@ -1,0 +1,58 @@
+scenario: silent-wander-03
+annotator:
+  model: gemma4:e4b-mlx
+  backend: ollama
+  effort: high
+  date: '2026-09-22'
+  attempts: 1
+  runner_attempts: 1
+  session_id: null
+  list_price_usd: 0.0
+  runtime_seconds: 20.570867125003133
+  parse_validation_failures: []
+  normalization_changed: true
+  normalization_notes:
+    - 'keeps-pacing: collapsed nested notify action'
+    - 'keeps-pacing: filled missing trigger'
+  prompt_sha256: 751ed04a45dfacf07b4abd3521f4f9cf3f0e31ab27489dd6e1f5dde70e9603a9
+  guidelines_sha256: 6d40e2e8797e4a9924a806cc460dc1669759a48d06db21a2c22c4dd29161865e
+  scenario_sha256: 5f115ea4f98354bb459bb30d091a3786764e0d8d5493bd3c9f62c97ea085d7c0
+scenario_notes: The scenario summary states the person walks for about eight minutes without speaking.
+  The pacing checkpoint (15s-199s) is short, while the keeps-pacing checkpoint (200s-500s) covers the
+  remainder of the observed activity. The guidelines support action when a need is present (TOIL-01),
+  but do not mandate a specific action for prolonged, non-verbal pacing beyond the initial response.
+checkpoints:
+  - id: pacing
+    acceptable:
+      - {strategy: path_light}
+      - {goal: restroom}
+      - {goal: comfort}
+      - {strategy: soft_greeting}
+      - {strategy: validate_and_redirect}
+    must_not:
+      - {strategy: guided_return}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      The person is up and moving, which suggests an unmet need (TOIL-01). The initial response should
+      be calm and seek the need (AA-01). Since the person is not distressed in a way that suggests immediate
+      danger, a gentle approach is appropriate, not immediate redirection to bed (NICE-01).
+    cites: [AA-01, TOIL-01, NICE-01]
+    uncertain: ''
+    needs_review: false
+  - id: keeps-pacing
+    acceptable:
+      - {notify: any}
+    must_not:
+      - {phase: IDLE}
+    escalate_by: 5.0
+    trigger: null
+    rationale: >-
+      The person is still pacing after several minutes (DICE-03). If the initial strategies fail to resolve
+      the issue, the agent must escalate to the caregiver (DICE-03). Since the person is walking, not
+      on the floor, a critical notification is not immediately required, but an attention level notification
+      is warranted, with a placeholder threshold of 5 seconds.
+    cites: [DICE-03, FALL-01]
+    uncertain: The guideline does not specify the required notification level for prolonged pacing that
+      is not a fall. I have chosen 'any' as acceptable and set a placeholder threshold.
+    needs_review: true

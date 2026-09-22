@@ -1,0 +1,39 @@
+scenario: false-alarm-05
+annotator:
+  model: gemma4:e4b-mlx
+  backend: ollama
+  effort: high
+  date: '2026-09-22'
+  attempts: 1
+  runner_attempts: 1
+  session_id: null
+  list_price_usd: 0.0
+  runtime_seconds: 11.98165654198965
+  parse_validation_failures: []
+  normalization_changed: true
+  normalization_notes:
+    - 'cough: dropped trigger without escalate_by'
+  prompt_sha256: 751ed04a45dfacf07b4abd3521f4f9cf3f0e31ab27489dd6e1f5dde70e9603a9
+  guidelines_sha256: 6d40e2e8797e4a9924a806cc460dc1669759a48d06db21a2c22c4dd29161865e
+  scenario_sha256: 1a0cedfa3ad2f793b5e810683b021cbed6b1a63703bf466ba3910385c19609f6
+scenario_notes: ''
+checkpoints:
+  - id: cough
+    acceptable:
+      - {strategy: ambient_orient}
+      - {strategy: soft_greeting}
+      - {strategy: validate_and_redirect}
+    must_not:
+      - {strategy: guided_return}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      The person is exhibiting a non-emergency behavior (coughing) and then returning to bed. NICE-01
+      requires exploring the reason for distress, and AA-01 suggests approaching calmly to find a need.
+      Since the person settled back down, the goal is comfort/reassurance, not immediate action. NICE-05
+      suggests staying quiet if the person settles on their own.
+    cites: [NICE-01, AA-01, NICE-05]
+    uncertain: The cough is not explicitly defined as distress, but the guidelines suggest exploring the
+      reason for any waking event. The acceptable actions are based on general reassurance for a restless
+      person.
+    needs_review: false

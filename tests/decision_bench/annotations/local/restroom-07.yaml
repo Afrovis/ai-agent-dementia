@@ -1,0 +1,53 @@
+scenario: restroom-07
+annotator:
+  model: gemma4:e4b-mlx
+  backend: ollama
+  effort: high
+  date: '2026-09-22'
+  attempts: 1
+  runner_attempts: 1
+  session_id: null
+  list_price_usd: 0.0
+  runtime_seconds: 18.16528220800683
+  parse_validation_failures: []
+  normalization_changed: true
+  normalization_notes:
+    - 'stated-need: dropped trigger without escalate_by'
+  prompt_sha256: 751ed04a45dfacf07b4abd3521f4f9cf3f0e31ab27489dd6e1f5dde70e9603a9
+  guidelines_sha256: 6d40e2e8797e4a9924a806cc460dc1669759a48d06db21a2c22c4dd29161865e
+  scenario_sha256: ad14154a13615eddb203311a9910d826d02d7d7b492a8a0668838768fa1c37f1
+scenario_notes: ''
+checkpoints:
+  - id: stated-need
+    acceptable:
+      - {strategy: path_light}
+      - {goal: restroom}
+      - {strategy: soft_greeting}
+      - {strategy: validate_and_redirect}
+    must_not:
+      - {strategy: guided_return}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      The person stated a need to go to the bathroom, which requires addressing the need first (NICE-01,
+      DICE-01). Acceptable responses include lighting the path (TOIL-02) or validating the feeling (AA-01,
+      AA-07). The companion must not immediately try to guide them back to bed (NICE-01).
+    cites: [AA-01, AA-07, DICE-01, NICE-01, TOIL-02]
+    uncertain: ''
+    needs_review: false
+  - id: lies-back-down
+    acceptable:
+      - {phase: COOLDOWN}
+      - {strategy: ambient_orient}
+    must_not:
+      - {phase: IDLE}
+    escalate_by: 120.0
+    trigger: 50.0
+    rationale: >-
+      The person expressed tiredness and returned to bed, suggesting the immediate need is met or deferred.
+      The companion should transition to a calming phase (NICE-05). Since the person is settled, the companion
+      should not remain in an active state (NICE-05). A notification is warranted if the person remains
+      in bed for an extended period (FALL-01).
+    cites: [NICE-05, FALL-01]
+    uncertain: The threshold for escalation (120s) is a placeholder as no clause provides a specific time.
+    needs_review: false

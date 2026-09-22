@@ -98,9 +98,7 @@ def test_escalate_by_needs_two_runs_and_takes_the_lower_median():
     # Two runs set it: the smaller of the two.
     assert vote_checkpoint([_run(escalate_by=60), _run(escalate_by=180), _run()]).escalate_by == 60
     # Three runs set it: the middle value.
-    vote = vote_checkpoint(
-        [_run(escalate_by=60), _run(escalate_by=180), _run(escalate_by=120)]
-    )
+    vote = vote_checkpoint([_run(escalate_by=60), _run(escalate_by=180), _run(escalate_by=120)])
     assert vote.escalate_by == 120
 
 
@@ -128,9 +126,7 @@ def test_trigger_majority_and_no_majority_when_all_three_differ():
 
 def test_trigger_disagreement_does_not_matter_without_a_majority_escalate_by():
     # Only one run sets escalate_by, so it stays unset and trigger is never voted.
-    vote = vote_checkpoint(
-        [_run(escalate_by=60, trigger=10), _run(trigger=20), _run(trigger=30)]
-    )
+    vote = vote_checkpoint([_run(escalate_by=60, trigger=10), _run(trigger=20), _run(trigger=30)])
     assert vote.escalate_by is None
     assert vote.no_majority == []
 

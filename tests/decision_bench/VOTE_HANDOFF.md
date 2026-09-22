@@ -132,3 +132,44 @@ and the README commands.
   (agree -> apply, disagree -> vote -> apply, no majority -> review), concurrency writes serial, scoring
   pass/doubt/fail/critical and unchanged scoring without doubtful fields.
 - Report at the end: files changed, new CLI, anything you were unsure about.
+
+## 2026-09-22: local model as second annotator — tested and rejected
+
+Question: could the two first-pass Opus runs become one local run + one Opus run, with a
+second Opus opinion only on disagreement? That would cut Opus usage roughly in half.
+
+Tested with `gemma4:e4b-mlx` on Ollama over the 28 scenarios that already carry two Opus
+runs. New tooling: `annotate --backend ollama` and `calibrate` (see README). Local labels
+live in `annotations/local/`; `annotations/model/` was never touched.
+
+Verdict: **no.** Keep two Opus runs plus the Opus tiebreak.
+
+| metric, action placement | agreement | inversions |
+| --- | --- | --- |
+| Opus run 1 vs Opus run 2 (baseline) | 310/419 (74.0%) | 0 |
+| gemma4 vs Opus consensus | 107/397 (27.0%) | 3 (0.8%) |
+
+Whole-scenario agreement: Opus vs Opus 4/28; gemma4 vs Opus run 1 **0/28**. Every scenario
+would trigger a tiebreak, so the scheme costs the same two Opus calls *plus* the local run.
+
+How gemma4 fails is worth recording: it rarely contradicts Opus (3 of 397 actions place an
+action opposite to Opus). It fails on *coverage* — it omits 50.4% of the actions Opus labels
+and adds 21.9% Opus leaves unlabelled. It writes short, plausible, incomplete labels.
+Escalation timing was its strongest area (escalate_by presence 91.4%, trigger 80.0%).
+Full per-action detail: `../data-ai-agent-dementia/analysis/decision-bench/2026-09-22-local-annotator-calibration.json`.
+
+Note the circularity if this is ever revisited with gemma: gemma4 is the model the bench
+scores, so letting it write labels inflates its own score. Use a different family.
+
+### Ollama backend notes (kept, useful for any future local annotator)
+- Schema-as-grammar (`format: <schema>`) **does not terminate** on this MLX build: the model
+  emits partial JSON then unbounded whitespace, never a stop token, and the request times
+  out with truncated output. Use `format: "json"` with the schema pasted into the prompt,
+  exactly as the agent's MLX backend does. That terminates in ~15-20 s per scenario.
+- Run with `--no-think`: with thinking on, gemma4 wraps its reply and mangles the JSON.
+- The reply needs mechanical repair before validation (all ollama-only, all in
+  `normalize_ollama_output`): actions written `{"say": {"correction_of_reality": {}}}` or
+  `{"strategy": {"name": "guided_return"}}`, omitted `trigger`, `trigger` set without
+  `escalate_by`, and invented clause ids such as `NICE-06`.
+- Retry at temperature 0 is a no-op: the model reproduces its rejected answer byte for byte.
+  Attempt 2 now uses temperature 0.3, which is what rescued the last 6 of 28 scenarios.

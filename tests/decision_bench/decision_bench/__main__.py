@@ -125,6 +125,10 @@ def main(argv: list[str] | None = None) -> int:
         from decision_bench.annotate import main as annotate_main
 
         return annotate_main(argv[1:])
+    if argv and argv[0] == "calibrate":
+        from decision_bench.calibrate import main as calibrate_main
+
+        return calibrate_main(argv[1:])
     if argv and argv[0] == "noise":
         from decision_bench.noise import main as noise_main
 
