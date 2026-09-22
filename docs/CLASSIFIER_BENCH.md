@@ -221,3 +221,69 @@ commits. Both are young.
 - How much does the 512-token context bind once real profile flags are included?
 - Do we need more scenarios before a finetune beats rules, and if so, is the cheapest source
   generated variants or state snapshots harvested from the bedroom recordings?
+
+## 2026-09-22 result: the reframing works, with two caveats
+
+`tests/classifier_bench/` implements the first slice: `build` derives the question set from
+the 28 two-run annotations, `ask` puts one action at a time to a candidate, `score` reports
+accuracy, calibration, inversions and baselines. gemma4 answered all 419 questions in about
+25 minutes with no parse or validation failures.
+
+### The premise holds
+
+| asked as | agreement with Opus |
+| --- | --- |
+| enumerate the full sets (`decision_bench` annotator) | 27.0% |
+| one action at a time, where it answered | **92.7%** |
+| one action at a time, abstentions counted as wrong | 73.5% |
+
+Baselines: always-acceptable 60.0%, always-forbidden 40.0%, random 47.4%. Brier 0.066,
+5-bin ECE 0.027. State records came out at 63-203 rough tokens (median 109), comfortably
+inside a 512-token encoder.
+
+So the same model that looked useless as an annotator answers the classification form of the
+question about as well as a second Opus run does (74.0% ceiling). The enumeration framing was
+hiding a usable judge. That validates the plan's central bet.
+
+### Caveat 1: it abstains, unevenly
+
+20.6% of answers were `irrelevant`, and the abstentions are concentrated: **32 of 63
+`notify` questions (51%)** versus 7 of 99 for `strategy`. It will not commit on whether a
+notification level is allowed, which is precisely the escalation path. Forced accuracy
+therefore lands at 73.5%, and `notify` forced accuracy is 49.2% — no better than a coin flip.
+
+### Caveat 2: the errors run in the unsafe direction, confidently
+
+Inversions are asymmetric: 2 of 186 acceptable actions called forbidden (1.1%), but **16 of
+124 forbidden actions called acceptable (12.9%)** — every one of them at confidence 0.8-0.9.
+Aggregate calibration looks fine (Brier 0.066) and hides this completely.
+
+The 16 are systematic, not noise, which is the encouraging part for a finetune:
+
+- 7 are `strategy: guided_return` where the person needs the toilet — it does not know that
+  steering someone back to bed mid-need is forbidden (the TOIL clauses).
+- 3 are `strategy: orient_time_place` at the wrong moment.
+- 6 are `say` patterns, including `say: any` where the rule is that the agent must not speak
+  at all — it reads "any" as permission rather than a blanket prohibition.
+
+A handful of clause areas account for nearly all of it. That is learnable, and it tells us
+where training data should be concentrated.
+
+### Caveat 3: it cannot break ties
+
+On the 109 disputed actions it sided with run 1 in 31 cases and run 2 in 28, abstaining on 35
+and matching both or neither on 15. A coin flip. **The disputed items still need Opus**, so
+the absent-label procedure in this plan keeps its step 2 as an Opus call.
+
+### What this changes
+
+- Phase 3 (the decision task) is worth doing, and per-action questions are the right form.
+- A local model is usable as a **labelling assistant that may abstain**, not as an
+  unsupervised labeller and certainly not yet as a safety veto. Abstention plus the unsafe
+  inversion rate means every `forbidden` judgment it makes still needs review.
+- Report cost-weighted error, not accuracy, as the headline. A 92.7% that misses one in eight
+  prohibitions is worse at the bedside than a duller model that never does.
+- Training data should over-sample the TOIL clauses, the `say: any` blanket prohibitions and
+  the `notify` levels, since that is where both the errors and the abstentions sit.
+
+Artifacts: `../data-ai-agent-dementia/analysis/decision-bench/2026-09-22-action-probe-{questions,answers,report}.{jsonl,json}`.

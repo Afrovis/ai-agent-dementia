@@ -14,12 +14,16 @@ from decision_bench.annotate import ANNOTATIONS_DIR
 from decision_bench.triage import scenario_flags
 
 
-def _checkpoints(run: Mapping[str, object]) -> dict[str, Mapping[str, object]]:
+def checkpoints(run: Mapping[str, object]) -> dict[str, Mapping[str, object]]:
+    """Index a model annotation run's checkpoints by id."""
     return {
         str(item["id"]): item
         for item in run.get("checkpoints") or ()
         if isinstance(item, Mapping) and "id" in item
     }
+
+
+_checkpoints = checkpoints
 
 
 def _pair_flags(first: Mapping[str, object], second: Mapping[str, object]) -> dict[str, list[str]]:
@@ -32,7 +36,8 @@ def _pair_flags(first: Mapping[str, object], second: Mapping[str, object]) -> di
     )
 
 
-def _actions(checkpoint: Mapping[str, object]) -> set[tuple[str, str]]:
+def actions(checkpoint: Mapping[str, object]) -> set[tuple[str, str]]:
+    """Return all explicitly placed ``(kind, value)`` actions."""
     return {
         (str(kind), str(value))
         for field in ("acceptable", "must_not")
@@ -42,7 +47,11 @@ def _actions(checkpoint: Mapping[str, object]) -> set[tuple[str, str]]:
     }
 
 
-def _placement(checkpoint: Mapping[str, object], action: tuple[str, str]) -> str:
+_actions = actions
+
+
+def placement(checkpoint: Mapping[str, object], action: tuple[str, str]) -> str:
+    """Return an action's acceptable, must_not, or absent placement."""
     for field in ("acceptable", "must_not"):
         if action in {
             (str(kind), str(value))
@@ -52,6 +61,9 @@ def _placement(checkpoint: Mapping[str, object], action: tuple[str, str]) -> str
         }:
             return field
     return "absent"
+
+
+_placement = placement
 
 
 def _ratio(matches: int, eligible: int) -> dict[str, int | float | None]:
