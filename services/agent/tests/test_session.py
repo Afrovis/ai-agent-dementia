@@ -103,6 +103,36 @@ def test_utterance_has_no_effect_in_idle():
     assert session.phase == Phase.IDLE
 
 
+def test_speaking_after_lying_down_clears_settled_even_in_idle():
+    session = make_session()
+    session.on_person_state("in_bed", "bed", NIGHT)
+    assert session.settled is True
+
+    session.on_utterance(NIGHT + timedelta(seconds=1))
+    assert session.settled is False
+
+
+def test_lying_down_after_speaking_is_settled_across_phase_reset():
+    session = make_session()
+    session.on_person_state("standing", "other", NIGHT)
+    session.on_utterance(NIGHT + timedelta(seconds=1))
+    session.on_person_state("in_bed", "bed", NIGHT + timedelta(seconds=2))
+
+    assert session.phase == Phase.ENGAGED
+    assert session.settled is True
+    session._reset_timers()
+    assert session.settled is True
+
+
+def test_getting_up_clears_settled():
+    session = make_session()
+    session.on_person_state("in_bed", "bed", NIGHT)
+    assert session.settled is True
+
+    session.on_person_state("standing", "other", NIGHT + timedelta(seconds=1))
+    assert session.settled is False
+
+
 def test_rule5_on_floor_fires_immediately_by_default():
     session = make_session(floor_limit_seconds=0.0)
     session.on_person_state("sitting_up", "other", NIGHT)
