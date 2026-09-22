@@ -31,6 +31,7 @@ flowchart LR
     s_perceive["perceive"]
     s_store["store"]
     q_ack[("ack<br/>Ack")]
+    q_activity[("activity<br/>Activity")]
     q_audio_in[("audio_in<br/>AudioChunk")]
     q_cloud[("cloud<br/>CloudCall")]
     q_frames[("frames<br/>Frame")]
@@ -38,6 +39,7 @@ flowchart LR
     q_light[("light<br/>LightCommand")]
     q_notify[("notify<br/>Notify")]
     q_person[("person<br/>PersonState")]
+    q_pose_debug[("pose_debug<br/>PoseDebug")]
     q_say[("say<br/>Say")]
     q_session[("session<br/>GoalChanged, SessionState")]
     q_show[("show<br/>Show")]
@@ -66,6 +68,11 @@ flowchart LR
   s_dashboard --> q_ack
   q_ack --> s_dashboard
   q_ack --> s_notify
+  s_agent --> q_activity
+  s_embodiment --> q_activity
+  s_listen --> q_activity
+  q_activity --> s_embodiment
+  q_activity --> s_listen
   s_embodiment --> q_audio_in
   q_audio_in --> s_listen
   s_agent --> q_cloud
@@ -87,11 +94,15 @@ flowchart LR
   s_perceive --> q_person
   q_person --> s_agent
   q_person --> s_dashboard
+  q_person --> s_embodiment
+  s_perceive --> q_pose_debug
+  q_pose_debug --> s_embodiment
   s_agent --> q_say
   q_say --> s_dashboard
   q_say --> s_embodiment
   s_agent --> q_session
   q_session --> s_dashboard
+  q_session --> s_embodiment
   q_session --> s_listen
   q_session --> s_perceive
   s_agent --> q_show
@@ -124,6 +135,7 @@ flowchart LR
   sqlite[("data/night.db")]
   s_agent["agent"] --> q_health
   s_capture["capture"] --> q_health
+  s_embodiment["embodiment"] --> q_health
   s_light["light"] --> q_health
   s_listen["listen"] --> q_health
   s_perceive["perceive"] --> q_health
@@ -145,16 +157,18 @@ flowchart LR
 | Stream | Events | Published by | Read by (consumer group) | Capped |
 | --- | --- | --- | --- | --- |
 | `ack` | `Ack` | dashboard | dashboard (`dashboard-live`), notify (`notify`), store (`store`) | no |
+| `activity` | `Activity` | agent, embodiment, listen | embodiment (`embodiment`), listen (`listen-activity`) | yes, 200 |
 | `audio_in` | `AudioChunk` | embodiment | listen (`listen`) | yes, 50 |
 | `cloud` | `CloudCall` | agent | store (`store`) | no |
 | `frames` | `Frame` | capture | dashboard (`dashboard`), perceive (`perceive`), perceive (`perceive-calibrate`) | yes, 50 |
 | `frames_raw` | `RawFrame` | embodiment | capture (`capture`) | yes, 50 |
-| `health` | `Health` | agent, capture, light, listen, perceive | dashboard (`dashboard-live`), store (`store`) | no |
+| `health` | `Health` | agent, capture, embodiment, light, listen, perceive | dashboard (`dashboard-live`), store (`store`) | no |
 | `light` | `LightCommand` | agent | light (`light`), store (`store`) | no |
 | `notify` | `Notify` | agent, embodiment, light, listen, store | dashboard (`dashboard-live`), notify (`notify`), store (`store`) | no |
-| `person` | `PersonState` | perceive | agent (`agent`), dashboard (`dashboard-live`), store (`store`) | no |
+| `person` | `PersonState` | perceive | agent (`agent`), dashboard (`dashboard-live`), embodiment (`embodiment`), store (`store`) | no |
+| `pose_debug` | `PoseDebug` | perceive | embodiment (`embodiment`) | yes, 50 |
 | `say` | `Say` | agent | dashboard (`dashboard-live`), embodiment (`embodiment`), store (`store`) | no |
-| `session` | `GoalChanged`, `SessionState` | agent | dashboard (`dashboard-live`), listen (`listen-session`), perceive (`perceive-session`), store (`store`) | no |
+| `session` | `GoalChanged`, `SessionState` | agent | dashboard (`dashboard-live`), embodiment (`embodiment`), listen (`listen-session`), perceive (`perceive-session`), store (`store`) | no |
 | `show` | `Show` | agent | embodiment (`embodiment`), store (`store`) | no |
 | `speech_in` | `SpeechStarted`, `Utterance` | listen | agent (`agent`), dashboard (`dashboard-live`), embodiment (`embodiment`), store (`store`) | no |
 

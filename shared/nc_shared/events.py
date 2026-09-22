@@ -117,6 +117,31 @@ class PersonState(BaseEvent):
     scene_note: str | None = None
 
 
+class PoseDebug(BaseEvent):
+    """Capped, transient pose metadata for the bedside debug overlay."""
+
+    landmarks: dict[str, tuple[float, float, float]]
+    bbox: tuple[float, float, float, float] | None
+    confidence: float
+    detected: bool
+    candidate_state: str | None = None
+    state: str | None = None
+    zone: str | None = None
+    frame_ts: str | None = None
+    latency_ms: float
+
+
+class Activity(BaseEvent):
+    """Capped, transient service work indicator for the bedside overlay."""
+
+    service: str
+    kind: Literal["transcribe", "interpret", "compose", "tts", "playback", "client"]
+    phase: Literal["start", "end"]
+    ok: bool = True
+    duration_ms: float | None = None
+    detail: str | None = None
+
+
 class Utterance(BaseEvent):
     """A transcribed utterance from the person. Produced by `listen`."""
 
@@ -233,6 +258,8 @@ EVENT_STREAMS: dict[type[BaseEvent], str] = {
     Frame: "frames",
     RawFrame: "frames_raw",
     PersonState: "person",
+    PoseDebug: "pose_debug",
+    Activity: "activity",
     SpeechStarted: "speech_in",
     Utterance: "speech_in",
     SessionState: "session",

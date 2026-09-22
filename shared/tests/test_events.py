@@ -4,7 +4,10 @@ import pytest
 from pydantic import ValidationError
 
 from nc_shared.events import (
+    EVENT_STREAMS,
+    EVENT_TYPES,
     Ack,
+    Activity,
     AudioChunk,
     CloudCall,
     Frame,
@@ -13,12 +16,69 @@ from nc_shared.events import (
     LightCommand,
     Notify,
     PersonState,
+    PoseDebug,
     Say,
     SessionState,
     Show,
     SpeechStarted,
     Utterance,
 )
+
+
+def test_debug_events_roundtrip_through_registry():
+    pose = PoseDebug(
+        source="perceive",
+        landmarks={"nose": (0.2, 0.3, 0.9)},
+        bbox=(0.1, 0.2, 0.4, 0.6),
+        confidence=0.9,
+        detected=True,
+        candidate_state="standing",
+        state="sitting_up",
+        zone="bed",
+        frame_ts="2026-09-22T01:00:00+00:00",
+        latency_ms=12.5,
+    )
+    activity = Activity(
+        source="listen",
+        service="listen",
+        kind="transcribe",
+        phase="end",
+        ok=False,
+        duration_ms=5.0,
+        detail="RuntimeError",
+    )
+    for event, stream in ((pose, "pose_debug"), (activity, "activity")):
+        assert EVENT_STREAMS[type(event)] == stream
+        assert (
+            EVENT_TYPES[type(event).__name__].model_validate_json(event.model_dump_json()) == event
+        )
+
+
+def test_playback_activity_roundtrip():
+    event = Activity(
+        source="embodiment",
+        service="embodiment",
+        session_id="session-1",
+        kind="playback",
+        phase="end",
+        ok=False,
+        duration_ms=23,
+        detail="NotAllowedError",
+    )
+    copy = Activity.model_validate_json(event.model_dump_json())
+    assert copy == event
+    assert EVENT_STREAMS[Activity] == "activity"
+
+
+def test_client_activity_roundtrip():
+    event = Activity(
+        source="embodiment",
+        service="embodiment",
+        kind="client",
+        phase="start",
+        detail="page1234 Safari visible audio:blocked",
+    )
+    assert Activity.model_validate_json(event.model_dump_json()) == event
 
 
 def _roundtrip(event):

@@ -28,6 +28,13 @@ Usable as a library (`record_once`, `replay`) or from the command line::
 
     python -m nc_shared.replay record redis://localhost:6379 out.jsonl
     python -m nc_shared.replay play redis://localhost:6379 out.jsonl --speed 10
+    python -m nc_shared.replay export redis://localhost:6379 out.jsonl --since 2026-09-22T22:40Z
+
+`export` writes what the bus still holds, after the fact, in the same JSONL
+shape: every stream's retained history via `XRANGE`, merged in `ts` order.
+Media streams (`frames`, `frames_raw`, `audio_in`) are skipped unless
+`--include-media` is given; they are capped, large, and carry camera frames
+and raw audio.
 """
 
 from __future__ import annotations
@@ -41,7 +48,7 @@ from typing import TextIO
 
 import redis
 
-from nc_shared.bus import Bus
+from nc_shared.bus import Bus, _event_from_fields
 from nc_shared.events import EVENT_STREAMS, EVENT_TYPES, BaseEvent
 
 RECORD_GROUP = "replay-recorder"
@@ -53,7 +60,13 @@ it exists so a captured session can be replayed frame-for-frame)."""
 
 ALL_STREAMS: list[str] = sorted(set(EVENT_STREAMS.values()))
 
-CAPPED_MAXLEN: dict[str, int] = {"frames": 50, "audio_in": 50, "frames_raw": 50}
+CAPPED_MAXLEN: dict[str, int] = {
+    "frames": 50,
+    "audio_in": 50,
+    "frames_raw": 50,
+    "pose_debug": 50,
+    "activity": 200,
+}
 """Approximate MAXLEN to apply when replaying onto capped streams, matching
 HANDOFF.md's `MAXLEN ~ 50` for `frames`, `audio_in`, and `frames_raw`."""
 
@@ -111,6 +124,50 @@ def run_recorder(
             out.flush()
             if written == 0:
                 sleep_fn(poll_interval)
+
+
+MEDIA_STREAMS = frozenset({"frames", "frames_raw", "audio_in"})
+
+
+def export_history(
+    client,
+    out: TextIO,
+    since: datetime | None = None,
+    include_media: bool = False,
+    now_fn: Callable[[], float] = time.time,
+) -> int:
+    """Write every event the bus still retains to `out`, oldest first.
+
+    `client` is a redis client (anything with `xrange`). Unlike `record`,
+    this needs no consumer group and captures what already happened.
+    Events older than `since` (timezone-aware) are skipped. Returns the
+    number of events written.
+    """
+    lines: list[tuple[datetime, dict]] = []
+    for stream in ALL_STREAMS:
+        if stream in MEDIA_STREAMS and not include_media:
+            continue
+        for _msg_id, fields in client.xrange(stream) or []:
+            event = _event_from_fields(fields)
+            if since is not None and event.ts < since:
+                continue
+            lines.append(
+                (
+                    event.ts,
+                    {
+                        "stream": stream,
+                        "event_type": type(event).__name__,
+                        "ts": event.ts.isoformat(),
+                        "recorded_at": now_fn(),
+                        "payload": event.model_dump(mode="json"),
+                    },
+                )
+            )
+    lines.sort(key=lambda item: item[0])
+    for _ts, line in lines:
+        out.write(json.dumps(line))
+        out.write("\n")
+    return len(lines)
 
 
 def _iter_lines(input_path: str) -> Iterator[dict]:
@@ -187,15 +244,35 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="playback speed multiplier; 0 means as fast as possible (default: 1.0)",
     )
 
+    export_parser = subparsers.add_parser(
+        "export", help="write the history the bus still retains to a JSONL file"
+    )
+    export_parser.add_argument("redis_url", help="e.g. redis://localhost:6379")
+    export_parser.add_argument("output", help="path to the JSONL file to write")
+    export_parser.add_argument(
+        "--since", help="only events at or after this ISO 8601 time (default: all retained)"
+    )
+    export_parser.add_argument(
+        "--include-media",
+        action="store_true",
+        help="also export frames, frames_raw and audio_in (large; camera and mic data)",
+    )
+
     return parser
 
 
 def main(argv: list[str] | None = None) -> None:
     """Entry point for `python -m nc_shared.replay`."""
     args = _build_arg_parser().parse_args(argv)
-    bus = Bus(redis.Redis.from_url(args.redis_url))
+    client = redis.Redis.from_url(args.redis_url)
+    bus = Bus(client)
 
-    if args.command == "record":
+    if args.command == "export":
+        since = datetime.fromisoformat(args.since) if args.since else None
+        with open(args.output, "w") as out:
+            count = export_history(client, out, since=since, include_media=args.include_media)
+        print(f"exported {count} events")
+    elif args.command == "record":
         run_recorder(bus, args.output)
     elif args.command == "play":
         count = replay(bus, args.input, speed=args.speed)
