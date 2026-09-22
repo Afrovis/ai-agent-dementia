@@ -9,6 +9,7 @@
 <body>
   <div id="brightness-overlay"></div>
   <div id="media-status"></div>
+  <div id="clients-warning" class="hidden" role="alert"></div>
 
   <main id="stage">
     <div id="photo" class="hidden">
@@ -28,6 +29,23 @@
       <p id="body-text"></p>
     </section>
   </main>
+
+  <div id="audio-unlock" class="hidden" role="dialog" aria-label="Turn on voice playback">
+    <button id="audio-unlock-button" type="button">Tap to turn on the voice</button>
+  </div>
+
+  <aside id="debug" class="hidden" aria-label="Pipeline debug overlay">
+    <div class="debug-title">PIPELINE <span id="debug-clock"></span></div>
+    <canvas id="debug-camera" width="320" height="180"></canvas>
+    <div id="debug-pose-label">camera off</div>
+    <div class="debug-status"><span id="debug-person" class="state-chip">unknown</span> <span id="debug-person-detail"></span></div>
+    <div id="debug-session">Session: unknown</div>
+    <div id="debug-client">Page: connecting</div>
+    <div id="debug-clients">0 pages connected</div>
+    <div id="debug-indicators"></div>
+    <div class="debug-title">EVENTS</div>
+    <div id="debug-events"></div>
+  </aside>
 
   <script src="/static/script.js"></script>
 </body>

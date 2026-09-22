@@ -2,22 +2,40 @@
 
 import asyncio
 import base64
+import json
+import logging
+import time
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 from nc_shared.bus import FakeBus
-from nc_shared.events import AudioChunk, RawFrame, Say, Show, SpeechStarted
+from nc_shared.events import (
+    Activity,
+    AudioChunk,
+    GoalChanged,
+    Health,
+    PersonState,
+    PoseDebug,
+    RawFrame,
+    Say,
+    SessionState,
+    Show,
+    SpeechStarted,
+    Utterance,
+)
 from nc_shared.replay import CAPPED_MAXLEN
 
 from embodiment.app import (
     DEMO_PHOTO_DIR,
+    ClientSocket,
     ConnectionManager,
     broadcast_loop,
     create_app,
     handle_media_message,
     publish_audio_chunk,
     publish_frame,
+    publish_playback,
     resolve_photo,
     resolve_voice_clip,
 )
@@ -170,6 +188,52 @@ def test_broadcast_loop_forwards_show_event_to_connected_clients():
     assert manager.last_show["headline"] == "It is night"
 
 
+def test_debug_messages_forward_and_late_join_caches_person_and_session():
+    bus = FakeBus()
+    manager = ConnectionManager()
+    bus.publish(PersonState(source="perceive", state="standing", confidence=0.8, zone="other"))
+    bus.publish(
+        SessionState(source="agent", phase="ENGAGED", goal="return_to_bed", strategy_index=2)
+    )
+    bus.publish(
+        GoalChanged(source="agent", from_goal="root", to_goal="return_to_bed", reason="test")
+    )
+    bus.publish(Utterance(source="listen", text="hello", confidence=0.9, duration_s=0.5))
+    bus.publish(
+        PoseDebug(
+            source="perceive", landmarks={}, bbox=None, confidence=0, detected=False, latency_ms=2
+        ),
+        maxlen=50,
+    )
+    bus.publish(
+        Activity(source="agent", service="agent", kind="interpret", phase="start"), maxlen=200
+    )
+
+    class Socket:
+        def __init__(self):
+            self.messages = []
+
+        async def send_text(self, raw):
+            import json
+
+            self.messages.append(json.loads(raw))
+
+    live = Socket()
+    manager._connections.append(live)
+    asyncio.run(broadcast_loop(bus, manager, max_iterations=1))
+    assert {msg["type"] for msg in live.messages} == {
+        "person",
+        "session",
+        "utterance",
+        "pose",
+        "activity",
+    }
+    assert next(msg for msg in live.messages if msg["type"] == "pose")["latency_ms"] == 2
+    late = Socket()
+    asyncio.run(manager.send_current_state(late))
+    assert [msg["type"] for msg in late.messages] == ["person", "session"]
+
+
 def test_websocket_receives_show_event_delivered_via_bus():
     bus = FakeBus()
     app = create_app(bus)
@@ -222,9 +286,14 @@ def test_websocket_synthesizes_say_and_delivers_same_origin_audio_url(tmp_path):
                 interruptible=True,
             )
         )
+        start = websocket.receive_json()
+        end = websocket.receive_json()
         message = websocket.receive_json()
 
     assert speech.synthesized == ["Rest now."]
+    assert (start["type"], start["kind"], start["phase"]) == ("activity", "tts", "start")
+    assert (end["type"], end["kind"], end["phase"], end["ok"]) == ("activity", "tts", "end", True)
+    assert end["duration_ms"] >= 0
     assert message["audio_url"] == f"/speech/{'a' * 64}.wav"
     assert message["session_id"] == "session-1"
 
@@ -291,6 +360,108 @@ def test_browser_stops_only_interruptible_speech_on_early_voice_signal():
     assert "currentSpeechInterruptible" in script
     assert "currentSpeech.pause()" in script
     assert "echoCancellation: true" in script
+
+
+def test_playback_websocket_logs_and_publishes_activity(caplog):
+    bus = FakeBus()
+    app = create_app(bus)
+    with caplog.at_level(logging.INFO, logger="embodiment"):
+        with TestClient(app) as client, client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "type": "playback",
+                    "phase": "requested",
+                    "strategy": "soft_greeting",
+                    "session_id": "session-1",
+                    "audio_id": "abc123",
+                    "latency_ms": 17,
+                }
+            )
+            websocket.send_json(
+                {
+                    "type": "playback",
+                    "phase": "failed",
+                    "strategy": "soft_greeting",
+                    "session_id": "session-1",
+                    "audio_id": "abc123",
+                    "latency_ms": 23,
+                    "error_name": "NotAllowedError",
+                    "error_message": "User gesture required",
+                }
+            )
+            websocket.close()
+
+    entries = bus._streams["activity"]  # noqa: SLF001
+    assert len(entries) == 2
+    started, failed = (Activity.model_validate_json(entry.data) for entry in entries)
+    assert (started.kind, started.phase, started.ok, started.duration_ms) == (
+        "playback",
+        "start",
+        True,
+        17,
+    )
+    assert (failed.kind, failed.phase, failed.ok, failed.detail) == (
+        "playback",
+        "end",
+        False,
+        "NotAllowedError",
+    )
+    assert failed.session_id == "session-1"
+    logs = [
+        json.loads(record.message) for record in caplog.records if record.message.startswith("{")
+    ]
+    playback_logs = [item for item in logs if item.get("event_type") == "playback"]
+    assert [item["playback_phase"] for item in playback_logs] == ["requested", "failed"]
+    assert playback_logs[1]["audio_id"] == "abc123"
+    assert playback_logs[1]["error_message"] == "User gesture required"
+
+
+def test_playback_barge_in_maps_to_failed_end_activity():
+    bus = FakeBus()
+    event = publish_playback(
+        bus,
+        {
+            "type": "playback",
+            "phase": "interrupted",
+            "strategy": "orient_time_place",
+            "session_id": "session-1",
+            "audio_id": "abc123",
+            "latency_ms": 2800,
+            "detail": "barge-in",
+        },
+    )
+    assert event is not None
+    assert (event.kind, event.phase, event.ok, event.detail) == (
+        "playback",
+        "end",
+        False,
+        "barge-in",
+    )
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"type": "playback", "phase": "bogus", "latency_ms": 1},
+        {"type": "playback", "phase": ["ended"], "latency_ms": 1},
+        {"type": "playback", "phase": "ended", "latency_ms": -1},
+        {"type": "playback", "phase": "ended", "latency_ms": 1, "strategy": "x" * 129},
+        {"type": "playback", "phase": "failed", "latency_ms": 1, "error_message": "x" * 161},
+    ],
+)
+def test_playback_websocket_ignores_invalid_reports(bad):
+    bus = FakeBus()
+    app = create_app(bus)
+    with TestClient(app) as client, client.websocket_connect("/ws") as websocket:
+        websocket.send_json(bad)
+        websocket.send_text("x" * 2049)
+        websocket.send_json({"type": "playback", "phase": "no_audio", "latency_ms": 2})
+        websocket.close()
+
+    entries = bus._streams["activity"]  # noqa: SLF001
+    assert len(entries) == 1
+    event = Activity.model_validate_json(entries[0].data)
+    assert (event.phase, event.ok, event.detail) == ("end", False, "no_audio")
 
 
 def test_speech_route_serves_cached_wav(tmp_path):
@@ -571,3 +742,135 @@ def test_media_websocket_survives_malformed_message():
 
     assert "frames_raw" not in bus._streams
     assert len(bus._streams.get("audio_in", [])) == 1
+
+
+def client_hello(page_id="page123456", **changes):
+    return {
+        "type": "hello",
+        "page_id": page_id,
+        "device_id": "device123456",
+        "user_agent": "Mozilla/5.0 Safari/605.1",
+        "platform": "MacIntel",
+        "screen": {"width": 1440, "height": 900},
+        "visibility": "visible",
+        "audio_unlocked": False,
+        "page_load_time": "2026-09-22T12:00:00Z",
+        **changes,
+    }
+
+
+def test_hello_registers_both_sockets_and_disconnect_logs_duration(caplog):
+    bus = FakeBus()
+    app = create_app(bus)
+    with caplog.at_level(logging.INFO, logger="embodiment"):
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws") as ws, client.websocket_connect("/media") as media:
+                ws.send_json(client_hello())
+                assert ws.receive_json()["pages"][0]["page_id"] == "page1234"
+                media.send_json(client_hello())
+                media.close(code=1000)
+                ws.close(code=1000)
+    logs = [
+        json.loads(record.message) for record in caplog.records if record.message.startswith("{")
+    ]
+    hellos = [item for item in logs if item.get("event_type") == "client hello"]
+    closes = [item for item in logs if item.get("event_type") == "client disconnected"]
+    assert {item["channel"] for item in hellos} == {"ws", "media"}
+    assert {item["channel"] for item in closes} == {"ws", "media"}
+    assert all(item["duration_s"] >= 0 and item["close_code"] == 1000 for item in closes)
+    activities = [Activity.model_validate_json(entry.data) for entry in bus._streams["activity"]]  # noqa: SLF001
+    assert any(item.kind == "client" and item.phase == "start" for item in activities)
+    assert any(item.kind == "client" and item.phase == "end" for item in activities)
+    assert Health.model_validate_json(bus._streams["health"][0].data).detail == "1 page connected"  # noqa: SLF001
+
+
+def test_two_pages_get_count_and_health_update():
+    bus = FakeBus()
+    app = create_app(bus)
+
+    def clients_message(socket, count):
+        for _ in range(5):
+            message = socket.receive_json()
+            if message["type"] == "clients" and len(message["pages"]) == count:
+                return message
+        raise AssertionError("clients message was not sent")
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws") as first, client.websocket_connect("/ws") as second:
+            first.send_json(client_hello(page_id="firstpage"))
+            assert clients_message(first, 1)["pages"][0]["page_id"] == "firstpag"
+            second.send_json(client_hello(page_id="secondpage"))
+            assert len(clients_message(second, 2)["pages"]) == 2
+            first.close()
+            second.close()
+    details = [Health.model_validate_json(entry.data).detail for entry in bus._streams["health"]]  # noqa: SLF001
+    assert "2 pages connected" in details
+
+
+def test_broadcast_logs_recipients_and_send_failures(caplog):
+    manager = ConnectionManager()
+
+    class Socket:
+        def __init__(self, fail=False):
+            self.fail = fail
+            self.messages = []
+
+        async def send_text(self, raw):
+            if self.fail:
+                raise RuntimeError("closed")
+            self.messages.append(json.loads(raw))
+
+    live, failed = Socket(), Socket(True)
+    manager._connections.extend([live, failed])
+    manager._clients[live] = ClientSocket(  # noqa: SLF001
+        "ws",
+        "10.0.0.1",
+        time.monotonic(),
+        page_id="page123456",
+        visibility="visible",
+        audio_unlocked=True,
+    )
+    manager._clients[failed] = ClientSocket(  # noqa: SLF001
+        "ws",
+        "10.0.0.2",
+        time.monotonic(),
+        page_id="page654321",
+        visibility="hidden",
+        audio_unlocked=False,
+    )
+    with caplog.at_level(logging.INFO, logger="embodiment"):
+        asyncio.run(manager.broadcast({"type": "say", "strategy": "soft_greeting"}))
+    log = next(
+        json.loads(record.message)
+        for record in caplog.records
+        if '"event_type": "broadcast"' in record.message
+    )
+    assert log["type"] == "say" and len(log["recipients"]) == 1
+    assert log["recipients"] == [
+        {"page_id": "page123456", "visibility": "visible", "audio_unlocked": True}
+    ]
+    assert log["failures"] == ["page654321"]
+    assert failed not in manager._connections
+
+
+def test_stale_and_bad_hello_are_ignored(caplog):
+    bus = FakeBus()
+    app = create_app(bus)
+    manager = app.state.manager
+    with caplog.at_level(logging.INFO, logger="embodiment"):
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.send_json(client_hello(page_id="x" * 65))
+            ws.send_json(client_hello(user_agent="x" * 300))
+            ws.send_text(json.dumps(client_hello()) + " " * 2100)
+            ws.send_json(client_hello())
+            assert ws.receive_json()["pages"][0]["page_id"] == "page1234"
+            socket = next(iter(manager._clients))  # noqa: SLF001
+            state = manager._clients[socket]  # noqa: SLF001
+            client.portal.call(manager.mark_stale, state.last_heartbeat + 31)
+            assert state.stale
+            ws.close()
+    hellos = [
+        record for record in caplog.records if '"event_type": "client hello"' in record.message
+    ]
+    assert len(hellos) == 1
+    assert any('"event_type": "client stale"' in record.message for record in caplog.records)

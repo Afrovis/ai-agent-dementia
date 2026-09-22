@@ -7,11 +7,11 @@ WebSocket, so display changes and barge-in arrive live with no polling.
 The bus-reading side is deliberately split into small, injectable pieces so
 it can be tested with `nc_shared.bus.FakeBus` and no real Redis or network:
 
-- `ConnectionManager` tracks connected websockets and the last-known `Show`
-  (so a client that connects mid-night still gets the current state).
+- `ConnectionManager` tracks connected websockets and the last-known `Show`,
+  `PersonState`, and `SessionState` for late joiners.
 - `broadcast_loop(bus, manager, ...)` is a plain async function that reads
-  `show`, `say`, and the barge-in signal on `speech_in`, then forwards browser
-  messages to `manager.broadcast`. It accepts `max_iterations` and/or a
+  display, speech, person, session, pose, and activity streams, then forwards
+  browser messages to `manager.broadcast`. It accepts `max_iterations` and/or a
   `stop_event` so tests can bound it instead of looping forever.
 - `create_app(bus)` wires a `ConnectionManager` into the routes and starts
   `broadcast_loop` as a background task on startup.
@@ -40,15 +40,31 @@ import base64
 import binascii
 import json
 import logging
+import math
 import re
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from nc_shared.events import AudioChunk, Notify, RawFrame, Say, Show, SpeechStarted
+from nc_shared.events import (
+    Activity,
+    AudioChunk,
+    Health,
+    Notify,
+    PersonState,
+    PoseDebug,
+    RawFrame,
+    Say,
+    SessionState,
+    Show,
+    SpeechStarted,
+    Utterance,
+)
 from nc_shared.replay import CAPPED_MAXLEN
 
 SERVICE_NAME = "embodiment"
@@ -73,27 +89,295 @@ DEMO_PHOTO_DIR = Path(__file__).parent / "demo_photos"
 # `../../etc/passwd` from escaping the photo directory.
 PHOTO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 VOICE_CLIP_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+PLAYBACK_PHASES = {
+    "received": "start",
+    "requested": "start",
+    "playing": "start",
+    "unlocked": "start",
+    "ended": "end",
+    "failed": "end",
+    "interrupted": "end",
+    "no_audio": "end",
+}
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(SERVICE_NAME)
 
 
+@dataclass
+class ClientSocket:
+    channel: str
+    peer: str
+    connected_at: float
+    page_id: str | None = None
+    device_id: str | None = None
+    user_agent: str = "unknown"
+    browser: str = "unknown"
+    platform: str = "unknown"
+    screen: str = "unknown"
+    page_load_time: str = "unknown"
+    visibility: str = "unknown"
+    audio_unlocked: bool = False
+    last_heartbeat: float | None = None
+    stale: bool = False
+
+
+def _browser(user_agent: str) -> str:
+    for name in ("Edg", "Firefox", "Chrome", "Safari"):
+        if name in user_agent:
+            return "Edge" if name == "Edg" else name
+    return "unknown"
+
+
+def _client_state(message: dict) -> dict | None:
+    """Accept only small, typed identity messages from a browser."""
+    if not isinstance(message, dict) or message.get("type") not in {
+        "hello",
+        "heartbeat",
+        "visibility",
+    }:
+        return None
+    for key, limit in (
+        ("page_id", 64),
+        ("device_id", 64),
+        ("user_agent", 256),
+        ("platform", 80),
+        ("page_load_time", 64),
+    ):
+        value = message.get(key)
+        if not isinstance(value, str) or not 1 <= len(value) <= limit:
+            return None
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", message["page_id"]):
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", message["device_id"]):
+        return None
+    screen = message.get("screen")
+    if not isinstance(screen, dict) or set(screen) != {"width", "height"}:
+        return None
+    if any(type(screen[key]) is not int or not 1 <= screen[key] <= 16384 for key in screen):
+        return None
+    if message.get("visibility") not in {"visible", "hidden"}:
+        return None
+    if type(message.get("audio_unlocked")) is not bool:
+        return None
+    return message
+
+
 class ConnectionManager:
     """Tracks connected websocket clients and the last-known `Show` state."""
 
-    def __init__(self) -> None:
+    def __init__(self, bus=None) -> None:
         self._connections: list[WebSocket] = []
+        self._clients: dict[WebSocket, ClientSocket] = {}
+        self.bus = bus
+        self._last_page_count = 0
         self.last_show: dict | None = None
+        self.last_person: dict | None = None
+        self.last_session: dict | None = None
 
-    async def connect(self, websocket: WebSocket) -> None:
+    async def connect(self, websocket: WebSocket, channel: str = "ws") -> None:
         """Accept `websocket` and register it for future broadcasts."""
         await websocket.accept()
-        self._connections.append(websocket)
+        if channel == "ws":
+            self._connections.append(websocket)
+        forwarded = websocket.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        peer = forwarded or (websocket.client.host if websocket.client else "unknown")
+        self._clients[websocket] = ClientSocket(channel, peer, time.monotonic())
+        logger.info(
+            json.dumps(
+                {
+                    "service": SERVICE_NAME,
+                    "event_type": "client connected",
+                    "channel": channel,
+                    "peer": peer,
+                }
+            )
+        )
 
-    def disconnect(self, websocket: WebSocket) -> None:
+    async def disconnect(
+        self, websocket: WebSocket, code: int | None = None, reason: str = ""
+    ) -> None:
         """Remove `websocket` from the connected set, if present."""
         if websocket in self._connections:
             self._connections.remove(websocket)
+        client = self._clients.pop(websocket, None)
+        if client is None:
+            return
+        duration = round(time.monotonic() - client.connected_at, 3)
+        logger.info(
+            json.dumps(
+                {
+                    "service": SERVICE_NAME,
+                    "event_type": "client disconnected",
+                    "channel": client.channel,
+                    "peer": client.peer,
+                    "page_id": client.page_id,
+                    "device_id": client.device_id,
+                    "duration_s": duration,
+                    "close_code": code,
+                    "close_reason": reason[:120],
+                }
+            )
+        )
+        self._activity(client, "end", code in {1000, 1001, None}, duration * 1000)
+        await self._clients_changed()
+
+    def _activity(
+        self, client: ClientSocket, phase: str, ok: bool, duration_ms: float | None = None
+    ) -> None:
+        if self.bus is None or client.page_id is None:
+            return
+        detail = (
+            f"{client.page_id[:8]} {client.browser} {client.visibility} "
+            f"audio:{'ok' if client.audio_unlocked else 'blocked'}"
+        )[:100]
+        self.bus.publish(
+            Activity(
+                source=SERVICE_NAME,
+                service=SERVICE_NAME,
+                kind="client",
+                phase=phase,
+                ok=ok,
+                duration_ms=duration_ms,
+                detail=detail,
+            ),
+            maxlen=CAPPED_MAXLEN["activity"],
+        )
+
+    def pages(self) -> list[dict]:
+        pages: dict[str, ClientSocket] = {}
+        for client in self._clients.values():
+            if client.page_id and not client.stale:
+                if client.page_id not in pages or client.channel == "ws":
+                    pages[client.page_id] = client
+        now = time.monotonic()
+        return [
+            {
+                "page_id": client.page_id[:8],
+                "browser": client.browser,
+                "visible": client.visibility == "visible",
+                "audio": client.audio_unlocked,
+                "age": round(now - client.connected_at),
+            }
+            for client in pages.values()
+        ]
+
+    async def _clients_changed(self) -> None:
+        pages = self.pages()
+        count = len(pages)
+        if self.bus is not None and count != self._last_page_count:
+            self.bus.publish(
+                Health(
+                    source=SERVICE_NAME,
+                    service=SERVICE_NAME,
+                    ok=True,
+                    detail=f"{count} page{'s' if count != 1 else ''} connected",
+                )
+            )
+        self._last_page_count = count
+        raw = json.dumps({"type": "clients", "pages": pages})
+        failed = []
+        for socket in list(self._connections):
+            if socket not in self._clients:
+                continue
+            try:
+                await socket.send_text(raw)
+            except Exception:  # noqa: BLE001 - socket may have closed during update
+                failed.append(socket)
+        for socket in failed:
+            await self.disconnect(socket, reason="send failed")
+
+    async def update(self, websocket: WebSocket, message: dict) -> None:
+        client = self._clients.get(websocket)
+        state = _client_state(message)
+        if client is None or state is None:
+            return
+        if message["type"] != "hello" and client.page_id != state["page_id"]:
+            return
+        if message["type"] == "hello" and client.page_id is not None:
+            return
+        old_pages = {page["page_id"] for page in self.pages()}
+        old_visibility = client.visibility
+        old_audio = client.audio_unlocked
+        was_stale = client.stale
+        client.page_id = state["page_id"]
+        client.device_id = state["device_id"]
+        client.user_agent = state["user_agent"]
+        client.browser = _browser(client.user_agent)
+        client.platform = state["platform"]
+        client.screen = f"{state['screen']['width']}x{state['screen']['height']}"
+        client.page_load_time = state["page_load_time"]
+        client.visibility = state["visibility"]
+        client.audio_unlocked = state["audio_unlocked"]
+        client.last_heartbeat = time.monotonic()
+        client.stale = False
+        if message["type"] == "hello":
+            logger.info(
+                json.dumps(
+                    {
+                        "service": SERVICE_NAME,
+                        "event_type": "client hello",
+                        "channel": client.channel,
+                        "peer": client.peer,
+                        "page_id": client.page_id,
+                        "device_id": client.device_id,
+                        "user_agent": client.user_agent,
+                        "platform": client.platform,
+                        "screen": client.screen,
+                        "page_load_time": client.page_load_time,
+                        "visibility": client.visibility,
+                        "audio_unlocked": client.audio_unlocked,
+                    }
+                )
+            )
+            self._activity(client, "start", True)
+        if old_visibility != client.visibility and message["type"] != "hello":
+            logger.info(
+                json.dumps(
+                    {
+                        "service": SERVICE_NAME,
+                        "event_type": "client visibility",
+                        "channel": client.channel,
+                        "page_id": client.page_id,
+                        "visibility": client.visibility,
+                        "audio_unlocked": client.audio_unlocked,
+                    }
+                )
+            )
+        if (
+            old_pages != {page["page_id"] for page in self.pages()}
+            or old_visibility != client.visibility
+            or old_audio != client.audio_unlocked
+            or was_stale
+            or (message["type"] == "hello" and client.channel == "ws")
+        ):
+            await self._clients_changed()
+
+    async def mark_stale(self, now: float | None = None) -> None:
+        now = time.monotonic() if now is None else now
+        changed = False
+        for client in self._clients.values():
+            if (
+                client.page_id
+                and not client.stale
+                and client.last_heartbeat is not None
+                and now - client.last_heartbeat > 30
+            ):
+                client.stale = True
+                changed = True
+                logger.info(
+                    json.dumps(
+                        {
+                            "service": SERVICE_NAME,
+                            "event_type": "client stale",
+                            "channel": client.channel,
+                            "page_id": client.page_id,
+                            "seconds_since_heartbeat": round(now - client.last_heartbeat, 1),
+                        }
+                    )
+                )
+        if changed:
+            await self._clients_changed()
 
     async def broadcast(self, message: dict) -> None:
         """Send `message` as JSON to every connected client, dropping dead ones.
@@ -103,19 +387,47 @@ class ConnectionManager:
         """
         if message.get("type") == "show":
             self.last_show = message
+        elif message.get("type") == "person":
+            self.last_person = message
+        elif message.get("type") == "session":
+            self.last_session = message
         dead: list[WebSocket] = []
-        for connection in self._connections:
+        recipients = []
+        for connection in list(self._connections):
+            client = self._clients.get(connection)
+            recipient = {
+                "page_id": client.page_id if client else None,
+                "visibility": client.visibility if client else "unknown",
+                "audio_unlocked": client.audio_unlocked if client else False,
+            }
             try:
                 await connection.send_text(json.dumps(message))
+                recipients.append(recipient)
             except Exception:  # noqa: BLE001 - best-effort broadcast
                 dead.append(connection)
+        if message.get("type") in {"say", "show", "speech_started"}:
+            logger.info(
+                json.dumps(
+                    {
+                        "service": SERVICE_NAME,
+                        "event_type": "broadcast",
+                        "type": message["type"],
+                        "strategy": message.get("strategy"),
+                        "recipients": recipients,
+                        "failures": [
+                            self._clients[s].page_id if s in self._clients else None for s in dead
+                        ],
+                    }
+                )
+            )
         for connection in dead:
-            self.disconnect(connection)
+            await self.disconnect(connection, reason="send failed")
 
     async def send_current_state(self, websocket: WebSocket) -> None:
         """Push the last-known `Show` state to a newly connected `websocket`."""
-        if self.last_show is not None:
-            await websocket.send_text(json.dumps(self.last_show))
+        for message in (self.last_show, self.last_person, self.last_session):
+            if message is not None:
+                await websocket.send_text(json.dumps(message))
 
 
 def resolve_photo(
@@ -188,6 +500,35 @@ def _speech_started_to_message(event: SpeechStarted) -> dict:
     return {"type": "speech_started", "session_id": event.session_id}
 
 
+def _debug_to_message(event) -> dict:
+    fields = {
+        PersonState: ("person", ("state", "confidence", "zone", "scene_note")),
+        SessionState: ("session", ("phase", "goal", "strategy_index", "session_id")),
+        Utterance: ("utterance", ("text", "confidence", "duration_s")),
+        PoseDebug: (
+            "pose",
+            (
+                "landmarks",
+                "bbox",
+                "confidence",
+                "detected",
+                "candidate_state",
+                "state",
+                "zone",
+                "frame_ts",
+                "latency_ms",
+            ),
+        ),
+        Activity: ("activity", ("service", "kind", "phase", "ok", "duration_ms", "detail")),
+    }
+    kind, names = fields[type(event)]
+    return {
+        "type": kind,
+        **{name: getattr(event, name) for name in names},
+        "ts": event.ts.isoformat(),
+    }
+
+
 async def broadcast_loop(
     bus,
     manager: ConnectionManager,
@@ -209,7 +550,8 @@ async def broadcast_loop(
     """
     bus.ensure_group("show", GROUP)
     bus.ensure_group("say", GROUP)
-    bus.ensure_group("speech_in", GROUP)
+    for stream in ("speech_in", "person", "session", "pose_debug", "activity"):
+        bus.ensure_group(stream, GROUP)
 
     voice_clip_dir = Path(voice_clip_dir)
     iterations = 0
@@ -224,15 +566,23 @@ async def broadcast_loop(
             ("show", _show_to_message),
             ("say", _say_to_message),
             ("speech_in", _speech_started_to_message),
+            ("person", _debug_to_message),
+            ("session", _debug_to_message),
+            ("pose_debug", _debug_to_message),
+            ("activity", _debug_to_message),
         )
         for stream, to_message in streams:
             messages = await asyncio.to_thread(
                 bus.read, stream, GROUP, consumer, count=count, block_ms=block_ms
             )
             for msg_id, event in messages:
-                # Complete Utterance events share `speech_in` with the onset
-                # signal but are for the agent, not the bedside browser.
-                if stream == "speech_in" and not isinstance(event, SpeechStarted):
+                if stream == "session" and not isinstance(event, SessionState):
+                    bus.ack(stream, GROUP, msg_id)
+                    continue
+                # Complete utterances share `speech_in` with the onset signal.
+                if isinstance(event, Utterance):
+                    message = _debug_to_message(event)
+                    await manager.broadcast(message)
                     bus.ack(stream, GROUP, msg_id)
                     continue
                 if isinstance(event, Say) and event.clip_id is not None:
@@ -251,10 +601,34 @@ async def broadcast_loop(
                     else:
                         message = _say_to_message(event, audio_url=f"/voice/{event.clip_id}.wav")
                 elif isinstance(event, Say) and speech is not None:
+                    await manager.broadcast(
+                        {
+                            "type": "activity",
+                            "service": SERVICE_NAME,
+                            "kind": "tts",
+                            "phase": "start",
+                            "ok": True,
+                            "duration_ms": None,
+                            "detail": None,
+                        }
+                    )
+                    logger.info(
+                        json.dumps(
+                            {
+                                "service": SERVICE_NAME,
+                                "event_type": "Activity",
+                                "kind": "tts",
+                                "phase": "start",
+                            }
+                        )
+                    )
+                    started = time.perf_counter()
+                    ok = True
                     try:
                         audio_id = await asyncio.to_thread(speech.synthesize, event.text)
                         message = _say_to_message(event, audio_id)
                     except Exception:  # noqa: BLE001 - keep the calm visual fallback alive
+                        ok = False
                         logger.exception("Piper could not synthesize a Say event")
                         bus.publish(
                             Notify(
@@ -267,6 +641,31 @@ async def broadcast_loop(
                             )
                         )
                         message = _say_to_message(event)
+                    finally:
+                        duration_ms = (time.perf_counter() - started) * 1000
+                        await manager.broadcast(
+                            {
+                                "type": "activity",
+                                "service": SERVICE_NAME,
+                                "kind": "tts",
+                                "phase": "end",
+                                "ok": ok,
+                                "duration_ms": duration_ms,
+                                "detail": "ok" if ok else "error",
+                            }
+                        )
+                        logger.info(
+                            json.dumps(
+                                {
+                                    "service": SERVICE_NAME,
+                                    "event_type": "Activity",
+                                    "kind": "tts",
+                                    "phase": "end",
+                                    "ok": ok,
+                                    "duration_ms": duration_ms,
+                                }
+                            )
+                        )
                 else:
                     message = to_message(event)
                 await manager.broadcast(message)
@@ -358,6 +757,65 @@ async def handle_media_message(bus, message: dict, session_id: str | None = None
         logger.warning("ignoring malformed /media message of type %r", message_type)
 
 
+def publish_playback(bus, message: dict) -> Activity | None:
+    """Validate one bounded browser playback report and publish transient telemetry."""
+    if not isinstance(message, dict) or message.get("type") != "playback":
+        return None
+    phase = message.get("phase")
+    if not isinstance(phase, str) or phase not in PLAYBACK_PHASES:
+        return None
+    for name, limit in (
+        ("strategy", 128),
+        ("session_id", 128),
+        ("audio_id", 24),
+        ("detail", 160),
+        ("error_name", 64),
+        ("error_message", 160),
+    ):
+        value = message.get(name)
+        if value is not None and (not isinstance(value, str) or len(value) > limit):
+            return None
+    latency_ms = message.get("latency_ms")
+    if (
+        isinstance(latency_ms, bool)
+        or not isinstance(latency_ms, (int, float))
+        or not math.isfinite(latency_ms)
+        or not 0 <= latency_ms <= 3_600_000
+    ):
+        return None
+    detail = message.get("detail") or message.get("error_name") or phase
+    if phase == "failed" and message.get("error_name"):
+        detail = message["error_name"]
+    event = Activity(
+        source=SERVICE_NAME,
+        service=SERVICE_NAME,
+        session_id=message.get("session_id"),
+        kind="playback",
+        phase=PLAYBACK_PHASES[phase],
+        ok=phase not in {"failed", "interrupted", "no_audio"},
+        duration_ms=latency_ms,
+        detail=detail,
+    )
+    logger.info(
+        json.dumps(
+            {
+                "service": SERVICE_NAME,
+                "event_type": "playback",
+                "playback_phase": phase,
+                "strategy": message.get("strategy"),
+                "session_id": message.get("session_id"),
+                "audio_id": message.get("audio_id"),
+                "latency_ms": latency_ms,
+                "detail": message.get("detail"),
+                "error_name": message.get("error_name"),
+                "error_message": message.get("error_message"),
+            }
+        )
+    )
+    bus.publish(event, maxlen=CAPPED_MAXLEN["activity"])
+    return event
+
+
 def create_app(
     bus,
     photo_dir: Path | str = DEFAULT_PHOTO_DIR,
@@ -371,7 +829,7 @@ def create_app(
     `photo_dir` is where caregiver-uploaded photos referenced by a `Show`
     event's `photo_id` are read from.
     """
-    manager = ConnectionManager()
+    manager = ConnectionManager(bus)
     photo_dir = Path(photo_dir)
     voice_clip_dir = Path(voice_clip_dir)
 
@@ -395,10 +853,18 @@ def create_app(
         task = asyncio.create_task(
             broadcast_loop(bus, manager, speech=speech, voice_clip_dir=voice_clip_dir)
         )
+
+        async def stale_loop() -> None:
+            while True:
+                await asyncio.sleep(5)
+                await manager.mark_stale()
+
+        stale_task = asyncio.create_task(stale_loop())
         try:
             yield
         finally:
             task.cancel()
+            stale_task.cancel()
 
     app = FastAPI(title="Night Companion embodiment", lifespan=lifespan)
     app.state.manager = manager
@@ -442,15 +908,30 @@ def create_app(
 
     @app.websocket("/ws")
     async def ws_endpoint(websocket: WebSocket) -> None:
-        await manager.connect(websocket)
-        await manager.send_current_state(websocket)
+        await manager.connect(websocket, "ws")
         try:
+            await manager.send_current_state(websocket)
             while True:
-                # The page does not send anything meaningful; just keep the
-                # connection open and notice disconnects.
-                await websocket.receive_text()
-        except WebSocketDisconnect:
-            manager.disconnect(websocket)
+                raw = await websocket.receive_text()
+                if len(raw) > 2048:
+                    continue
+                try:
+                    message = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(message, dict) and message.get("type") in {
+                    "hello",
+                    "heartbeat",
+                    "visibility",
+                }:
+                    await manager.update(websocket, message)
+                else:
+                    publish_playback(bus, message)
+        except WebSocketDisconnect as exc:
+            await manager.disconnect(websocket, exc.code, exc.reason)
+        except Exception:
+            await manager.disconnect(websocket, reason="socket error")
+            raise
 
     @app.websocket("/media")
     async def media_endpoint(websocket: WebSocket) -> None:
@@ -464,17 +945,30 @@ def create_app(
         or unrecognised message is logged and skipped, not fatal to the
         connection (issue #28).
         """
-        await websocket.accept()
+        await manager.connect(websocket, "media")
         try:
             while True:
                 raw = await websocket.receive_text()
+                if len(raw) > 2_000_000:
+                    continue
                 try:
                     message = json.loads(raw)
                 except json.JSONDecodeError:
                     logger.warning("ignoring non-JSON /media message")
                     continue
-                await handle_media_message(bus, message)
-        except WebSocketDisconnect:
-            pass
+                if isinstance(message, dict) and message.get("type") in {
+                    "hello",
+                    "heartbeat",
+                    "visibility",
+                }:
+                    if len(raw) <= 2048:
+                        await manager.update(websocket, message)
+                elif isinstance(message, dict):
+                    await handle_media_message(bus, message)
+        except WebSocketDisconnect as exc:
+            await manager.disconnect(websocket, exc.code, exc.reason)
+        except Exception:
+            await manager.disconnect(websocket, reason="socket error")
+            raise
 
     return app
