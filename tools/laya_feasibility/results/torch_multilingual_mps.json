@@ -1,0 +1,88 @@
+{
+  "checkpoint": "multilingual",
+  "device": "mps",
+  "dtype": "torch.float32",
+  "torch": "2.14.0",
+  "laya": "0.3.5",
+  "machine": "arm64",
+  "load_s": 21.7,
+  "tokens_per_question": 181,
+  "single_question": {
+    "p50_ms": 30.62,
+    "p95_ms": 32.73,
+    "min_ms": 26.19,
+    "reps": 30
+  },
+  "decision_32_bool": {
+    "p50_ms": 709.06,
+    "p95_ms": 710.4,
+    "min_ms": 708.07,
+    "reps": 10
+  },
+  "choice_8_strategies": {
+    "p50_ms": 31.07,
+    "p95_ms": 32.58,
+    "min_ms": 27.92,
+    "reps": 30
+  },
+  "choice_32_actions": {
+    "p50_ms": 58.61,
+    "p95_ms": 60.54,
+    "min_ms": 51.85,
+    "reps": 30
+  },
+  "peak_rss_mb": 4615.9,
+  "mps_driver_allocated_mb": 2359.7,
+  "zero_shot_bool": {
+    "phase:IDLE": 0.9969,
+    "phase:OBSERVING": 0.9869,
+    "phase:ENGAGED": 0.9989,
+    "phase:COOLDOWN": 0.9954,
+    "phase:ESCALATED": 0.9363,
+    "goal:bed": 1.0,
+    "goal:restroom": 1.0,
+    "goal:comfort": 0.816,
+    "strategy:ambient_orient": 0.6899,
+    "strategy:soft_greeting": 0.7037,
+    "strategy:orient_time_place": 0.9429,
+    "strategy:validate_and_redirect": 0.9999,
+    "strategy:guided_return": 1.0,
+    "strategy:familiar_voice": 0.7345,
+    "strategy:path_light": 1.0,
+    "strategy:escalate_phone": 0.9999,
+    "notify:any": 0.9932,
+    "notify:info": 0.9995,
+    "notify:attention": 0.8224,
+    "notify:critical": 0.1031,
+    "say:any": 0.9997,
+    "say:conjunction_but": 0.9587,
+    "say:avoid_terms": 0.9527,
+    "say:states_clock_time": 0.9971,
+    "say:invents_proper_noun": 0.4548,
+    "say:addresses_by_name": 0.7067,
+    "say:correction_of_reality": 0.6877,
+    "say:memory_question": 0.9483,
+    "say:blunt_refusal": 0.5936,
+    "say:infantilising": 0.3392,
+    "say:invents_directions": 0.2626,
+    "say:unsupported_claim": 0.9704
+  },
+  "zero_shot_strategy": {
+    "type": "choice",
+    "choice": "familiar_voice",
+    "probabilities": {
+      "ambient_orient": 0.0478,
+      "soft_greeting": 0.0342,
+      "orient_time_place": 0.0913,
+      "validate_and_redirect": 0.2542,
+      "guided_return": 0.0758,
+      "familiar_voice": 0.4139,
+      "path_light": 0.0405,
+      "escalate_phone": 0.0423
+    },
+    "confidence": 0.2057,
+    "action": {
+      "act_probability": 1.0
+    }
+  }
+}

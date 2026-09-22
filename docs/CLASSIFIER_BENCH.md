@@ -163,6 +163,20 @@ Gate: under 50 ms for a single question on the M4, and torch/Core ML outputs tha
 Zero-shot accuracy is expected to be near chance (upstream reports 0.36 against 0.318 for
 random) — that is not the gate.
 
+**Result, 2026-09-22** (details and numbers in `tools/laya_feasibility/README.md`). Passed on
+the ANE, failed for the English checkpoint. The multilingual Core ML model does one question
+in 11 ms at L256 on CPU+ANE, in about 300 MB, and matches torch (largest probability
+difference 0.011, every argmax and every `bool` side agrees). The English checkpoint takes
+72 ms per question on torch/MPS and fp16 does not help, so English v1 needs a `mobius`
+conversion, or the multilingual checkpoint finetuned on English data instead.
+
+Two findings change later phases. A decision posed as 32 `bool` questions is 32 forward
+passes, 354 ms at best, so the live path cannot ask them all against the 150 ms budget: it
+needs a rules shortlist or one `choice` per action family. The benchmark can still use the
+full 1,504-question `bool` set. And the budget that binds is the L256 bucket, not 512
+tokens: the probe state is about 180 tokens, and a question that grows past 256 costs three
+times as much. A 32-option `choice` fills the 256-token option head by itself.
+
 ### Phase 1 — harness and the wording task, one to two days
 
 Start with the **wording judge**, not the decision layer: the label space is three booleans,
