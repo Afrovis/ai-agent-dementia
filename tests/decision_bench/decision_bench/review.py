@@ -23,6 +23,7 @@ from decision_bench.schema import (
     guideline_clauses,
     load_scenario,
 )
+from decision_bench.vote import vote_scenario
 
 
 class ReviewError(RuntimeError):
@@ -84,22 +85,27 @@ def _labels(checkpoint: dict[str, Any]) -> dict[str, object]:
     return {
         "acceptable": checkpoint.get("acceptable") or [],
         "must_not": checkpoint.get("must_not") or [],
+        "doubtful_acceptable": checkpoint.get("doubtful_acceptable") or [],
+        "doubtful_must_not": checkpoint.get("doubtful_must_not") or [],
         "escalate_by": checkpoint.get("escalate_by"),
         "trigger": checkpoint.get("trigger"),
         "cites": checkpoint.get("cites") or [],
     }
 
 
+_ACTION_FIELDS = ("acceptable", "must_not", "doubtful_acceptable", "doubtful_must_not")
+
+
 def _different(model: dict[str, Any], human: dict[str, Any]) -> bool:
     return any(
         (
             _actions(model, field) != _actions(human, field)
-            if field in {"acceptable", "must_not"}
+            if field in _ACTION_FIELDS
             else set(model.get(field) or []) != set(human.get(field) or [])
             if field == "cites"
             else model.get(field) != human.get(field)
         )
-        for field in ("acceptable", "must_not", "escalate_by", "trigger", "cites")
+        for field in (*_ACTION_FIELDS, "escalate_by", "trigger", "cites")
     )
 
 
@@ -119,6 +125,10 @@ def _checkpoint_dict(checkpoint: Checkpoint, source: Checkpoint) -> dict[str, ob
         result["acceptable"] = _action_dicts(checkpoint.acceptable)
     if checkpoint.must_not:
         result["must_not"] = _action_dicts(checkpoint.must_not)
+    if checkpoint.doubtful_acceptable:
+        result["doubtful_acceptable"] = _action_dicts(checkpoint.doubtful_acceptable)
+    if checkpoint.doubtful_must_not:
+        result["doubtful_must_not"] = _action_dicts(checkpoint.doubtful_must_not)
     if checkpoint.escalate_by is not None:
         result["escalate_by"] = _clean_number(checkpoint.escalate_by)
         if checkpoint.trigger is not None:
@@ -201,6 +211,22 @@ def apply_scenario(
     if not isinstance(model_items, list) or not isinstance(review_checkpoints, list):
         raise ReviewError(f"{scenario_id}: checkpoints must be lists")
     model_by_id = {item.get("id"): item for item in model_items if isinstance(item, dict)}
+    if model_doc.get("third_opinion") is not None:
+        # A third run means the checkpoint was voted; compare the review against the
+        # vote, not the first run's own draft, or an accepted vote would look like an
+        # unexplained human edit.
+        model_by_id = {
+            checkpoint_id: {
+                "acceptable": vote.acceptable,
+                "must_not": vote.must_not,
+                "doubtful_acceptable": vote.doubtful_acceptable,
+                "doubtful_must_not": vote.doubtful_must_not,
+                "escalate_by": vote.escalate_by,
+                "trigger": vote.trigger,
+                "cites": vote.cites,
+            }
+            for checkpoint_id, vote in vote_scenario(model_doc).items()
+        }
     review_by_id = {item.get("id"): item for item in review_checkpoints if isinstance(item, dict)}
     disagreements = []
     for checkpoint in labelled:

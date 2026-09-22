@@ -182,6 +182,11 @@ class Checkpoint(_Strict):
     `window` is `[start, end]` in scenario seconds. An `escalate_by`
     deadline counts from `trigger` (default: the window start, else 0) and
     must say where its number comes from, which is always the caregiver.
+
+    `doubtful_acceptable` and `doubtful_must_not` hold actions that only one
+    of three independent annotator runs set, with no majority either way
+    (see `vote.py`). They are never a critical violation and never required
+    for a pass; `scoring.py` gives them half credit (`doubt`).
     """
 
     id: str
@@ -189,6 +194,8 @@ class Checkpoint(_Strict):
     window: tuple[float, float] | None = None
     acceptable: tuple[Action, ...] = ()
     must_not: tuple[Action, ...] = ()
+    doubtful_acceptable: tuple[Action, ...] = ()
+    doubtful_must_not: tuple[Action, ...] = ()
     escalate_by: float | None = Field(default=None, gt=0.0)
     trigger: float | None = Field(default=None, ge=0.0)
     threshold_source: Literal["caregiver"] | None = None
@@ -214,7 +221,9 @@ class Checkpoint(_Strict):
     def _consistent(self) -> Checkpoint:
         if self.window is not None and self.window[0] > self.window[1]:
             raise ValueError(f"checkpoint {self.id!r} window starts after it ends")
-        if (self.acceptable or self.must_not) and self.window is None:
+        if (
+            self.acceptable or self.must_not or self.doubtful_acceptable or self.doubtful_must_not
+        ) and self.window is None:
             raise ValueError(f"checkpoint {self.id!r} has action labels but no window")
         if self.window is None and self.escalate_by is None:
             raise ValueError(f"checkpoint {self.id!r} needs a window or an escalate_by deadline")
@@ -232,7 +241,9 @@ class Checkpoint(_Strict):
         if self.labelled:
             if not self.rationale:
                 raise ValueError(f"labelled checkpoint {self.id!r} needs a rationale")
-            if (self.acceptable or self.must_not) and not self.cites:
+            if (
+                self.acceptable or self.must_not or self.doubtful_acceptable or self.doubtful_must_not
+            ) and not self.cites:
                 raise ValueError(f"labelled checkpoint {self.id!r} must cite guideline clauses")
         elif not self.question:
             raise ValueError(f"unlabelled checkpoint {self.id!r} needs a question")
@@ -240,7 +251,13 @@ class Checkpoint(_Strict):
 
     @property
     def labelled(self) -> bool:
-        return bool(self.acceptable or self.must_not or self.escalate_by is not None)
+        return bool(
+            self.acceptable
+            or self.must_not
+            or self.doubtful_acceptable
+            or self.doubtful_must_not
+            or self.escalate_by is not None
+        )
 
     @property
     def deadline_from(self) -> float:
@@ -301,7 +318,9 @@ class Scenario(_Strict):
             raise ValueError(f"scenario {self.id!r} cannot be a noisy variant of itself")
         if not self.voice_clip:
             for checkpoint in self.checkpoints:
-                accepted = {(a.kind, a.value) for a in checkpoint.acceptable}
+                accepted = {(a.kind, a.value) for a in checkpoint.acceptable} | {
+                    (a.kind, a.value) for a in checkpoint.doubtful_acceptable
+                }
                 if ("strategy", "familiar_voice") in accepted:
                     raise ValueError(
                         f"scenario {self.id!r} checkpoint {checkpoint.id!r} accepts "

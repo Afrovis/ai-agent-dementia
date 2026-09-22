@@ -4,12 +4,13 @@ import pytest
 import yaml
 
 from decision_bench.annotate import (
+    annotate_scenario,
     citable_clauses,
     validate_annotation,
     write_annotation_files,
 )
 from decision_bench.review import ReviewError, apply_scenario
-from decision_bench.schema import GUIDELINES_PATH, load_scenario
+from decision_bench.schema import Action, GUIDELINES_PATH, load_default_profile, load_scenario
 
 FIXTURE = Path(__file__).parents[1] / "fixtures/scenarios/false-alarm-01.yaml"
 
@@ -130,3 +131,64 @@ def test_model_accepted_review_cannot_carry_edits(tmp_path):
     with pytest.raises(ReviewError, match="reviewed_by: human"):
         apply_scenario("false-alarm-01", annotations_dir=annotations, scenarios_dir=scenarios)
     assert fixture.read_bytes() == before
+
+
+def _run(scenario, **checkpoint_overrides):
+    checkpoints = []
+    for item in scenario.checkpoints:
+        checkpoint = {
+            "id": item.id,
+            "acceptable": [{"phase": "OBSERVING"}],
+            "must_not": [],
+            "escalate_by": None,
+            "trigger": None,
+            "rationale": "Watch quietly while the person settles.",
+            "cites": ["NICE-05"],
+            "uncertain": "",
+        }
+        checkpoint.update(checkpoint_overrides)
+        checkpoints.append(checkpoint)
+    output = {"checkpoints": checkpoints, "scenario_notes": ""}
+    return annotate_scenario(
+        scenario,
+        profile=load_default_profile(),
+        guidelines_text=GUIDELINES_PATH.read_text(),
+        citable=citable_clauses(),
+        runner=lambda *args: {
+            "structured_output": output,
+            "model": "claude-opus-5",
+            "session_id": "test",
+            "total_cost_usd": 0.01,
+        },
+    )
+
+
+def test_apply_copies_doubtful_fields_from_a_vote_into_the_fixture(tmp_path):
+    scenarios = tmp_path / "scenarios"
+    annotations = tmp_path / "annotations"
+    scenarios.mkdir()
+    fixture = scenarios / FIXTURE.name
+    fixture.write_bytes(FIXTURE.read_bytes())
+    scenario = load_scenario(fixture)
+
+    first = _run(scenario, acceptable=[{"strategy": "path_light"}], must_not=[{"say": "any"}])
+    second = _run(scenario, acceptable=[], must_not=[{"say": "any"}])
+    third = _run(scenario, acceptable=[], must_not=[{"say": "any"}])
+    write_annotation_files(
+        scenario,
+        first,
+        annotations_dir=annotations,
+        effort="high",
+        guidelines_text=GUIDELINES_PATH.read_text(),
+        force=False,
+        second=second,
+        third=third,
+    )
+    applied, disagreements = apply_scenario(
+        scenario.id, annotations_dir=annotations, scenarios_dir=scenarios
+    )
+    assert (applied, disagreements) == (1, 0)
+    loaded = load_scenario(fixture)
+    assert loaded.checkpoints[0].doubtful_acceptable == (Action(strategy="path_light"),)
+    assert loaded.checkpoints[0].acceptable == ()
+    assert loaded.checkpoints[0].must_not == (Action(say="any"),)

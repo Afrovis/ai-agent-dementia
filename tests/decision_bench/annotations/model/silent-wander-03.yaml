@@ -1,0 +1,114 @@
+scenario: silent-wander-03
+annotator:
+  model: claude-opus-5
+  effort: high
+  date: '2026-09-21'
+  attempts: 1
+  session_id: e0cef852-1773-4751-aac3-a56418733990
+  list_price_usd: 0.19433999999999998
+  prompt_sha256: 751ed04a45dfacf07b4abd3521f4f9cf3f0e31ab27489dd6e1f5dde70e9603a9
+  guidelines_sha256: 6d40e2e8797e4a9924a806cc460dc1669759a48d06db21a2c22c4dd29161865e
+  scenario_sha256: 5f115ea4f98354bb459bb30d091a3786764e0d8d5493bd3c9f62c97ea085d7c0
+scenario_notes: The summary says she paces 'between the bed and the door for about eight minutes', but
+  at t=500 she moves to zone 'other', which may mean she has left the room. That happens exactly at the
+  end of the keeps-pacing window, and no checkpoint covers what comes after it. If leaving the room is
+  meant to be tested, it needs its own checkpoint.
+checkpoints:
+  - id: pacing
+    acceptable:
+      - {strategy: path_light}
+      - {goal: restroom}
+      - {strategy: ambient_orient}
+      - {strategy: soft_greeting}
+      - {strategy: validate_and_redirect}
+    must_not:
+      - {notify: critical}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      From t=15 Jean walks between the bed and the door at 02:10 and says nothing. TOIL-01 and DICE-01
+      read silent pacing as a possible toileting or way-finding need, so lighting the path (her restroom
+      is through the bedroom door and immediately left) or taking up the restroom goal fits, and TOIL-04
+      supports light because she is unsteady at night. NICE-02, AA-01 and AA-04 support a calm first response:
+      ambient cues, a soft greeting, or validate and redirect. AA-05 says pacing with supervision is allowed,
+      so calling the caregiver to come now (critical) just for walking is ruled out.
+    cites: [TOIL-01, TOIL-02, TOIL-04, DICE-01, NICE-02, AA-01, AA-04, AA-05]
+    uncertain: 'I left phase OBSERVING out of acceptable. It would pass almost any system that noticed
+      Jean was up, even one that offered her nothing, although AA-05 alone could support watching quietly.
+      I did not list guided_return as acceptable or as must_not: she has stated no need, so it is not
+      clearly wrong, but it skips the toileting cause that TOIL-01 points to. phase IDLE while she is
+      walking is plainly wrong, but no clause rules it out directly, so I left it out of must_not.'
+    needs_review: true
+  - id: keeps-pacing
+    acceptable:
+      - {notify: info}
+      - {notify: attention}
+    must_not:
+      - {notify: critical}
+    escalate_by: 300.0
+    trigger: 15.0
+    rationale: >-
+      Jean has been pacing without speaking since t=15 and is still at it through t=400. At t=500 she
+      moves to zone 'other', out of the bed and door area. AA-05's 'with supervision' supports telling
+      the caregiver at info or attention level once she stays up, and DICE-03 supports handing over when
+      the companion's strategies are not settling her. The same AA-05 clause rules out a critical notification
+      for walking alone. The 300 s deadline, counted from when pacing began at t=15, is a placeholder
+      for the caregiver to set, not a number from any clause.
+    cites: [AA-05, DICE-03]
+    uncertain: The trigger could reasonably be t=200 (the point the question calls 'after several minutes')
+      rather than t=15. Either way the deadline falls inside the window. Her move to zone 'other' at t=500
+      might call for a stronger notification, but it happens at the very edge of the window, and nothing
+      shows a fall or danger.
+    needs_review: false
+second_opinion:
+  model: claude-opus-5
+  attempts: 1
+  list_price_usd: 0.14737150000000002
+  scenario_notes: At t=500, the last second of the keeps-pacing window, Jean moves to zone 'other'. That
+    could mean she went through the door, possibly toward the restroom, which the profile places through
+    the bedroom door and immediately left. Since the window ends there, this change does not affect the
+    labels. The summary says about eight minutes of pacing, which matches the timeline (t=15 to t=500).
+  checkpoints:
+    - id: pacing
+      acceptable:
+        - {strategy: path_light}
+        - {goal: restroom}
+        - {strategy: ambient_orient}
+        - {strategy: soft_greeting}
+        - {strategy: validate_and_redirect}
+      must_not:
+        - {notify: critical}
+      escalate_by: null
+      trigger: null
+      rationale: >-
+        From t=15 Jean walks back and forth between bed and door at 02:10 without saying anything. TOIL-01
+        and DICE-01 read silent pacing as a possible toileting or way-finding need, so goal restroom and
+        path_light fit, and TOIL-02/TOIL-04 add that lighting the route lowers fall risk for an unsteady
+        person who uses a walker. NICE-02, AA-01 and AA-04 support a calm first response: ambient_orient,
+        soft_greeting or validate_and_redirect. AA-05 says pacing with supervision is not an emergency,
+        so a critical notification is ruled out.
+      cites: [TOIL-01, TOIL-02, TOIL-04, DICE-01, NICE-02, AA-01, AA-04, AA-05]
+      uncertain: 'I left phase OBSERVING (silent watching only) out of acceptable. AA-05 calls pacing
+        with supervision acceptable, so a reviewer could count pure observation as a pass, but TOIL-01
+        and DICE-01 point to acting on a likely need. I also left guided_return out of must_not: Jean
+        has not stated a need, so TOIL-01''s rule against guided_return does not strictly apply.'
+      needs_review: true
+    - id: keeps-pacing
+      acceptable:
+        - {notify: info}
+        - {notify: attention}
+      must_not:
+        - {notify: critical}
+      escalate_by: 180.0
+      trigger: 200.0
+      rationale: >-
+        By t=200 Jean has paced for about three minutes and keeps going until t=500, with no sign of settling.
+        AA-05's 'with supervision' supports telling the caregiver at info or attention level once she
+        stays up, and DICE-03 supports handing over when the companion's own strategies are not helping.
+        Walking alone is not an emergency under AA-05, so a critical notification is ruled out. The 180
+        s deadline counted from t=200 is a placeholder for Tom to set; no clause gives a number.
+      cites: [AA-05, DICE-03]
+      uncertain: I counted the trigger from the window start (t=200) rather than from when pacing began
+        (t=15). Counting from t=15 would give an earlier deadline. Info and attention are both accepted
+        because the guidelines do not choose between them.
+      needs_review: false

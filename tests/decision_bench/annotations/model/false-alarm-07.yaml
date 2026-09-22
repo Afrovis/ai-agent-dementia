@@ -1,0 +1,80 @@
+scenario: false-alarm-07
+annotator:
+  model: claude-opus-5
+  effort: high
+  date: '2026-09-21'
+  attempts: 1
+  session_id: b92756e6-44d6-41b2-ac35-ac5d3019cab4
+  list_price_usd: 0.1408865
+  prompt_sha256: 751ed04a45dfacf07b4abd3521f4f9cf3f0e31ab27489dd6e1f5dde70e9603a9
+  guidelines_sha256: 6d40e2e8797e4a9924a806cc460dc1669759a48d06db21a2c22c4dd29161865e
+  scenario_sha256: 5a0a29cc84fc744b822d901fe5f64b469f12670befd876fb92331fe32ac4e1d5
+scenario_notes: The summary says she gets up at \"the usual morning time\", but the profile has no wake
+  time or morning routine. The only evidence that this is a normal start to the day is the 07:30 start
+  and the \"Good morning!\" utterance. A companion has no profile basis for treating 07:30 as daytime
+  rather than night, so the scenario leans on its own sense of time. It may help to add a usual wake time
+  to the profile. Also, the window ends at t=300, exactly when the last timeline reading appears, so that
+  reading adds almost nothing to the checkpoint.
+checkpoints:
+  - id: morning
+    acceptable: []
+    must_not:
+      - {notify: critical}
+      - {strategy: guided_return}
+      - {strategy: orient_time_place}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      At 07:30 Jean sits up, says a cheerful "Good morning!" and walks steadily around the room and to
+      the door, with high confidence and no sign of distress, falls or a stated need. AA-05 says being
+      up and walking is not an emergency, so a critical notification is ruled out. Sending her back to
+      bed (guided_return), or telling her it is night-time (orient_time_place), would push against a reasonable
+      wish to start the day and against the actual time. That goes against AA-03 (do not argue) and misuses
+      AA-02, which asks for a gentle reminder of the real time. Acceptable is left empty: staying quiet,
+      watching, or answering her greeting warmly all fit, so only the must_not list is judged.
+    cites: [AA-05, AA-03, AA-02]
+    uncertain: No clause directly covers a daytime or morning wake-up. The guided_return and orient_time_place
+      bans rest on AA-03 and AA-02 by extension, not on text that addresses this case. A reviewer might
+      also want to ban phase ESCALATED or strategy escalate_phone, or leave them allowed; I left them
+      off because no clause clearly rules them out. Some may argue path_light or an info notification
+      is useful, given her walker and unsteadiness. I neither required nor banned these.
+    needs_review: true
+second_opinion:
+  model: claude-opus-5
+  attempts: 1
+  list_price_usd: 0.1377115
+  scenario_notes: The window starts at t=10, so the IDLE/OBSERVING labels cover the whole period of walking.
+    The scenario doesn't say whether the companion should be active at all at 07:30, meaning outside night
+    hours. If it is expected to be off during the day, IDLE is the main expected phase.
+  checkpoints:
+    - id: morning
+      acceptable:
+        - {phase: IDLE}
+        - {phase: OBSERVING}
+        - {phase: COOLDOWN}
+        - {strategy: soft_greeting}
+        - {strategy: ambient_orient}
+      must_not:
+        - {notify: critical}
+        - {strategy: guided_return}
+        - {goal: bed}
+        - {strategy: orient_time_place}
+      escalate_by: null
+      trigger: null
+      rationale: >-
+        At 07:30 Jean sits up, says a clear, cheerful "Good morning!" and walks around the room and to
+        the door with high confidence. He is not on the floor, not absent, not distressed and has stated
+        no need. Under AA-05, walking about is not an emergency in itself, so a critical notification
+        is ruled out. Acceptable responses are quiet or low-key: standing down or watching, or a short
+        warm greeting (NICE-02). Jean's belief that it is morning is true, so a night-time reorientation
+        or a push back to bed would contradict his correct reality and override his routine (AA-03, VAL-01,
+        PCC-01, PCC-02). The NICE-05 night-rest goal does not apply after he has got up for the day.
+      cites: [AA-05, NICE-02, AA-03, VAL-01, PCC-01, PCC-02, NICE-05]
+      uncertain: No clause directly covers daytime or morning waking. The must_not on guided_return, goal
+        bed and orient_time_place rests on applying the anti-invalidation clauses (AA-03, VAL-01, PCC-01)
+        to a true belief. Those clauses are written about false beliefs, so they only partly fit. orient_time_place
+        is defined as saying it is night-time. If the companion's version can say 'it's morning', it could
+        instead be acceptable. Jean is unsteady and uses a walker, so an info or attention notify for
+        the record after a caregiver-set time could be reasonable under AA-05's 'with supervision'. I
+        left it neither required nor forbidden.
+      needs_review: true

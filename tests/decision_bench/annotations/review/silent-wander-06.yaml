@@ -1,0 +1,151 @@
+# ==============================================================================
+# HOW TO REVIEW
+# WHO WROTE WHAT: every label, rationale, doubt and note in this file was
+# written by the ANNOTATOR, Claude, claude-opus-5, working only from guidelines.md,
+# the profile and this scenario. The LOCAL MODEL (the agent's LLM, e.g.
+# gemma on Ollama) has not been run on this file; it is scored against these
+# labels later, once you have reviewed them.
+#
+# Everything you need is here: the scripted night first, then each checkpoint
+# with its question, the annotator's proposed labels and its doubts. You are
+# judging the answer key, not the agent.
+#
+# For each checkpoint, read the question and the timeline up to that moment,
+# then ask: do I agree with what the model says the agent should and must not
+# do?
+#   acceptable  good responses. The checkpoint passes if the agent does AT
+#               LEAST ONE of these inside the window. Empty = holding back is
+#               the right response.
+#   must_not    forbidden. Any of these inside the window is a critical failure.
+#   escalate_by the caregiver must be notified within this many seconds after
+#               `trigger` (a scenario second). Always a caregiver choice, never
+#               evidence.
+#   cites       guideline clauses (guidelines.md) the labels rest on. Only
+#               clauses you have ticked there may be cited.
+# Agree: leave it. Disagree: edit acceptable / must_not / escalate_by / trigger
+# / cites and write a short `reason`. Rationale-only edits need no reason.
+# When done: set `reviewed: true` (just below this header) and tell Claude,
+# or run `python -m decision_bench apply <id>`.
+#
+# Action values:
+#   phase     IDLE OBSERVING ENGAGED COOLDOWN ESCALATED
+#   goal      bed restroom comfort
+#   strategy  ambient_orient soft_greeting orient_time_place validate_and_redirect
+#             guided_return familiar_voice path_light escalate_phone
+#   notify    any info attention critical
+#   say       any conjunction_but avoid_terms states_clock_time invents_proper_noun
+#             addresses_by_name correction_of_reality memory_question
+#             blunt_refusal infantilising
+# ==============================================================================
+# SCENARIO silent-wander-06 (silent_wander)
+# Walks to the door and out of view for about four minutes, then comes back to bed.
+#
+# Night starts at 04:50.
+# Consented caregiver voice clip: no
+#
+# TIMELINE (a camera reading holds until the next one)
+#   t=    0s  04:50:00  sitting up, zone bed
+#   t=   15s  04:50:15  walking, zone door
+#   t=   35s  04:50:35  absent, zone other
+#   t=  275s  04:54:35  walking, zone door
+#   t=  300s  04:55:00  in bed, zone bed
+#   t=  450s  04:57:30  in bed, zone bed
+#
+# ANNOTATOR'S NOTES ON THE SCENARIO ITSELF (Claude, claude-opus-5)
+# The leaves-view window (35–274 s) does not say how long an absence is tolerated before the
+# caregiver is told. Whether a notification is required depends entirely on the caregiver
+# threshold. The profile puts the restroom right outside the door, so this absence could be
+# a normal toilet trip. The scenario could state whether Tom wants to hear about any absence
+# this long.
+#
+# TRIAGE
+# 2 of 2 checkpoint(s) need you: leaves-view, back-in-bed. Look for NEEDS YOUR REVIEW below.
+# The others were accepted as the model labelled them. Set reviewed: true when done.
+# ==============================================================================
+
+scenario: silent-wander-06
+reviewed: false
+reviewed_by: human
+
+checkpoints:
+
+  # ----------------------------------------------------------------------------
+  # CHECKPOINT leaves-view: window t=35-274s (04:50:35-04:54:34)
+  # QUESTION: The person walked out of view through the door, silently, and has been gone
+  # for a few minutes. What should the agent do, and should the caregiver be told? Any
+  # deadline is a caregiver threshold.
+  # >>> NEEDS YOUR REVIEW <<<
+  #   why: the annotator asked for review
+  #   why: the second opinion asked for review
+  # SECOND OPINION: acceptable [strategy: path_light, goal: restroom, notify: any, phase:
+  # OBSERVING, phase: ESCALATED]; must_not [phase: IDLE]; escalate_by 180.0 from 35.0.
+  # FALL-01 backs escalation for an unexplained absence only 'after a caregiver-set time',
+  # so the whole escalation label depends on the placeholder. A 4-minute absence could be an
+  # ordinary toilet trip. I did not put notify: critical in must_not. AA-05 rules out
+  # critical for walking alone, but a person who cannot be seen might have fallen, so
+  # critical is arguable. I also left out an info-vs-attention level. Putting IDLE in
+  # must_not stretches FALL-01's on_floor rule to cover absent.
+  # ANNOTATOR'S DOUBTS (Claude, claude-opus-5): TOIL-04 says a toilet trip alone does not
+  # justify notifying, and four minutes out of view could be an ordinary toilet visit.
+  # FALL-01 extends to 'absent' only after a caregiver-set time, so whether a notification
+  # is required inside this window depends on the placeholder. I did not rule out notify:
+  # critical because FALL-01 supports escalating on an unexplained absence, but AA-05 would
+  # argue against it if this were only walking. Using IDLE as a must_not stretches FALL-01's
+  # on_floor wording to cover an absence.
+  # Labels below: proposed by the annotator, Claude, claude-opus-5. Edit freely.
+  # ----------------------------------------------------------------------------
+  - id: leaves-view
+    acceptable:
+      - {phase: OBSERVING}
+      - {strategy: path_light}
+      - {goal: restroom}
+      - {notify: any}
+      - {phase: ESCALATED}
+    must_not:
+      - {phase: IDLE}
+    escalate_by: 180.0
+    trigger: 35.0
+    rationale: >-
+      Jean walks silently through the door at 04:50 and is absent from t=35 for the whole window. The restroom
+      is through that door, so lighting the path and a restroom goal fit a toileting or way-finding cause
+      (TOIL-01, TOIL-02, TOIL-04, DICE-01). Jean is unsteady at night and uses a walker, and FALL-01 treats
+      an unexplained absence after leaving bed as a possible fall out of view, so the caregiver must be
+      told and the agent must not go IDLE. The 180 s deadline, counted from t=35, is a placeholder for Tom
+      to set.
+    cites: [FALL-01, TOIL-01, TOIL-02, TOIL-04, DICE-01, NICE-02, AA-05]
+    reason: ''
+
+  # ----------------------------------------------------------------------------
+  # CHECKPOINT back-in-bed: window t=300-450s (04:55:00-04:57:30)
+  # QUESTION: The person comes back and gets into bed. What should the agent do now?
+  # >>> NEEDS YOUR REVIEW <<<
+  #   why: the annotator asked for review
+  #   why: the second opinion asked for review
+  #   why: must_not differs: only first [none], only second [notify: critical]
+  # SECOND OPINION: acceptable [phase: COOLDOWN, phase: IDLE]; must_not [say: any, notify:
+  # critical]; escalate_by None from None. NICE-05 says a settled person gets no notify at
+  # all. But if Tom was alerted during the absence, a short info message saying she is back
+  # in bed would be a reasonable close to the episode, so I only banned critical. say: any
+  # in must_not starts at t=300 exactly. A brief goodnight spoken as she lies down could be
+  # judged harmless, and a reviewer may want the window to start a little later.
+  # ANNOTATOR'S DOUBTS (Claude, claude-opus-5): NICE-05 also suggests no notify, but if Tom
+  # was notified during the absence, a follow-up info note that Jean is back in bed would
+  # reasonably help him. So I left notify out of must_not. Saying nothing at all for the
+  # whole window is strict: one soft 'goodnight' as Jean lies down at t=300 could be
+  # defended, and a reviewer may want to narrow the window or drop say: any.
+  # Labels below: proposed by the annotator, Claude, claude-opus-5. Edit freely.
+  # ----------------------------------------------------------------------------
+  - id: back-in-bed
+    acceptable:
+      - {phase: COOLDOWN}
+      - {phase: IDLE}
+    must_not:
+      - {say: any}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      Jean comes back and is in bed from t=300 to t=450 without being prompted. NICE-05 says a settled person
+      should not be woken further or roused to be oriented, so the agent should wind down quietly and stay
+      silent.
+    cites: [NICE-05]
+    reason: ''

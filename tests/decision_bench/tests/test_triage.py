@@ -1,4 +1,9 @@
-from decision_bench.triage import checkpoint_flags, scenario_flags
+from decision_bench.triage import (
+    checkpoint_blocked,
+    checkpoint_flags,
+    scenario_blocked,
+    scenario_flags,
+)
 
 
 def _cp(**overrides):
@@ -17,11 +22,10 @@ def test_agreeing_runs_without_flags_pass_triage():
     assert checkpoint_flags(_cp(), _cp(acceptable=[{"goal": "restroom"}])) == []
 
 
-def test_self_flag_and_second_opinion_flag():
-    assert checkpoint_flags(_cp(needs_review=True), _cp()) == ["the annotator asked for review"]
-    assert checkpoint_flags(_cp(), _cp(needs_review=True)) == [
-        "the second opinion asked for review"
-    ]
+def test_self_flags_no_longer_block_without_a_content_disagreement():
+    assert checkpoint_flags(_cp(needs_review=True), _cp()) == []
+    assert checkpoint_flags(_cp(), _cp(needs_review=True)) == []
+    assert not checkpoint_blocked(_cp(needs_review=True), _cp())
 
 
 def test_disagreements_that_can_change_a_critical_result_are_flagged():
@@ -38,9 +42,25 @@ def test_triage_never_accepts_what_it_cannot_check():
     legacy = {key: value for key, value in _cp().items() if key != "needs_review"}
     assert "predates self-flagging" in checkpoint_flags(legacy, _cp())[0]
     assert "no second opinion" in checkpoint_flags(_cp(), None)[0]
+    assert checkpoint_blocked(legacy, _cp())
+    assert checkpoint_blocked(_cp(), None)
     assert scenario_flags({"checkpoints": [_cp()]}) == {
         "cp": ["there is no second opinion to compare with"]
     }
     assert (
         scenario_flags({"checkpoints": [_cp()], "second_opinion": {"checkpoints": [_cp()]}}) == {}
     )
+    assert scenario_blocked({"checkpoints": [_cp()]})
+    assert not scenario_blocked(
+        {"checkpoints": [_cp()], "second_opinion": {"checkpoints": [_cp()]}}
+    )
+
+
+def test_scenario_blocked_only_for_unvotable_preconditions():
+    # A content disagreement alone can be voted on: not blocked.
+    doc = {
+        "checkpoints": [_cp()],
+        "second_opinion": {"checkpoints": [_cp(must_not=[])]},
+    }
+    assert scenario_flags(doc) == {"cp": [checkpoint_flags(_cp(), _cp(must_not=[]))[0]]}
+    assert not scenario_blocked(doc)

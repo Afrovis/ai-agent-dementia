@@ -1,0 +1,118 @@
+scenario: silent-wander-05
+annotator:
+  model: claude-opus-5
+  effort: high
+  date: '2026-09-21'
+  attempts: 1
+  session_id: 1d5cd476-0620-4dd5-a2de-346835f27d4a
+  list_price_usd: 0.20045999999999997
+  prompt_sha256: 751ed04a45dfacf07b4abd3521f4f9cf3f0e31ab27489dd6e1f5dde70e9603a9
+  guidelines_sha256: 6d40e2e8797e4a9924a806cc460dc1669759a48d06db21a2c22c4dd29161865e
+  scenario_sha256: 312f1d7867ad1c59b29a9120172c9f7ed6c0f9bccb58c35bf340ed6813e06d99
+scenario_notes: The timeline has no utterances and no scene notes, so nothing shows whether Jean is using
+  her walker. That matters for fall risk and for how urgent the second checkpoint is. The person readings
+  at t=200 and t=400 only repeat 'standing'. The second window ends exactly at the last reading (t=400),
+  so nothing shows how the episode resolves. The first question does not say whether Jean looks distressed,
+  which affects whether orient_time_place (AA-02) applies.
+checkpoints:
+  - id: standing-still
+    acceptable:
+      - {strategy: ambient_orient}
+      - {strategy: path_light}
+      - {strategy: soft_greeting}
+      - {strategy: validate_and_redirect}
+      - {goal: restroom}
+    must_not:
+      - {notify: critical}
+      - {phase: IDLE}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      Jean got out of bed at t=20, walked into the room and has been standing still in zone 'other' since
+      t=40 without speaking. She is not in danger, so calm, non-drug first responses fit (NICE-02). Soft
+      light or a calm screen, a warm greeting, reassurance or validation all qualify, because silent standing
+      may mean she is disoriented (AA-01, AA-04). A silent night-time get-up may also be a toileting or
+      way-finding need, so lighting the path or taking up the restroom goal is acceptable (TOIL-01, TOIL-02,
+      DICE-01). Being up is not an emergency, so a critical notification is ruled out. Going IDLE would
+      drop the supervision that AA-05 calls for.
+    cites: [NICE-02, AA-01, AA-04, AA-05, TOIL-01, TOIL-02, DICE-01]
+    uncertain: I left guided_return out of both lists. It is not clearly wrong because she has stated
+      no need, but DICE-01 and TOIL-01 favour looking for a cause first. I left orient_time_place out
+      because AA-02 is written for a person who is 'awake and upset', and nothing here shows she is upset.
+      The IDLE must_not uses AA-05's 'with supervision' by analogy; the clause itself is about walking.
+    needs_review: true
+  - id: still-standing
+    acceptable:
+      - {notify: info}
+      - {notify: attention}
+      - {phase: ESCALATED}
+    must_not:
+      - {notify: critical}
+      - {phase: IDLE}
+    escalate_by: 300.0
+    trigger: 40.0
+    rationale: >-
+      By t=200 Jean has been standing still for over two and a half minutes, and by t=400 for six. Nothing
+      shows progress, and her profile says she is unsteady at night. AA-05's 'with supervision' supports
+      telling Tom at info or attention level, and DICE-03 supports handing over when the strategies tried
+      are not working. She is still upright and not on the floor, and AA-05 rules out treating being up
+      as an emergency, so critical is a must_not. The 300 s deadline, counted from when she stopped moving
+      at t=40 (so notify by t=340), is a placeholder for the caregiver to set.
+    cites: [AA-05, DICE-03]
+    uncertain: The must_not on critical extends AA-05 from walking to standing still. A careful caregiver
+      might want critical for an unsteady person who has stood for six minutes, possibly without her walker.
+      FALL-01 covers on_floor and unexplained absent only, so it does not settle the question. The choice
+      of trigger (t=40, when she stopped, or t=200, the start of the window) is also a judgement call.
+    needs_review: true
+second_opinion:
+  model: claude-opus-5
+  attempts: 1
+  list_price_usd: 0.1556905
+  scenario_notes: The timeline gives no information about whether Jean has her walker while standing,
+    which matters for how serious it is that she stays standing. The second question asks what level of
+    notification to use, but the guideline pack has no clause about standing still for a long time. Clauses
+    cover walking (AA-05) and being on the floor (FALL-01).
+  checkpoints:
+    - id: standing-still
+      acceptable:
+        - {strategy: ambient_orient}
+        - {strategy: soft_greeting}
+        - {strategy: path_light}
+        - {goal: restroom}
+        - {strategy: validate_and_redirect}
+      must_not:
+        - {notify: critical}
+      escalate_by: null
+      trigger: null
+      rationale: >-
+        At 01:40 Jean gets up, walks, and from t=40 stands still in the room without speaking. She has
+        not said what she needs, and restlessness at night can mean she needs the toilet (TOIL-01, DICE-01),
+        so lighting the path or taking up a restroom goal fits, especially since she is unsteady at night
+        (TOIL-02, TOIL-04). A calm, first-line response also fits: ambient cues, a soft greeting, or validating
+        and redirecting (NICE-02, AA-01, AA-04). Being up is not an emergency in itself, so a critical
+        notification is ruled out (AA-05).
+      cites: [TOIL-01, TOIL-02, TOIL-04, DICE-01, NICE-02, AA-01, AA-04, AA-05]
+      uncertain: AA-05 covers walking or pacing; I applied it to standing still, which is related but
+        not the same. I also hesitated over whether speaking at all is right in this window, or whether
+        ambient cues alone are best. I did not rule out guided_return, because she has stated no need.
+      needs_review: true
+    - id: still-standing
+      acceptable:
+        - {notify: info}
+        - {notify: attention}
+        - {phase: ESCALATED}
+      must_not: []
+      escalate_by: 300.0
+      trigger: 40.0
+      rationale: >-
+        Jean has been standing still and silent since t=40, which reaches several minutes early in this
+        window. She is unsteady at night and uses a walker. AA-05's 'with supervision' supports telling
+        Tom when she stays up, and DICE-03 supports handing over when there is no progress. The 300 s
+        deadline, counted from when she started standing at t=40, is a caregiver placeholder for Tom to
+        set, not a number from a clause.
+      cites: [AA-05, DICE-03]
+      uncertain: I hesitated over notify critical. AA-05 rules it out for walking alone, but a woman who
+        is unsteady at night standing motionless for about six minutes might warrant asking Tom to come
+        now. I left critical out of both acceptable and must_not. A reviewer should decide whether attention
+        is the ceiling. The trigger could also reasonably be t=20, when she left the bed.
+      needs_review: true
