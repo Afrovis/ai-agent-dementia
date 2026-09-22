@@ -1,0 +1,70 @@
+scenario: disorientation-06
+annotator:
+  model: gemma4:e4b-mlx
+  backend: ollama
+  effort: high
+  date: '2026-09-22'
+  attempts: 1
+  runner_attempts: 1
+  session_id: null
+  list_price_usd: 0.0
+  runtime_seconds: 16.801849208946805
+  parse_validation_failures: []
+  normalization_changed: true
+  normalization_notes:
+    - 'go-away: collapsed nested say action'
+    - 'go-away: dropped trigger without escalate_by'
+    - 'settles: dropped trigger without escalate_by'
+    - 'who-is-there: collapsed nested say action'
+    - 'who-is-there: dropped trigger without escalate_by'
+  prompt_sha256: 751ed04a45dfacf07b4abd3521f4f9cf3f0e31ab27489dd6e1f5dde70e9603a9
+  guidelines_sha256: 6d40e2e8797e4a9924a806cc460dc1669759a48d06db21a2c22c4dd29161865e
+  scenario_sha256: 32ceba1cf8b3709bc6ffa2a826a1cad07f3d5a6cf8beb1157682e03b4b0c6d8a
+scenario_notes: ''
+checkpoints:
+  - id: who-is-there
+    acceptable:
+      - {strategy: soft_greeting}
+      - {strategy: ambient_orient}
+      - {strategy: validate_and_redirect}
+    must_not:
+      - {say: any}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      The person is sitting up and asking 'Who's there?', indicating distress or disorientation. The initial
+      response should be calm and seek to find the need (AA-01). Soft greetings and validation are appropriate
+      first responses (AA-04, AA-07).
+    cites: [AA-01, AA-04, AA-07, NICE-02]
+    uncertain: ''
+    needs_review: false
+  - id: go-away
+    acceptable:
+      - {strategy: validate_and_redirect}
+      - {strategy: soft_greeting}
+    must_not:
+      - {say: correction_of_reality}
+      - {say: conjunction_but}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      The person rejects the companion. The agent must not argue or correct the person's belief (AA-03,
+      VAL-01). The response should validate the feeling while gently redirecting, which is appropriate
+      for disorientation (AA-04, AA-07).
+    cites: [AA-03, AA-04, AA-07, VAL-01]
+    uncertain: ''
+    needs_review: false
+  - id: settles
+    acceptable:
+      - {phase: IDLE}
+    must_not:
+      - {phase: OBSERVING}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      The person has returned to bed and is settled. According to NICE-05, when the person settles on
+      their own, the correct action is to stay quiet, which corresponds to the IDLE phase. There is no
+      indication of ongoing distress or need.
+    cites: [NICE-05]
+    uncertain: ''
+    needs_review: false

@@ -1,0 +1,58 @@
+scenario: silent-wander-05
+annotator:
+  model: gemma4:e4b-mlx
+  backend: ollama
+  effort: high
+  date: '2026-09-22'
+  attempts: 1
+  runner_attempts: 1
+  session_id: null
+  list_price_usd: 0.0
+  runtime_seconds: 18.04618520801887
+  parse_validation_failures: []
+  normalization_changed: true
+  normalization_notes:
+    - 'standing-still: collapsed nested say action'
+    - 'standing-still: dropped trigger without escalate_by'
+    - 'still-standing: collapsed nested notify action'
+    - 'still-standing: collapsed nested phase action'
+  prompt_sha256: 751ed04a45dfacf07b4abd3521f4f9cf3f0e31ab27489dd6e1f5dde70e9603a9
+  guidelines_sha256: 6d40e2e8797e4a9924a806cc460dc1669759a48d06db21a2c22c4dd29161865e
+  scenario_sha256: 312f1d7867ad1c59b29a9120172c9f7ed6c0f9bccb58c35bf340ed6813e06d99
+scenario_notes: ''
+checkpoints:
+  - id: standing-still
+    acceptable:
+      - {strategy: ambient_orient}
+      - {strategy: soft_greeting}
+      - {strategy: validate_and_redirect}
+      - {goal: restroom}
+      - {goal: comfort}
+    must_not:
+      - {say: any}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      The person is standing still and not speaking, indicating potential distress or a need. NICE-01
+      requires exploring the reason for distress, which suggests addressing a need (restroom/comfort)
+      or using calming strategies (AA-01, NICE-02). The companion should not speak unnecessarily (must_not:
+      say: any) while assessing the situation.
+    cites: [AA-01, NICE-01, NICE-02]
+    uncertain: ''
+    needs_review: false
+  - id: still-standing
+    acceptable:
+      - {notify: attention}
+    must_not:
+      - {phase: IDLE}
+    escalate_by: 180.0
+    trigger: 200.0
+    rationale: >-
+      The person has been standing still for several minutes, which, combined with the risk of falls (TOIL-04)
+      and the need to escalate when a strategy fails (DICE-03), suggests a need to inform the caregiver.
+      FALL-01 mandates a notification if the person is on the floor, and while they are standing, an 'attention'
+      notification is appropriate as a proactive check, with a placeholder threshold for the caregiver.
+    cites: [DICE-03, FALL-01, TOIL-04]
+    uncertain: The guideline does not specify the exact trigger for 'attention' vs 'critical' notification
+      when standing still, so a placeholder threshold is used.
+    needs_review: true

@@ -1,0 +1,69 @@
+scenario: silent-wander-04
+annotator:
+  model: gemma4:e4b-mlx
+  backend: ollama
+  effort: high
+  date: '2026-09-22'
+  attempts: 1
+  runner_attempts: 1
+  session_id: null
+  list_price_usd: 0.0
+  runtime_seconds: 22.06406699999934
+  parse_validation_failures: []
+  normalization_changed: true
+  normalization_notes:
+    - 'back-in-bed: dropped trigger without escalate_by'
+    - 'heads-to-bathroom: collapsed nested say action'
+    - 'heads-to-bathroom: dropped trigger without escalate_by'
+  prompt_sha256: 751ed04a45dfacf07b4abd3521f4f9cf3f0e31ab27489dd6e1f5dde70e9603a9
+  guidelines_sha256: 6d40e2e8797e4a9924a806cc460dc1669759a48d06db21a2c22c4dd29161865e
+  scenario_sha256: 7be44447c0cda520aef77799ade66cfa57c7e71ed928e8ade41576f3cdfb9987
+scenario_notes: ''
+checkpoints:
+  - id: heads-to-bathroom
+    acceptable:
+      - {strategy: path_light}
+      - {goal: restroom}
+      - {strategy: soft_greeting}
+      - {strategy: validate_and_redirect}
+    must_not:
+      - {say: any}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      The person is up and walking towards the bathroom path, indicating a potential need (TOIL-01). The
+      initial response should be calm and seek the need (AA-01). Lighting the path and offering a greeting
+      are appropriate first steps (TOIL-02, NICE-02).
+    cites: [AA-01, TOIL-01, TOIL-02, NICE-02]
+    uncertain: ''
+    needs_review: false
+  - id: out-of-view
+    acceptable:
+      - {phase: OBSERVING}
+    must_not:
+      - {phase: IDLE}
+    escalate_by: 300.0
+    trigger: 40.0
+    rationale: >-
+      The person is absent from view for a significant time (3 minutes). FALL-01 states that 'on_floor'
+      needs immediate notification, and unexplained absence after leaving bed supports escalation after
+      a caregiver-set time. The companion should remain observant rather than assuming the episode is
+      over (FALL-01).
+    cites: [FALL-01]
+    uncertain: The guideline does not specify the required notification level (attention vs critical)
+      for 'absent' in the bathroom, so a placeholder threshold is used.
+    needs_review: true
+  - id: back-in-bed
+    acceptable:
+      - {phase: IDLE}
+    must_not:
+      - {goal: restroom}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      The person has returned to bed (t: 250.0). Since no distress or unmet need was indicated during
+      the walk, the companion should return to a settled state (NICE-05). There is no evidence to suggest
+      further action is required.
+    cites: [NICE-05]
+    uncertain: ''
+    needs_review: false

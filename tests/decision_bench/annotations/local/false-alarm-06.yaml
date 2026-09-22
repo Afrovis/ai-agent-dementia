@@ -1,0 +1,50 @@
+scenario: false-alarm-06
+annotator:
+  model: gemma4:e4b-mlx
+  backend: ollama
+  effort: high
+  date: '2026-09-22'
+  attempts: 1
+  runner_attempts: 1
+  session_id: null
+  list_price_usd: 0.0
+  runtime_seconds: 12.957482666999567
+  parse_validation_failures: []
+  normalization_changed: true
+  normalization_notes:
+    - 'lies-down: dropped trigger without escalate_by'
+    - 'reading: collapsed nested say action'
+    - 'reading: dropped trigger without escalate_by'
+  prompt_sha256: 751ed04a45dfacf07b4abd3521f4f9cf3f0e31ab27489dd6e1f5dde70e9603a9
+  guidelines_sha256: 6d40e2e8797e4a9924a806cc460dc1669759a48d06db21a2c22c4dd29161865e
+  scenario_sha256: 07de2e47e0468e514f34cb39b3f74ce7e1e69829ef3a65907d6d99c17d4cb785
+scenario_notes: ''
+checkpoints:
+  - id: reading
+    acceptable:
+      - {strategy: ambient_orient}
+      - {strategy: soft_greeting}
+      - {strategy: validate_and_redirect}
+    must_not:
+      - {say: conjunction_but}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      The person is sitting up in bed, which is not an emergency state. The initial response should be
+      calm and seek to understand the activity, aligning with AA-01 and NICE-02. The utterance 'I'll just
+      finish my chapter' contains 'but', which must be avoided per AA-03.
+    cites: [AA-01, AA-03, NICE-02]
+    uncertain: ''
+    needs_review: false
+  - id: lies-down
+    acceptable:
+      - {phase: IDLE}
+    must_not: []
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      The person has returned to bed and is settled. NICE-05 states that when the person settles on their
+      own, staying quiet is the appropriate action. There are no signs of distress or need to address.
+    cites: [NICE-05]
+    uncertain: ''
+    needs_review: false

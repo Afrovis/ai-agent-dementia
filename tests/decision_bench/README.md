@@ -137,6 +137,34 @@ python -m decision_bench annotate --scenario <id>             # two Opus runs + 
 python -m decision_bench apply <id>                           # labels into the fixture
 ```
 
+To evaluate a local model as one of the two first-pass annotators, write its
+single independent run to a separate directory (the recommended location is
+`annotations/local/`):
+
+```sh
+python -m decision_bench annotate --backend ollama --model qwen3.5:9b \
+  --out-dir annotations/local [--scenario <id> ...]
+python -m decision_bench calibrate --local-dir annotations/local \
+  [--out calibration.json]
+```
+
+The Ollama annotator calls `http://127.0.0.1:11434/api/chat` by default; use
+`--ollama-url` to change it and `--no-think` to disable thinking. It requests
+JSON mode with temperature zero, includes the schema in the prompt, and
+validates replies strictly without retaining thinking text. Existing files in
+the local output directory are skipped unless `--force` is given. For safety,
+a local run requires `--out-dir`, refuses the
+model and review annotation directories, creates no review file, and never
+applies labels to fixtures.
+
+`calibrate` compares every available local file with both stored Opus runs
+using the same pair-agreement rule as tiebreak triage. Its summary highlights
+the local+Opus-1 agreement rate (the fraction that would avoid a second Opus
+call), action placement agreement, escalation/trigger agreement, runtime and
+parse/validation retries. The optional JSON report includes checkpoint detail
+and potentially harmful local+Opus-1 agreements that the two Opus runs would
+have sent to a tiebreak.
+
 `annotate` runs `claude -p --model opus` with no tools and no settings from
 an empty temp directory. It sends the prompt in
 `decision_bench/annotator_prompt.md` plus `guidelines.md`, the profile and

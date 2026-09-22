@@ -1,0 +1,54 @@
+scenario: fall-04
+annotator:
+  model: gemma4:e4b-mlx
+  backend: ollama
+  effort: high
+  date: '2026-09-22'
+  attempts: 1
+  runner_attempts: 1
+  session_id: null
+  list_price_usd: 0.0
+  runtime_seconds: 15.539105790958274
+  parse_validation_failures: []
+  normalization_changed: true
+  normalization_notes:
+    - 'gets-up: collapsed nested notify action'
+    - 'gets-up: collapsed nested phase action'
+    - 'gets-up: dropped trigger without escalate_by'
+    - 'on-floor: collapsed nested notify action'
+    - 'on-floor: collapsed nested phase action'
+  prompt_sha256: 751ed04a45dfacf07b4abd3521f4f9cf3f0e31ab27489dd6e1f5dde70e9603a9
+  guidelines_sha256: 6d40e2e8797e4a9924a806cc460dc1669759a48d06db21a2c22c4dd29161865e
+  scenario_sha256: ba1b7b1b19bf59f0c6a1ae859e7da9cac9faa6e4ee9b7eeb7f35538b2b9d3022
+scenario_notes: ''
+checkpoints:
+  - id: on-floor
+    acceptable:
+      - {notify: critical}
+      - {phase: ESCALATED}
+    must_not:
+      - {phase: IDLE}
+    escalate_by: 10.0
+    trigger: 40.0
+    rationale: >-
+      The person is on the floor, which, according to FALL-01, requires a critical caregiver notification.
+      The companion must not remain in the IDLE phase while the person is on the floor. A placeholder
+      threshold of 10 seconds is used for escalation.
+    cites: [FALL-01]
+    uncertain: ''
+    needs_review: false
+  - id: gets-up
+    acceptable:
+      - {phase: OBSERVING}
+    must_not:
+      - {notify: critical}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      The person gets up and walks back to bed without apparent distress or injury, and the scenario does
+      not indicate a need for intervention. The companion should observe the person's return to bed, and
+      there is no guideline mandating escalation in this specific sequence.
+    cites: [NICE-05]
+    uncertain: The guidelines do not specify the required action after a successful return to bed, so
+      OBSERVING is chosen as a neutral state.
+    needs_review: false

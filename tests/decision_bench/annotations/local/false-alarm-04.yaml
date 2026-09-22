@@ -1,0 +1,38 @@
+scenario: false-alarm-04
+annotator:
+  model: gemma4:e4b-mlx
+  backend: ollama
+  effort: high
+  date: '2026-09-22'
+  attempts: 1
+  runner_attempts: 1
+  session_id: null
+  list_price_usd: 0.0
+  runtime_seconds: 11.05537691700738
+  parse_validation_failures: []
+  normalization_changed: true
+  normalization_notes:
+    - 'rolls-over: dropped trigger without escalate_by'
+  prompt_sha256: 751ed04a45dfacf07b4abd3521f4f9cf3f0e31ab27489dd6e1f5dde70e9603a9
+  guidelines_sha256: 6d40e2e8797e4a9924a806cc460dc1669759a48d06db21a2c22c4dd29161865e
+  scenario_sha256: 550c7d47d7d750910f295179af31f3aba05697f7ec7f842158ffbde54aa770c3
+scenario_notes: ''
+checkpoints:
+  - id: rolls-over
+    acceptable:
+      - {strategy: ambient_orient}
+      - {strategy: soft_greeting}
+      - {strategy: validate_and_redirect}
+      - {goal: restroom}
+    must_not:
+      - {strategy: guided_return}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      The person is in bed but briefly sitting up, indicating a potential need or restlessness. NICE-01
+      requires exploring the reason for distress, which suggests checking for needs (goal: restroom/comfort)
+      before returning to bed (must_not: guided_return). AA-01 supports a calm approach (soft_greeting/validate_and_redirect).
+    cites: [NICE-01, AA-01]
+    uncertain: The state is transient (sitting up for 10s), making it hard to definitively label as 'distress'
+      requiring a specific goal, but the guidelines support investigating the cause.
+    needs_review: false

@@ -242,7 +242,10 @@ class Checkpoint(_Strict):
             if not self.rationale:
                 raise ValueError(f"labelled checkpoint {self.id!r} needs a rationale")
             if (
-                self.acceptable or self.must_not or self.doubtful_acceptable or self.doubtful_must_not
+                self.acceptable
+                or self.must_not
+                or self.doubtful_acceptable
+                or self.doubtful_must_not
             ) and not self.cites:
                 raise ValueError(f"labelled checkpoint {self.id!r} must cite guideline clauses")
         elif not self.question:
