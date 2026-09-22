@@ -119,6 +119,14 @@ pytest tests/dialogue_bench/tests
 python -m dialogue_bench --model gemma4:e4b-mlx --model llama3.1:8b
 ```
 
+For agent decision regressions from a live bedside session, export bus history
+with `python -m nc_shared.replay export redis://bus:6379 data/sessions/export.jsonl`,
+extract text and person-state inputs with `python -m session_replay extract`,
+write a sibling `*.expect.yaml`, and run `python -m session_replay run` (or
+`pytest tests/session_replay`). See [tests/session_replay/README.md](tests/session_replay/README.md).
+Raw exports stay in gitignored `data/`; commit only reviewed, text-only
+extracted scenarios.
+
 The agent can also use an MLX model served on the host by `mlx_lm.server`
 (`AGENT_LLM_BACKEND=openai`, see `.env.example`). The bench takes the same
 switch: `--backend openai --base-url http://127.0.0.1:11435`.
@@ -180,11 +188,12 @@ docker compose run --rm --no-deps embodiment \
   sh -c "pip install -q pytest ruff && pytest -q && ruff check . && ruff format --check ."
 ```
 
-Barge-in does not wait for Whisper. At the first WebRTC VAD speech frame,
-`listen` publishes `SpeechStarted` on `speech_in`; `embodiment` forwards it to
-the page, which stops the current audio only when its `Say.interruptible` flag
-is true. The page requests browser/OS echo cancellation from `getUserMedia`.
-There is intentionally no software AEC in v1.
+Barge-in does not wait for Whisper transcription. `listen` waits for sustained
+WebRTC VAD speech and confirms the window with bundled Silero before publishing
+`SpeechStarted` on `speech_in`. Playback activity raises the threshold while
+the page speaks. `embodiment` forwards the signal to the page, which stops
+audio only when `Say.interruptible` is true. The page requests browser/OS echo
+cancellation from `getUserMedia`.
 
 `frames_raw` is what the browser bridge writes. `capture` reads it, applies
 the motion gate, and republishes onto `frames`, so watch that one to see
@@ -219,6 +228,15 @@ Bus(redis.Redis.from_url('redis://bus:6379')).publish(
 ```
 
 ## Gotchas
+
+On the bedside embodiment page, press `D` (or open `?debug=1`) to toggle the
+debug overlay. It shows a local camera preview with pose, person and session
+state, media and model activity, and a short event log. The `pose_debug` and
+`activity` streams are capped telemetry and are never persisted by `store`.
+Say playback events show requests, failures, interruptions and completed clips;
+if the browser blocks autoplay, a bedside "Tap to turn on the voice" button
+appears so a person can unlock and retry a recent clip.
+The overlay also shows this page's identity and audio state, plus the count of connected bedside pages.
 
 `dashboard` on port 8444 serves the caregiver pages, including the Zones
 editor (issue #10): draw the bed, door, and bathroom-path zones on a live frame and save them to
