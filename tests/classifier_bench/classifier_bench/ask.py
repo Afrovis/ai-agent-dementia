@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
@@ -183,6 +184,10 @@ def ask_questions(
         existing = retained
     completed = {str(item.get("qid")) for item in existing}
     pending = [item for item in candidates if str(item["qid"]) not in completed]
+    existing_answers = [item for item in existing if str(item.get("qid")) in candidate_qids]
+    answered = len(completed & candidate_qids)
+    abstentions = sum(item.get("label") == "irrelevant" for item in existing_answers)
+    failures = sum("error" in item for item in existing_answers)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     written: list[dict[str, object]] = []
     with output_path.open("a", encoding="utf-8") as handle:
@@ -210,4 +215,13 @@ def ask_questions(
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
             handle.flush()
             written.append(record)
+            answered += 1
+            abstentions += record.get("label") == "irrelevant"
+            failures += "error" in record
+            if answered % 25 == 0:
+                print(
+                    f"{answered}/{len(candidates)} answered "
+                    f"({abstentions} abstentions, {failures} failures)",
+                    file=sys.stderr,
+                )
     return written

@@ -53,3 +53,75 @@ def test_retry_failure_continue_and_resume(tmp_path: Path) -> None:
     assert ask_questions([_question(), second], output, guidelines_text="rules", runner=fake) == []
     assert len(read_jsonl(output)) == 2
     assert all(isinstance(json.loads(line), dict) for line in output.read_text().splitlines())
+
+
+def test_interrupted_run_flushes_answers_and_resumes(tmp_path: Path) -> None:
+    output = tmp_path / "answers.jsonl"
+    questions = [_question(f"s::c::goal:{index}") for index in range(4)]
+    interrupted_calls = 0
+
+    def interrupt_part_way(_system, _prompt, _schema, _model, _temperature):
+        nonlocal interrupted_calls
+        interrupted_calls += 1
+        if interrupted_calls == 3:
+            assert [item["qid"] for item in read_jsonl(output)] == [
+                questions[0]["qid"],
+                questions[1]["qid"],
+            ]
+            raise KeyboardInterrupt
+        return {"label": "acceptable", "confidence": 0.8}
+
+    try:
+        ask_questions(
+            questions,
+            output,
+            guidelines_text="rules",
+            runner=interrupt_part_way,
+        )
+    except KeyboardInterrupt:
+        pass
+    else:
+        raise AssertionError("expected the fake backend to interrupt the run")
+
+    assert [item["qid"] for item in read_jsonl(output)] == [
+        questions[0]["qid"],
+        questions[1]["qid"],
+    ]
+
+    resumed_calls = 0
+
+    def finish_run(_system, _prompt, _schema, _model, _temperature):
+        nonlocal resumed_calls
+        resumed_calls += 1
+        return {"label": "irrelevant", "confidence": 0.7}
+
+    written = ask_questions(questions, output, guidelines_text="rules", runner=finish_run)
+
+    assert resumed_calls == 2
+    assert [item["qid"] for item in written] == [questions[2]["qid"], questions[3]["qid"]]
+    assert [item["qid"] for item in read_jsonl(output)] == [
+        question["qid"] for question in questions
+    ]
+
+
+def test_progress_is_reported_every_25_answers(tmp_path: Path, capsys) -> None:
+    questions = [_question(f"s::c::goal:{index}") for index in range(51)]
+    calls = 0
+
+    def fake(_system, _prompt, _schema, _model, _temperature):
+        nonlocal calls
+        calls += 1
+        label = "irrelevant" if calls == 13 else "acceptable"
+        return {"label": label, "confidence": 0.8}
+
+    ask_questions(
+        questions,
+        tmp_path / "answers.jsonl",
+        guidelines_text="rules",
+        runner=fake,
+    )
+
+    assert capsys.readouterr().err.splitlines() == [
+        "25/51 answered (1 abstentions, 0 failures)",
+        "50/51 answered (1 abstentions, 0 failures)",
+    ]
