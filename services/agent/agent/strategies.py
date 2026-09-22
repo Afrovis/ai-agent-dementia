@@ -208,7 +208,7 @@ DEFAULT_STRATEGIES: tuple[StrategyDef, ...] = (
         # so the plain, always-present fallback ("there") works as-is.
         headline_template="Hello, {name}",
         body_template="It is {time_words}.",
-        say_template="Hello {name}, it's {time_words}.",
+        say_template="Hello {name}, it's night-time.",
     ),
     StrategyDef(
         id="orient_time_place",
@@ -223,7 +223,7 @@ DEFAULT_STRATEGIES: tuple[StrategyDef, ...] = (
         # One sentence (rule 3) -- see the module-level comment above this
         # tuple for why this is not PLAN.md's original two-sentence text.
         body_template="You are in your bedroom, and it is {time_words}.",
-        say_template="You are home in your bedroom, and it is {time_words}.",
+        say_template="You are home in your bedroom, and it is night-time.",
         photo_id="demo_room",
     ),
     StrategyDef(

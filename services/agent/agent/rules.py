@@ -80,6 +80,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from agent.goals import ALLOWED_GOAL_CHANGES
+from agent.profile import PersonProfile
 
 # HANDOFF.md rule 3, verbatim: never these words/phrases in a `Say`, checked
 # case-insensitively as whole words/phrases so "known" does not trip on
@@ -114,6 +115,28 @@ _QUESTION_STARTERS = (
     "isn't it",
     "was it",
     "wasn't it",
+)
+
+# Composition is allowed to repeat a caregiver-authored calming phrase such
+# as "Tom is nearby", but the model must not strengthen that phrase into a
+# promise of presence, arrival, checking, or help. This intentionally small,
+# explicit list is a deterministic proxy, not semantic fact checking: it
+# will miss paraphrases, which is why a rejected candidate falls back to the
+# caregiver's fixed template and why prompt instructions remain important.
+_CAREGIVER_CLAIM_PHRASES = (
+    r"is\s+here",
+    r"is\s+right\s+here",
+    r"is\s+coming",
+    r"will\s+come",
+    r"comes",
+    r"is\s+on\s+(?:his|her|their)\s+way",
+    r"will\s+check",
+    r"can\s+check",
+    r"checks\s+on",
+    r"helps\s+you",
+    r"will\s+help",
+    r"is\s+with\s+you",
+    r"stays\s+with\s+you",
 )
 
 
@@ -222,6 +245,45 @@ def validate_goal(current: str, proposed: str) -> RuleResult:
             accepted=False,
             reason=f"{current} -> {proposed} is not an allowed goal change",
         )
+    return RuleResult(accepted=True, reason=None)
+
+
+def validate_composition(text: str, profile: PersonProfile) -> RuleResult:
+    """Reject two known ways model-composed speech invents or weakens facts.
+
+    This gate is deliberately narrower than `validate_say`: it applies only
+    to the text returned by `LLMClient.compose`, before `agent.main` decides
+    whether to use that text or the caregiver's fixed fallback template.
+    It rejects the whole word "but", whose contrast can cancel an attempted
+    acknowledgement, and a caregiver name followed within four intervening
+    words by one of `_CAREGIVER_CLAIM_PHRASES`.
+
+    The caregiver check is an explicit proxy for common model failures, not
+    a general natural-language entailment system. In particular, it permits
+    profile wording such as "Tom is nearby" or "Tom is near" while catching
+    stronger claims such as "Tom is here", "Tom can check on you", and
+    "Tom helps you settle". It will miss unlisted paraphrases; keeping the
+    list inspectable and falling back on rejection is preferable to an
+    opaque heuristic deciding what a person hears at night.
+
+    Reasons never include `text`: callers log the reason, and model-composed
+    speech may contain private utterance-derived material that must not be
+    copied into logs.
+    """
+    if re.search(r"\bbut\b", text, flags=re.IGNORECASE):
+        return RuleResult(accepted=False, reason="composition contains the word 'but'")
+
+    caregiver_name = profile.caregiver_name.strip()
+    if caregiver_name:
+        name_pattern = rf"(?<!\w){re.escape(caregiver_name)}(?!\w)"
+        few_words = r"(?:[^\w]+[\w'-]+){0,4}[^\w]+"
+        claims = "(?:" + "|".join(_CAREGIVER_CLAIM_PHRASES) + ")"
+        if re.search(name_pattern + few_words + claims, text, flags=re.IGNORECASE):
+            return RuleResult(
+                accepted=False,
+                reason="composition makes an unsupported caregiver presence or arrival claim",
+            )
+
     return RuleResult(accepted=True, reason=None)
 
 

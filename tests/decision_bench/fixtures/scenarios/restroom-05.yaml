@@ -1,0 +1,21 @@
+id: restroom-05
+category: restroom
+summary: >-
+  Sits up and says they have wet the bed, upset and embarrassed, and stays sitting on the bed.
+start: "03:50"
+timeline:
+  - {t: 0, person: {state: sitting_up, zone: bed}}
+  - {t: 20, utterance: {text: Oh no. I've wet myself. I'm so sorry.}}
+  - {t: 40, person: {state: sitting_up, zone: bed, scene_note: person looks upset}}
+  - {t: 70, utterance: {text: I don't know what to do.}}
+  - {t: 130, person: {state: standing, zone: bed}}
+  - {t: 250, person: {state: standing, zone: bed}}
+checkpoints:
+  - id: accident
+    window: [20, 69]
+    question: >-
+      The person says they have wet the bed and apologises. What should the agent say and do, and what must it not say?
+  - id: needs-help
+    window: [70, 250]
+    question: >-
+      The person is still upset, does not know what to do, and is now standing by the bed. Should the caregiver be told, and at what level? Any deadline is a caregiver threshold.

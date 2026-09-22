@@ -1,0 +1,21 @@
+id: silent-wander-06
+category: silent_wander
+summary: >-
+  Walks to the door and out of view for about four minutes, then comes back to bed.
+start: "04:50"
+timeline:
+  - {t: 0, person: {state: sitting_up, zone: bed}}
+  - {t: 15, person: {state: walking, zone: door}}
+  - {t: 35, person: {state: absent, zone: other}}
+  - {t: 275, person: {state: walking, zone: door}}
+  - {t: 300, person: {state: in_bed, zone: bed}}
+  - {t: 450, person: {state: in_bed, zone: bed}}
+checkpoints:
+  - id: leaves-view
+    window: [35, 274]
+    question: >-
+      The person walked out of view through the door, silently, and has been gone for a few minutes. What should the agent do, and should the caregiver be told? Any deadline is a caregiver threshold.
+  - id: back-in-bed
+    window: [300, 450]
+    question: >-
+      The person comes back and gets into bed. What should the agent do now?

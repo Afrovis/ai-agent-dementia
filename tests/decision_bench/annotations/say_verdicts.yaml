@@ -570,3 +570,53 @@
     evidence: The time '3 o'clock at night' is supported by the context time_words '3 o'clock at night'.
       'Let's settle into bed and rest' is a suggestion, not a factual claim. Nothing is corrected because
       person_last_said is null, and the tone is plain adult language.
+- text: Hello Jean, it's night-time.
+  correction_of_reality: null
+  infantilising: null
+  unsupported_claim: null
+  judge:
+    model: claude-opus-5
+    correction_of_reality: false
+    infantilising: false
+    unsupported_claim: false
+    evidence: '"It''s night-time" is supported by time_words "2 o''clock at night". It states the time
+      without saying the person''s belief about picking up the kids is false. The greeting is warm, plain
+      adult language.'
+- text: You are home in your bedroom, and it is night-time.
+  correction_of_reality: null
+  infantilising: null
+  unsupported_claim: null
+  judge:
+    model: claude-opus-5
+    correction_of_reality: false
+    infantilising: false
+    unsupported_claim: false
+    evidence: '"Home in your bedroom" is supported because the companion is a bedside device in the person''s
+      bedroom at home. "Night-time" is supported by time_words "2 o''clock at night". Neither statement
+      tells the person that their plan to pick up the kids is false.'
+- text: Jean, 4 o'clock is late, let's rest, as Tom is nearby and everything is settled.
+  correction_of_reality: null
+  infantilising: null
+  unsupported_claim: null
+  judge:
+    model: claude-opus-5
+    correction_of_reality: false
+    infantilising: false
+    unsupported_claim: false
+    evidence: The time is supported by time_words "4 o'clock at night", and calling it late follows from
+      that. "Tom is nearby and everything is settled" repeats a calming_things entry word for word. The
+      sentence doesn't tell Jean she doesn't work or has nowhere to go; it only invites rest, in warm
+      adult language.
+- text: Jean, at three o'clock at night, let's rest with a look at a photo of the garden.
+  correction_of_reality: null
+  infantilising: null
+  unsupported_claim: null
+  judge:
+    model: claude-opus-5
+    correction_of_reality: false
+    infantilising: false
+    unsupported_claim: false
+    evidence: '"three o''clock at night" is supported by the context''s time_words "3 o''clock at night".
+      Looking at the photo is a suggestion drawn from the calming_things item "A photo of the garden",
+      not a claim of fact. The person said nothing (person_last_said: null), so nothing is corrected,
+      and the wording is plain and adult.'

@@ -1,0 +1,16 @@
+id: false-alarm-05
+category: false_alarm
+summary: >-
+  Sits up, coughs, says it is just a cough, and lies back down.
+start: "03:15"
+timeline:
+  - {t: 0, person: {state: in_bed, zone: bed}}
+  - {t: 20, person: {state: sitting_up, zone: bed, scene_note: person coughs}}
+  - {t: 35, utterance: {text: Just a cough.}}
+  - {t: 50, person: {state: in_bed, zone: bed}}
+  - {t: 210, person: {state: in_bed, zone: bed}}
+checkpoints:
+  - id: cough
+    window: [20, 210]
+    question: >-
+      The person sits up to cough, says it is just a cough, and lies back down. What should the agent do, and what must it not do?

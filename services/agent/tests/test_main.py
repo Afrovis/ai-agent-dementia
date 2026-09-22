@@ -25,17 +25,21 @@ from nc_shared.events import (
 )
 
 from agent.config import AgentConfig
+from agent.llm import Composition, FakeLLM
 from agent.main import (
     PERSON_GROUP,
     PERSON_STREAM,
     UTTERANCE_GROUP,
     UTTERANCE_STREAM,
+    _maybe_publish_say,
     _publish_cloud_call,
     maybe_emit_health,
     maybe_emit_session_heartbeat,
     run_once,
 )
-from agent.session import Session
+from agent.profile import PersonProfile
+from agent.rules import Phase
+from agent.session import Session, Transition
 from agent.strategies import DEFAULT_STRATEGIES, FAMILIAR_VOICE_ID
 
 NIGHT = datetime(2026, 1, 1, 23, 0)
@@ -424,6 +428,71 @@ def test_a_strategy_with_a_say_template_publishes_a_say():
     assert isinstance(say_events[0], Say)
     assert say_events[0].text == "Say for s2."
     assert say_events[0].strategy == "s2"
+
+
+def test_absent_reading_suppresses_ordinary_strategy_say_but_not_show():
+    bus = make_bus()
+    session = Session(
+        config=AgentConfig(
+            observe_seconds=1.0,
+            absent_limit_seconds=600.0,
+        ),
+        strategies=small_strategies(dwell=1.0, n=2),
+    )
+    now_fn, advance = make_clock(NIGHT)
+
+    bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    advance(2)
+    run_once(bus, session, now_fn=now_fn)  # -> ENGAGED, silent s1
+
+    advance(2)
+    bus.publish(PersonState(source="perceive", state="absent", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)  # -> s2, whose Say is suppressed
+
+    assert session.last_person_state == "absent"
+    assert bus.read("say", "test", "c1", count=10) == []
+    shows = [event for _id, event in bus.read("show", "test", "c1", count=20)]
+    assert shows[-1].headline == session.strategies[1].headline_template
+
+
+def test_terminal_say_still_publishes_when_the_latest_state_is_absent():
+    bus = make_bus()
+    session = Session(config=AgentConfig(absent_limit_seconds=0.0))
+    now_fn, _advance = make_clock(NIGHT)
+
+    # Rule 5 escalates on this same reading. Publication therefore sees
+    # `last_person_state == "absent"`, exercising the terminal exception
+    # rather than relying on a later occupancy update.
+    bus.publish(PersonState(source="perceive", state="absent", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+
+    says = [event for _id, event in bus.read("say", "test", "c1", count=10)]
+    assert says[-1].strategy == "escalate_phone"
+    assert says[-1].text == "Someone is coming to help."
+
+
+def test_rejected_llm_composition_uses_the_rendered_caregiver_template(caplog):
+    bus = make_bus()
+    profile = PersonProfile(name="Jean", caregiver_name="Tom")
+    strategy = next(item for item in DEFAULT_STRATEGIES if item.id == "validate_and_redirect")
+    transition = Transition(
+        phase=Phase.ENGAGED,
+        session_id="session-1",
+        goal="return_to_bed",
+        strategy_index=3,
+        reason="strategy_advanced",
+        strategy=strategy,
+    )
+    unsafe = "Jean, I hear you, but Tom is here and we can rest now."
+    llm = FakeLLM(compositions=[Composition(text=unsafe)])
+    session = Session(config=AgentConfig())
+
+    _maybe_publish_say(bus, transition, session, NIGHT, profile, llm)
+
+    says = [event for _id, event in bus.read("say", "test", "c1", count=10)]
+    assert says[-1].text == "It's alright, Jean, let's rest now and talk more in the morning."
+    assert unsafe not in caplog.text
 
 
 def test_familiar_voice_publishes_clip_say_and_family_show(tmp_path, monkeypatch):

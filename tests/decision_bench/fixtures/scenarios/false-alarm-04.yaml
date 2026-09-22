@@ -1,0 +1,15 @@
+id: false-alarm-04
+category: false_alarm
+summary: >-
+  Rolls over in bed and is briefly seen sitting up for ten seconds before lying down again.
+start: "02:45"
+timeline:
+  - {t: 0, person: {state: in_bed, zone: bed}}
+  - {t: 30, person: {state: sitting_up, zone: bed, confidence: 0.7}}
+  - {t: 40, person: {state: in_bed, zone: bed}}
+  - {t: 200, person: {state: in_bed, zone: bed}}
+checkpoints:
+  - id: rolls-over
+    window: [30, 200]
+    question: >-
+      The person is briefly seen sitting up while rolling over and then lies down. What should the agent do, and what must it not do?

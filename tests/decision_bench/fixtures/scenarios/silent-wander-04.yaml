@@ -1,0 +1,25 @@
+id: silent-wander-04
+category: silent_wander
+summary: >-
+  Walks silently to the bathroom path, is out of view for three minutes, and comes back to bed.
+start: "03:25"
+timeline:
+  - {t: 0, person: {state: sitting_up, zone: bed}}
+  - {t: 15, person: {state: walking, zone: bathroom_path}}
+  - {t: 40, person: {state: absent, zone: other}}
+  - {t: 220, person: {state: walking, zone: bathroom_path}}
+  - {t: 250, person: {state: in_bed, zone: bed}}
+  - {t: 400, person: {state: in_bed, zone: bed}}
+checkpoints:
+  - id: heads-to-bathroom
+    window: [15, 39]
+    question: >-
+      The person walks silently towards the bathroom path. What should the agent do?
+  - id: out-of-view
+    window: [40, 219]
+    question: >-
+      The person is out of view, presumably in the bathroom, for about three minutes. What should the agent do?
+  - id: back-in-bed
+    window: [250, 400]
+    question: >-
+      The person is back in bed. What should the agent do now?

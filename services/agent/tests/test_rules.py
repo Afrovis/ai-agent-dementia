@@ -6,10 +6,12 @@ every accept/reject case in `agent.goals.ALLOWED_GOAL_CHANGES`, and (issue
 import pytest
 
 from agent.goals import ALLOWED_GOAL_CHANGES, GOALS
+from agent.profile import PersonProfile
 from agent.rules import (
     ALLOWED_TRANSITIONS,
     Phase,
     validate,
+    validate_composition,
     validate_goal,
     validate_say,
     validate_strategy,
@@ -154,6 +156,44 @@ def test_validate_strategy_rejects_when_disabled():
     result = validate_strategy("ambient_orient", disabled=True)
     assert result.accepted is False
     assert "ambient_orient" in result.reason
+
+
+# --- validate_composition (decision-bench deterministic proxy) -----------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Jean, I know you are thinking about the kids, but Tom is here and we can rest now.",
+        "Jean, I hear you are waiting, but let's return to bed so Tom can check on you.",
+        "Jean, it is 3 o'clock, and let's rest now while Tom helps you settle in.",
+    ],
+)
+def test_validate_composition_rejects_contrast_or_invented_caregiver_claims(text):
+    result = validate_composition(text, PersonProfile(caregiver_name="Tom"))
+    assert result.accepted is False
+    # Rejection reasons are safe to log and therefore must never echo the
+    # private model-composed candidate.
+    assert text not in result.reason
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Jean, it is 12 o'clock, so let's rest while Tom stays nearby for you.",
+        "Jean, I hear you need comfort; Tom is near, and everything is settled for a rest.",
+        "Butterflies can be calming while Tom is nearby.",
+    ],
+)
+def test_validate_composition_allows_nearby_without_strengthening_it(text):
+    result = validate_composition(text, PersonProfile(caregiver_name="Tom"))
+    assert result.accepted is True
+    assert result.reason is None
+
+
+def test_validate_composition_skips_caregiver_claim_check_for_an_empty_name():
+    result = validate_composition("Someone is here with you.", PersonProfile(caregiver_name=""))
+    assert result.accepted is True
 
 
 # --- validate_say (issue #14, HANDOFF.md rule 3) -------------------------

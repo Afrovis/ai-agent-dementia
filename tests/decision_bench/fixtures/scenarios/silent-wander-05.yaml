@@ -1,0 +1,20 @@
+id: silent-wander-05
+category: silent_wander
+summary: >-
+  Stands still in the middle of the room for about six minutes without speaking.
+start: "01:40"
+timeline:
+  - {t: 0, person: {state: sitting_up, zone: bed}}
+  - {t: 20, person: {state: walking, zone: other}}
+  - {t: 40, person: {state: standing, zone: other}}
+  - {t: 200, person: {state: standing, zone: other}}
+  - {t: 400, person: {state: standing, zone: other}}
+checkpoints:
+  - id: standing-still
+    window: [40, 199]
+    question: >-
+      The person stands still in the middle of the room without speaking. What should the agent do?
+  - id: still-standing
+    window: [200, 400]
+    question: >-
+      The person has stood still for several minutes. Should the caregiver be told, and at what level? Any deadline is a caregiver threshold.

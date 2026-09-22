@@ -143,6 +143,8 @@ def test_compose_sends_goal_and_asks_for_a_reply_to_the_utterance(monkeypatch):
     assert '"goal": "restroom"' in prompt
     assert "do not copy it word for word" in prompt
     assert "acknowledge what latest_utterance is about" in prompt
+    assert "calming_things may be repeated as written" in prompt
+    assert "latest_utterance or scene_note says so" in prompt
 
 
 def test_local_llm_selects_backend():

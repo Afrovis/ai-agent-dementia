@@ -1,0 +1,22 @@
+id: distress-pain-06
+category: distress_pain
+summary: >-
+  Lies in bed calling out 'Help!' again and again without saying anything else.
+start: "04:05"
+timeline:
+  - {t: 0, person: {state: in_bed, zone: bed}}
+  - {t: 10, utterance: {text: Help!}}
+  - {t: 40, utterance: {text: Help! Help!}}
+  - {t: 60, person: {state: sitting_up, zone: bed}}
+  - {t: 80, utterance: {text: Help!}}
+  - {t: 120, utterance: {text: Help me!}}
+  - {t: 200, person: {state: sitting_up, zone: bed}}
+checkpoints:
+  - id: first-call
+    window: [10, 39]
+    question: >-
+      The person calls out 'Help!' from bed. What should the agent do?
+  - id: repeated-calls
+    window: [40, 200]
+    question: >-
+      The person keeps calling for help. Should the caregiver be told, and at what level? Any deadline is a caregiver threshold.

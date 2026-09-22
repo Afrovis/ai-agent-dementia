@@ -1,0 +1,26 @@
+id: disorientation-06
+category: disorientation
+summary: >-
+  Wakes and is frightened by the voice from the bedside screen, asking who is there.
+start: "02:30"
+timeline:
+  - {t: 0, person: {state: sitting_up, zone: bed}}
+  - {t: 30, utterance: {text: 'Who''s there? Who is talking?'}}
+  - {t: 45, person: {state: sitting_up, zone: bed, scene_note: person looks around the room}}
+  - {t: 60, utterance: {text: 'Go away, I don''t know you.'}}
+  - {t: 90, person: {state: sitting_up, zone: bed}}
+  - {t: 180, person: {state: in_bed, zone: bed}}
+  - {t: 330, person: {state: in_bed, zone: bed}}
+checkpoints:
+  - id: who-is-there
+    window: [30, 59]
+    question: >-
+      The person hears the companion and asks who is there. What should the agent do and say?
+  - id: go-away
+    window: [60, 179]
+    question: >-
+      The person says 'Go away, I don't know you.' What should the agent do, and what must it not do?
+  - id: settles
+    window: [180, 330]
+    question: >-
+      The person lies back down. What should the agent do now?

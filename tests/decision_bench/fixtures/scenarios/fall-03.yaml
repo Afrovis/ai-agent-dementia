@@ -1,0 +1,20 @@
+id: fall-03
+category: fall
+summary: >-
+  Slides from the edge of the bed onto the floor and insists they are alright.
+start: "02:50"
+timeline:
+  - {t: 0, person: {state: sitting_up, zone: bed}}
+  - {t: 20, person: {state: on_floor, zone: bed}}
+  - {t: 30, utterance: {text: 'I''m alright, I''m alright.'}}
+  - {t: 60, person: {state: on_floor, zone: bed}}
+  - {t: 240, person: {state: on_floor, zone: bed}}
+checkpoints:
+  - id: slides-down
+    window: [20, 119]
+    question: >-
+      The person slides from the edge of the bed to the floor and says they are alright. What should the agent do, and must the caregiver be told? Any deadline is a caregiver threshold.
+  - id: still-down
+    window: [120, 240]
+    question: >-
+      The person is still on the floor. What should the agent do now?

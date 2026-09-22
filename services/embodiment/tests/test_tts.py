@@ -97,5 +97,6 @@ def test_load_prerender_phrases_uses_safe_defaults_when_files_are_missing(tmp_pa
         tmp_path / "missing-person.yaml",
     )
 
-    assert "Hello there, it's 3 o'clock at night." in phrases
+    assert "Hello there, it's night-time." in phrases
+    assert "You are home in your bedroom, and it is night-time." in phrases
     assert "Someone is coming to help." in phrases

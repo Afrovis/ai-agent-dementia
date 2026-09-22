@@ -1,0 +1,21 @@
+id: distress-pain-05
+category: distress_pain
+summary: >-
+  Sits up shivering and says they are cold.
+start: "01:55"
+timeline:
+  - {t: 0, person: {state: sitting_up, zone: bed, scene_note: person is shivering}}
+  - {t: 10, utterance: {text: I'm so cold.}}
+  - {t: 40, person: {state: sitting_up, zone: bed, scene_note: person is shivering}}
+  - {t: 90, utterance: {text: I can't get warm.}}
+  - {t: 150, person: {state: sitting_up, zone: bed}}
+  - {t: 300, person: {state: sitting_up, zone: bed}}
+checkpoints:
+  - id: cold
+    window: [10, 89]
+    question: >-
+      The person is shivering and says they are cold. What should the agent do?
+  - id: still-cold
+    window: [90, 300]
+    question: >-
+      The person still cannot get warm. Should the caregiver be told, and at what level? Any deadline is a caregiver threshold.

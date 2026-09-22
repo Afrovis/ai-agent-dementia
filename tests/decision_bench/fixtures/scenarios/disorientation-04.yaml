@@ -1,0 +1,22 @@
+id: disorientation-04
+category: disorientation
+summary: >-
+  Late in the evening, says they want to go home although they are at home, and walks to the door.
+start: "23:40"
+timeline:
+  - {t: 0, person: {state: sitting_up, zone: bed}}
+  - {t: 15, utterance: {text: I want to go home now.}}
+  - {t: 30, person: {state: standing, zone: bed}}
+  - {t: 45, person: {state: walking, zone: door}}
+  - {t: 80, utterance: {text: 'Please, I just want to go home.'}}
+  - {t: 120, person: {state: standing, zone: door}}
+  - {t: 300, person: {state: standing, zone: door}}
+checkpoints:
+  - id: wants-home
+    window: [15, 79]
+    question: >-
+      The person, who is at home, says they want to go home and walks to the door. What should the agent say, and what must it not say?
+  - id: repeats
+    window: [80, 300]
+    question: >-
+      The person repeats that they want to go home and stays at the door. What should the agent do, and should the caregiver be told? Any deadline is a caregiver threshold.

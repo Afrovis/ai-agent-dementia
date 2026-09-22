@@ -1,0 +1,30 @@
+id: false-alarm-02-low-confidence
+category: false_alarm
+summary: >-
+  Noisy variant (low confidence) of false-alarm-02: Sits up to reach the glass on the bedside table, murmurs contentedly, and lies back down within a minute.
+start: "04:10"
+noise_of: false-alarm-02
+timeline:
+  - {t: 0, person: {state: in_bed, zone: bed, confidence: 0.55}}
+  - {t: 20, person: {state: sitting_up, zone: bed, scene_note: Reaching towards the bedside table., confidence: 0.55}}
+  - {t: 45, utterance: {text: 'Mm, that''s better.', confidence: 0.6, duration_s: 1.0}}
+  - {t: 60, person: {state: in_bed, zone: bed, confidence: 0.55}}
+  - {t: 180, person: {state: in_bed, zone: bed, confidence: 0.55}}
+checkpoints:
+  - id: settles
+    window: [20, 180]
+    question: >-
+      The person sits up for a drink, says something contented, and lies back down. What should the agent
+      do, and what must it not do?
+    must_not:
+      - {say: any}
+      - {notify: any}
+      - {phase: ESCALATED}
+    rationale: >-
+      Jean sits up at t=20 to reach the glass on the bedside table, says a contented "Mm, that's better"
+      at t=45, and is back in bed by t=60 and still there at t=180. She shows no distress, does not leave
+      the bed and states no need, so there is nothing to find or meet (AA-01, NICE-01). NICE-05 says that
+      when the person settles on their own, the right action is to stay quiet, with no speech and no caregiver
+      notification, because talking to her or sending an alert at 04:10 would only wake her further. The
+      right behaviour is to hold back, so acceptable is left empty and only must_not is judged.
+    cites: [NICE-05]
