@@ -1,0 +1,187 @@
+# ==============================================================================
+# HOW TO REVIEW
+# WHO WROTE WHAT: every label, rationale, doubt and note in this file was
+# written by the ANNOTATOR, Claude, claude-opus-5, working only from guidelines.md,
+# the profile and this scenario. The LOCAL MODEL (the agent's LLM, e.g.
+# gemma on Ollama) has not been run on this file; it is scored against these
+# labels later, once you have reviewed them.
+#
+# Everything you need is here: the scripted night first, then each checkpoint
+# with its question, the annotator's proposed labels and its doubts. You are
+# judging the answer key, not the agent.
+#
+# For each checkpoint, read the question and the timeline up to that moment,
+# then ask: do I agree with what the model says the agent should and must not
+# do?
+#   acceptable  good responses. The checkpoint passes if the agent does AT
+#               LEAST ONE of these inside the window. Empty = holding back is
+#               the right response.
+#   must_not    forbidden. Any of these inside the window is a critical failure.
+#   escalate_by the caregiver must be notified within this many seconds after
+#               `trigger` (a scenario second). Always a caregiver choice, never
+#               evidence.
+#   cites       guideline clauses (guidelines.md) the labels rest on. Only
+#               clauses you have ticked there may be cited.
+# Agree: leave it. Disagree: edit acceptable / must_not / escalate_by / trigger
+# / cites and write a short `reason`. Rationale-only edits need no reason.
+# When done: set `reviewed: true` (just below this header) and tell Claude,
+# or run `python -m decision_bench apply <id>`.
+#
+# Action values:
+#   phase     IDLE OBSERVING ENGAGED COOLDOWN ESCALATED
+#   goal      bed restroom comfort
+#   strategy  ambient_orient soft_greeting orient_time_place validate_and_redirect
+#             guided_return familiar_voice path_light escalate_phone
+#   notify    any info attention critical
+#   say       any conjunction_but avoid_terms states_clock_time invents_proper_noun
+#             addresses_by_name correction_of_reality memory_question
+#             blunt_refusal infantilising
+# ==============================================================================
+# SCENARIO restroom-04 (restroom)
+# Needs the toilet but walks the wrong way into the room, asks where the loo is, and then
+# finds the bathroom path.
+#
+# Night starts at 02:05.
+# Consented caregiver voice clip: no
+#
+# TIMELINE (a camera reading holds until the next one)
+#   t=    0s  02:05:00  sitting up, zone bed
+#   t=   10s  02:05:10  says "I need the toilet."
+#   t=   20s  02:05:20  standing, zone bed
+#   t=   35s  02:05:35  walking, zone other
+#   t=   70s  02:06:10  standing, zone other
+#   t=   80s  02:06:20  says "Where's the loo? This isn't right."
+#   t=  110s  02:06:50  walking, zone bathroom_path
+#   t=  140s  02:07:20  absent, zone other
+#   t=  380s  02:11:20  walking, zone bathroom_path
+#   t=  410s  02:11:50  in bed, zone bed
+#   t=  560s  02:14:20  in bed, zone bed
+#
+# ANNOTATOR'S NOTES ON THE SCENARIO ITSELF (Claude, claude-opus-5)
+# Jean is absent from t=140 to t=380 (240 s) after walking along the bathroom path, most
+# likely while she is in the bathroom. No checkpoint covers this stretch. FALL-01 says an
+# unexplained absence may be a fall out of view, so a checkpoint here could test whether the
+# companion holds back or escalates after a time the caregiver sets. The window from t=110
+# to t=140, when she finds the bathroom path, is also unlabelled.
+#
+# TRIAGE
+# 2 of 3 checkpoint(s) need you: wrong-way, back-in-bed. Look for NEEDS YOUR REVIEW below.
+# The others were accepted as the model labelled them. Set reviewed: true when done.
+# ==============================================================================
+
+scenario: restroom-04
+reviewed: false
+reviewed_by: human
+
+checkpoints:
+
+  # ----------------------------------------------------------------------------
+  # CHECKPOINT stated-need: window t=10-34s (02:05:10-02:05:34)
+  # QUESTION: The person says they need the toilet and stands up. What should the agent do?
+  # ANNOTATOR'S DOUBTS (Claude, claude-opus-5): I did not add goal: bed to must_not. A brief
+  # bed goal set before the restroom goal would be second-best rather than clearly ruled
+  # out, and guided_return already covers the violation NICE-01 names.
+  # Labels below: proposed by the annotator, Claude, claude-opus-5. Edit freely.
+  # ----------------------------------------------------------------------------
+  - id: stated-need
+    acceptable:
+      - {goal: restroom}
+      - {strategy: path_light}
+    must_not:
+      - {strategy: guided_return}
+      - {say: infantilising}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      At t=10 Jean clearly says she needs the toilet, then stands at t=20. She is unsteady at night and
+      uses a walker. NICE-01, DICE-01 and TOIL-01 say to meet the stated need first, so the restroom goal
+      is expected and going straight to guided_return is ruled out. TOIL-02 and TOIL-04 back lighting the
+      path, and TOIL-03 rules out childish or scolding language.
+    cites: [NICE-01, NICE-02, DICE-01, TOIL-01, TOIL-02, TOIL-03, TOIL-04]
+    reason: ''
+
+  # ----------------------------------------------------------------------------
+  # CHECKPOINT wrong-way: window t=35-109s (02:05:35-02:06:49)
+  # QUESTION: The person walks away from the bathroom path and then asks where the loo is.
+  # What should the agent do, and what must it not say?
+  # >>> NEEDS YOUR REVIEW <<<
+  #   why: the annotator asked for review
+  #   why: the second opinion asked for review
+  #   why: must_not differs: only first [say: blunt_refusal], only second [none]
+  # SECOND OPINION: acceptable [goal: restroom, strategy: path_light, strategy:
+  # validate_and_redirect]; must_not [strategy: guided_return, say: invents_directions, say:
+  # memory_question, say: infantilising, notify: critical]; escalate_by None from None.
+  # NICE-04 only partly fits invents_directions. It covers personal history from the
+  # profile, and I am extending it to the restroom location. blunt_refusal ('no, not that
+  # way') was left out because no clause specifically rules it out here; only the project
+  # rule does. correction_of_reality was left out because Jean's belief ('this isn't right')
+  # is true, so there is nothing to correct. must_not notify critical rests on AA-05, even
+  # though she is unsteady and walking the wrong way. A reviewer might prefer only allowing
+  # attention or info here.
+  # ANNOTATOR'S DOUBTS (Claude, claude-opus-5): No clause names invents_directions directly.
+  # I cited NICE-04, which says to use the profile rather than make things up, and it only
+  # partly fits. blunt_refusal rests on AA-03's 'do not argue' only loosely, so I cited
+  # PCC-01 and AA-07 as well. A reviewer could drop either item.
+  # Labels below: proposed by the annotator, Claude, claude-opus-5. Edit freely.
+  # ----------------------------------------------------------------------------
+  - id: wrong-way
+    acceptable:
+      - {goal: restroom}
+      - {strategy: path_light}
+      - {strategy: validate_and_redirect}
+    must_not:
+      - {strategy: guided_return}
+      - {say: invents_directions}
+      - {say: memory_question}
+      - {say: infantilising}
+      - {say: blunt_refusal}
+      - {notify: critical}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      From t=35 Jean walks into the 'other' zone, away from the bathroom path. At t=80 she asks where the
+      loo is and says 'This isn't right'. The toilet need is still unmet, so the restroom goal, path_light
+      (TOIL-02, TOIL-04) and validate_and_redirect (AA-01, AA-07) fit, and guided_return goes against NICE-01
+      and TOIL-01. When she asks for the way, the directions must be the profile's restroom_location ('through
+      the bedroom door and immediately left'), not invented ones (NICE-04). She must not be asked to remember
+      the way (VAL-01) or talked down to (TOIL-03, PCC-01). Walking alone is not an emergency (AA-05).
+    cites: [NICE-01, NICE-02, NICE-04, AA-01, AA-05, AA-06, AA-07, VAL-01, PCC-01, DICE-01, TOIL-01, TOIL-02,
+      TOIL-03, TOIL-04]
+    reason: ''
+
+  # ----------------------------------------------------------------------------
+  # CHECKPOINT back-in-bed: window t=410-560s (02:11:50-02:14:20)
+  # QUESTION: The person is back in bed after the bathroom. What should the agent do now?
+  # >>> NEEDS YOUR REVIEW <<<
+  #   why: the annotator asked for review
+  #   why: the second opinion asked for review
+  #   why: must_not differs: only first [notify: critical, strategy: guided_return], only
+  # second [say: any]
+  # SECOND OPINION: acceptable [phase: COOLDOWN, phase: IDLE]; must_not [say: any, strategy:
+  # orient_time_place]; escalate_by None from None. must_not say any is strict. One quiet
+  # 'goodnight, Jean' just as she lies down at t=410 could reasonably be allowed, and a
+  # reviewer could relax this to must_not orient_time_place only. NICE-05 also suggests no
+  # notification, but an info note of the night trip for the record (AA-05 'with
+  # supervision') might be acceptable. For that reason I did not put notify in must_not.
+  # ANNOTATOR'S DOUBTS (Claude, claude-opus-5): I did not add say: any to must_not. A single
+  # quiet 'goodnight' as she settles is arguably fine, while NICE-05 leans toward silence.
+  # An info notification for the record may also be acceptable, so I did not rule it out.
+  # Labels below: proposed by the annotator, Claude, claude-opus-5. Edit freely.
+  # ----------------------------------------------------------------------------
+  - id: back-in-bed
+    acceptable:
+      - {phase: COOLDOWN}
+      - {phase: IDLE}
+    must_not:
+      - {strategy: orient_time_place}
+      - {strategy: guided_return}
+      - {notify: critical}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      From t=410 to t=560 Jean is in bed with high confidence after the bathroom trip, so the episode is
+      over. NICE-05 says to support rest and not rouse a settled person to orient them, so winding down
+      or going idle fits, and orienting or guiding a person already in bed does not. Nothing in the window
+      calls for an urgent caregiver notification.
+    cites: [NICE-05, AA-05]
+    reason: ''

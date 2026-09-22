@@ -620,3 +620,113 @@
       Looking at the photo is a suggestion drawn from the calming_things item "A photo of the garden",
       not a claim of fact. The person said nothing (person_last_said: null), so nothing is corrected,
       and the wording is plain and adult.'
+- text: Jean, it is 2 o'clock at night, and a photo of the garden is nearby, let's settle back to bed.
+  correction_of_reality: null
+  infantilising: null
+  unsupported_claim: null
+  judge:
+    model: claude-opus-5
+    correction_of_reality: false
+    infantilising: false
+    unsupported_claim: true
+    evidence: The time "2 o'clock at night" is supported by time_words. The profile lists "A photo of
+      the garden" as a calming thing but never says where it is, so "a photo of the garden is nearby"
+      is unsupported. Stating the time does not say the kids are grown or that there is no school pickup,
+      so it is not a correction.
+- text: Jean, it is one o'clock, so please settle back in bed; Tom is nearby.
+  correction_of_reality: null
+  infantilising: null
+  unsupported_claim: null
+  judge:
+    model: claude-opus-5
+    correction_of_reality: false
+    infantilising: false
+    unsupported_claim: false
+    evidence: '"It is one o''clock" is supported by time_words "1 o''clock at night", and "Tom is nearby"
+      repeats the calming thing "Tom is nearby and everything is settled". The sentence doesn''t tell
+      Jean that her plan to wait for him at the door is wrong, and "please settle back in bed" is a polite
+      adult request, not scolding.'
+- text: Jean, the clothes are fine; let's settle down now while Tom is nearby.
+  correction_of_reality: null
+  infantilising: null
+  unsupported_claim: null
+  judge:
+    model: claude-opus-5
+    correction_of_reality: false
+    infantilising: false
+    unsupported_claim: true
+    evidence: Nothing in the profile or context supports "the clothes are fine", which is a claim about
+      the work clothes. "Tom is nearby" is supported by the calming thing "Tom is nearby and everything
+      is settled". The sentence does not deny Jean's belief that she works, and "let's settle down" is
+      plain adult language.
+- text: Jean, at 12 o'clock, let's rest now, for there is a photo of the garden nearby.
+  correction_of_reality: null
+  infantilising: null
+  unsupported_claim: null
+  judge:
+    model: claude-opus-5
+    correction_of_reality: false
+    infantilising: false
+    unsupported_claim: true
+    evidence: '"12 o''clock" is supported by time_words "12 o''clock at night". The profile lists only
+      "A photo of the garden" as a calming thing and does not say where the photo is, so "there is a photo
+      of the garden nearby" is unsupported. The sentence contradicts nothing the person said (person_last_said
+      is null), and "let''s rest now" is a suggestion in plain adult language.'
+- text: It's alright, Jean; a photo of the garden is nearby, let's return to bed.
+  correction_of_reality: null
+  infantilising: null
+  unsupported_claim: null
+- text: Jean, I hear you; it is 3 o'clock at night, so let's rest now with the photo of the garden.
+  correction_of_reality: null
+  infantilising: null
+  unsupported_claim: null
+- text: Jean, since it is 3 o'clock at night, let us rest and look at the photo of the garden.
+  correction_of_reality: null
+  infantilising: null
+  unsupported_claim: null
+  judge:
+    model: claude-opus-5
+    correction_of_reality: false
+    infantilising: false
+    unsupported_claim: false
+    evidence: The time claim "3 o'clock at night" matches context time_words "3 o'clock at night". The
+      photo is supported by calming_things "A photo of the garden". The rest is a suggestion, and it contradicts
+      nothing the person said (person_last_said is null).
+- text: Jean, I hear about the children; a photo of the garden and Tom are nearby, let's rest now.
+  correction_of_reality: null
+  infantilising: null
+  unsupported_claim: null
+  judge:
+    model: claude-opus-5
+    correction_of_reality: false
+    infantilising: false
+    unsupported_claim: true
+    evidence: '"Tom is nearby" is supported by the calming thing "Tom is nearby and everything is settled",
+      but the profile only lists "A photo of the garden" as a calming thing and never says the photo is
+      nearby, so that part is unsupported. The sentence acknowledges the children without contradicting
+      "I have to pick up the kids from school," and the language is warm and adult.'
+- text: Jean, with the garden photo nearby and Tom being settled, it is time to return to bed now.
+  correction_of_reality: null
+  infantilising: null
+  unsupported_claim: null
+  judge:
+    model: claude-opus-5
+    correction_of_reality: false
+    infantilising: false
+    unsupported_claim: true
+    evidence: The profile lists 'A photo of the garden' as a calming thing but never says where it is,
+      so 'the garden photo nearby' is unsupported. 'Tom being settled' is a loose rewording of 'Tom is
+      nearby and everything is settled', and 'time to return to bed' is a suggestion. The sentence doesn't
+      tell Jean that her belief about picking up the kids is false, and the language is plain adult language.
+- text: Jean, I hear you are focused on the children; look at the photo of the garden to rest now.
+  correction_of_reality: null
+  infantilising: null
+  unsupported_claim: null
+  judge:
+    model: claude-opus-5
+    correction_of_reality: false
+    infantilising: false
+    unsupported_claim: false
+    evidence: The photo is supported by the calming thing "A photo of the garden". "Focused on the children"
+      repeats what Jean said ("I have to pick up the kids from school") and does not contradict it. The
+      rest is a warm suggestion to rest, not a factual claim.

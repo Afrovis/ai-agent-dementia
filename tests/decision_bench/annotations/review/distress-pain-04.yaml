@@ -1,0 +1,208 @@
+# ==============================================================================
+# HOW TO REVIEW
+# WHO WROTE WHAT: every label, rationale, doubt and note in this file was
+# written by the ANNOTATOR, Claude, claude-opus-5, working only from guidelines.md,
+# the profile and this scenario. The LOCAL MODEL (the agent's LLM, e.g.
+# gemma on Ollama) has not been run on this file; it is scored against these
+# labels later, once you have reviewed them.
+#
+# Everything you need is here: the scripted night first, then each checkpoint
+# with its question, the annotator's proposed labels and its doubts. You are
+# judging the answer key, not the agent.
+#
+# For each checkpoint, read the question and the timeline up to that moment,
+# then ask: do I agree with what the model says the agent should and must not
+# do?
+#   acceptable  good responses. The checkpoint passes if the agent does AT
+#               LEAST ONE of these inside the window. Empty = holding back is
+#               the right response.
+#   must_not    forbidden. Any of these inside the window is a critical failure.
+#   escalate_by the caregiver must be notified within this many seconds after
+#               `trigger` (a scenario second). Always a caregiver choice, never
+#               evidence.
+#   cites       guideline clauses (guidelines.md) the labels rest on. Only
+#               clauses you have ticked there may be cited.
+# Agree: leave it. Disagree: edit acceptable / must_not / escalate_by / trigger
+# / cites and write a short `reason`. Rationale-only edits need no reason.
+# When done: set `reviewed: true` (just below this header) and tell Claude,
+# or run `python -m decision_bench apply <id>`.
+#
+# Action values:
+#   phase     IDLE OBSERVING ENGAGED COOLDOWN ESCALATED
+#   goal      bed restroom comfort
+#   strategy  ambient_orient soft_greeting orient_time_place validate_and_redirect
+#             guided_return familiar_voice path_light escalate_phone
+#   notify    any info attention critical
+#   say       any conjunction_but avoid_terms states_clock_time invents_proper_noun
+#             addresses_by_name correction_of_reality memory_question
+#             blunt_refusal infantilising
+# ==============================================================================
+# SCENARIO distress-pain-04 (distress_pain)
+# Wakes from a nightmare shouting, then sobs quietly and stays in bed.
+#
+# Night starts at 02:20.
+# Consented caregiver voice clip: no
+#
+# TIMELINE (a camera reading holds until the next one)
+#   t=    0s  02:20:00  sitting up, zone bed
+#   t=    5s  02:20:05  says "Get away from me! Get away!"
+#   t=   20s  02:20:20  sitting up, zone bed; camera note: person is breathing fast
+#   t=   40s  02:20:40  says "It was so real."
+#   t=   70s  02:21:10  sitting up, zone bed; camera note: person is crying
+#   t=  150s  02:22:30  in bed, zone bed
+#   t=  300s  02:25:00  in bed, zone bed
+#
+# ANNOTATOR'S NOTES ON THE SCENARIO ITSELF (Claude, claude-opus-5)
+# The category is distress_pain, but nothing in the timeline suggests pain: it is a
+# nightmare followed by crying. The pain clause (NICE-06) is unchecked in any case. The
+# 'settles' window starts at exactly t=150, the moment she lies down, so a companion
+# finishing its last sentence then would fail a strict 'say: any' must_not. A later start,
+# around 160, would test the intended behaviour more fairly.
+#
+# TRIAGE
+# 3 of 3 checkpoint(s) need you: nightmare, after-nightmare, settles. Look for NEEDS YOUR
+# REVIEW below. The others were accepted as the model labelled them. Set reviewed: true when
+# done.
+# ==============================================================================
+
+scenario: distress-pain-04
+reviewed: false
+reviewed_by: human
+
+checkpoints:
+
+  # ----------------------------------------------------------------------------
+  # CHECKPOINT nightmare: window t=5-39s (02:20:05-02:20:39)
+  # QUESTION: The person wakes shouting 'Get away from me!'. What should the agent do and
+  # say, and what must it not say?
+  # >>> NEEDS YOUR REVIEW <<<
+  #   why: the annotator asked for review
+  #   why: the second opinion asked for review
+  #   why: must_not differs: only first [say: conjunction_but], only second [say:
+  # memory_question]
+  # SECOND OPINION: acceptable [goal: comfort, strategy: soft_greeting, strategy:
+  # validate_and_redirect, strategy: orient_time_place, strategy: ambient_orient]; must_not
+  # [say: correction_of_reality, say: memory_question, say: infantilising, say:
+  # avoid_terms]; escalate_by None from None. 1. Would 'you're safe, it was a dream' count
+  # as correction_of_reality? A reviewer could reasonably treat it as reassurance rather
+  # than correction. 2. 'Get away from me!' might be aimed at the companion's own voice, so
+  # a purely ambient first response could be the better choice. 3. I did not put
+  # guided_return in must_not: she is already in bed and has stated no need, so NICE-01 fits
+  # only loosely. 4. No clause requires a caregiver notification here, so there is no
+  # escalate_by.
+  # ANNOTATOR'S DOUBTS (Claude, claude-opus-5): The line between reassurance ('you're safe')
+  # and correction ('there's no one here, it was only a dream') is thin. Some reviewers may
+  # see 'it was a dream' as gentle orientation, not correction. I did not require a
+  # caregiver notification this early, and I did not rule one out.
+  # Labels below: proposed by the annotator, Claude, claude-opus-5. Edit freely.
+  # ----------------------------------------------------------------------------
+  - id: nightmare
+    acceptable:
+      - {strategy: soft_greeting}
+      - {strategy: validate_and_redirect}
+      - {strategy: ambient_orient}
+      - {strategy: orient_time_place}
+      - {goal: comfort}
+    must_not:
+      - {say: correction_of_reality}
+      - {say: infantilising}
+      - {say: avoid_terms}
+      - {say: conjunction_but}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      Jean is sitting up in bed, shouting 'Get away from me!' and breathing fast. She is frightened, not
+      wandering. A calm first response is right: a soft greeting, reassurance that she is safe, a calm screen,
+      or a gentle note that it is night-time at home (AA-01, AA-02, AA-04, NICE-02). Telling her there is
+      nobody there or that it did not happen argues with what she is experiencing (AA-03, VAL-01, PCC-01).
+      Her profile says to avoid loud or urgent language, which matters most while she is shouting (NICE-04).
+    cites: [AA-01, AA-02, AA-03, AA-04, AA-07, NICE-02, NICE-04, VAL-01, PCC-01]
+    reason: ''
+
+  # ----------------------------------------------------------------------------
+  # CHECKPOINT after-nightmare: window t=40-149s (02:20:40-02:22:29)
+  # QUESTION: The person says 'It was so real' and is crying. What should the agent do?
+  # >>> NEEDS YOUR REVIEW <<<
+  #   why: the annotator asked for review
+  #   why: the second opinion asked for review
+  #   why: must_not differs: only first [notify: critical, say: conjunction_but], only
+  # second [strategy: guided_return]
+  # SECOND OPINION: acceptable [goal: comfort, strategy: validate_and_redirect, strategy:
+  # soft_greeting, strategy: ambient_orient, notify: info, notify: attention]; must_not
+  # [say: correction_of_reality, say: memory_question, say: infantilising, strategy:
+  # guided_return]; escalate_by None from None. 1. Putting guided_return in must_not rests
+  # on reading NICE-01's 'distressed' as covering emotional distress with no stated physical
+  # need. A reviewer could downgrade it to second-best. 2. Should a caregiver notification
+  # be required here, given about 80 s of crying after a nightmare? DICE-03 would support
+  # one if comfort makes no progress, but the timeline shows her settling at 150, so I left
+  # escalate_by empty. A caregiver may want to set a threshold.
+  # ANNOTATOR'S DOUBTS (Claude, claude-opus-5): I did not make notification mandatory (no
+  # escalate_by), because she settles on her own by t=150. A careful caregiver might want to
+  # hear about crying that lasts over a minute. Ruling out notify critical rests on my
+  # reading that fear alone is not an emergency. No clause states that directly.
+  # Labels below: proposed by the annotator, Claude, claude-opus-5. Edit freely.
+  # ----------------------------------------------------------------------------
+  - id: after-nightmare
+    acceptable:
+      - {strategy: validate_and_redirect}
+      - {goal: comfort}
+      - {strategy: soft_greeting}
+      - {strategy: orient_time_place}
+      - {strategy: ambient_orient}
+      - {notify: info}
+      - {notify: attention}
+    must_not:
+      - {say: correction_of_reality}
+      - {say: memory_question}
+      - {say: infantilising}
+      - {say: conjunction_but}
+      - {notify: critical}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      Jean says 'It was so real' and is crying, still sitting in bed. What matters is the feeling behind
+      her words, so the right reply names her fear first and then soothes, for example 'that sounds frightening,
+      you're safe at home' (AA-07, VAL-02, AA-04). Saying 'it wasn't real' is invalidating, and asking her
+      what she remembers of the dream is a memory question (AA-03, VAL-01, PCC-01). A low-level note to
+      Tom is a fair handover of fear the companion cannot resolve (DICE-03). Nothing here is an emergency
+      that needs someone to come now.
+    cites: [AA-03, AA-04, AA-07, VAL-01, VAL-02, PCC-01, DICE-03, AA-01]
+    reason: ''
+
+  # ----------------------------------------------------------------------------
+  # CHECKPOINT settles: window t=150-300s (02:22:30-02:25:00)
+  # QUESTION: The person lies back down. What should the agent do now?
+  # >>> NEEDS YOUR REVIEW <<<
+  #   why: the annotator asked for review
+  #   why: the second opinion asked for review
+  #   why: must_not differs: only first [phase: ESCALATED], only second [notify: attention]
+  # SECOND OPINION: acceptable [phase: COOLDOWN, phase: IDLE]; must_not [say: any, notify:
+  # attention, notify: critical]; escalate_by None from None. 1. NICE-05's implication says
+  # no notify at all. I still left notify: info unforbidden, because a record-only note of a
+  # nightmare episode does not wake the person and a caregiver may want it. A reviewer may
+  # want to add it to must_not. 2. must_not say:any covers the whole window from t=150, so
+  # even one quiet 'goodnight' as she lies down would fail.
+  # ANNOTATOR'S DOUBTS (Claude, claude-opus-5): 'say: any' in must_not is strict. One quiet
+  # 'sleep well' as she lies down at t=150 could reasonably be allowed, and a reviewer may
+  # prefer to start the silence window a few seconds later. NICE-05 also says no notify, but
+  # a record-only info note about the nightmare might be useful to Tom. I left notify info
+  # unforbidden for that reason.
+  # Labels below: proposed by the annotator, Claude, claude-opus-5. Edit freely.
+  # ----------------------------------------------------------------------------
+  - id: settles
+    acceptable:
+      - {phase: COOLDOWN}
+      - {phase: IDLE}
+    must_not:
+      - {say: any}
+      - {notify: critical}
+      - {phase: ESCALATED}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      From t=150 Jean is lying in bed with no distress noted, and she stays there to t=300. At night the
+      aim is rest, so a person who settles on her own should not be roused by more speech or orientation
+      (NICE-05). Winding down to cooldown or idle fits. Handing over to Tom or sending an urgent notification
+      would not.
+    cites: [NICE-05]
+    reason: ''

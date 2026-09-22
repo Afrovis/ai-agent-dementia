@@ -36,6 +36,8 @@ def _checkpoint(
     window=(10.0, 20.0),
     acceptable=(),
     must_not=(),
+    doubtful_acceptable=(),
+    doubtful_must_not=(),
     escalate_by=None,
     trigger=None,
     rationale="because",
@@ -46,9 +48,11 @@ def _checkpoint(
         window=window,
         acceptable=acceptable,
         must_not=must_not,
+        doubtful_acceptable=doubtful_acceptable,
+        doubtful_must_not=doubtful_must_not,
         rationale=rationale,
     )
-    if acceptable or must_not:
+    if acceptable or must_not or doubtful_acceptable or doubtful_must_not:
         kwargs["cites"] = cites
     if escalate_by is not None:
         kwargs["escalate_by"] = escalate_by
@@ -330,3 +334,83 @@ def test_true_verdict_and_invented_direction_count_as_wording_failures():
     result = score_scenario(scenario, trace, profile=profile, verdicts=verdicts)
     assert result.wording_failures["unsupported_claim"] == 1
     assert result.wording_failures["invents_directions"] == 1
+
+
+def test_doubtful_acceptable_rescues_a_fail_into_doubt_half_point():
+    trace = _trace([_state(12, phase="ENGAGED", goal="restroom")])
+    checkpoint = _checkpoint(
+        acceptable=(Action(goal="bed"),),
+        doubtful_acceptable=(Action(goal="restroom"),),
+    )
+    result = score_checkpoint(checkpoint, trace, profile=_PROFILE)
+    assert result.status == "doubt"
+    assert result.points == 0.5
+
+
+def test_doubtful_must_not_blocks_pass_but_is_never_critical():
+    trace = _trace(
+        [_state(12, phase="ENGAGED", goal="return_to_bed"), _notify(15, level="attention")]
+    )
+    checkpoint = _checkpoint(
+        acceptable=(Action(goal="bed"),),
+        doubtful_must_not=(Action(notify="attention"),),
+    )
+    result = score_checkpoint(checkpoint, trace, profile=_PROFILE)
+    # Strict includes the doubtful must_not, so this is not a clean pass...
+    assert result.status == "doubt"
+    assert result.points == 0.5
+    # ...and a majority (non-doubtful) must_not violation of the same action is still critical.
+    critical_checkpoint = _checkpoint(
+        acceptable=(Action(goal="bed"),), must_not=(Action(notify="attention"),)
+    )
+    assert score_checkpoint(critical_checkpoint, trace, profile=_PROFILE).status == "critical"
+
+
+def test_agreed_must_not_violation_stays_critical_even_with_doubtful_acceptable():
+    trace = _trace(
+        [_state(12, phase="ENGAGED", goal="return_to_bed"), _notify(15, level="attention")]
+    )
+    checkpoint = _checkpoint(
+        acceptable=(Action(goal="restroom"),),
+        doubtful_acceptable=(Action(goal="bed"),),
+        must_not=(Action(notify="attention"),),
+    )
+    result = score_checkpoint(checkpoint, trace, profile=_PROFILE)
+    assert result.status == "critical"
+    assert result.points == 0.0
+
+
+def test_no_doubtful_fields_scores_exactly_as_before():
+    trace = _trace([_state(12, phase="ENGAGED", goal="bed")])
+    checkpoint = _checkpoint(acceptable=(Action(goal="restroom"),))
+    result = score_checkpoint(checkpoint, trace, profile=_PROFILE)
+    assert result.status == "fail"
+    assert result.points == 0.0
+
+
+def test_pass_rate_counts_doubt_as_half_a_point():
+    trace = _trace([_state(12, phase="ENGAGED", goal="restroom")])
+    passing = _checkpoint(id="a", acceptable=(Action(goal="restroom"),))
+    doubtful = _checkpoint(
+        id="b",
+        window=(10.0, 20.0),
+        acceptable=(Action(goal="bed"),),
+        doubtful_acceptable=(Action(goal="restroom"),),
+    )
+    scenario = ScenarioResult(
+        scenario_id="s",
+        category="restroom",
+        noise_of=None,
+        checkpoints=(
+            score_checkpoint(passing, trace, profile=_PROFILE),
+            score_checkpoint(doubtful, trace, profile=_PROFILE),
+        ),
+        wording_failures={},
+        llm_errors=0,
+        llm_none=0,
+        wall_time_seconds=0.0,
+    )
+    result = ModelResult(model="m", scenarios=(scenario,))
+    assert result.points == 1.5
+    assert result.doubt_count == 1
+    assert result.pass_rate == 1.5 / 2

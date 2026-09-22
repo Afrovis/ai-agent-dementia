@@ -51,6 +51,8 @@ def result_to_dict(result: ModelResult) -> dict[str, object]:
         "escalation_latency": result.escalation_summary,
         "wording_failures": result.wording_failures,
         "review_checkpoints": result.review_count,
+        "doubt_checkpoints": result.doubt_count,
+        "points": result.points,
         "unlabelled_checkpoints": result.unlabelled_count,
         "llm_errors": result.llm_errors,
         "llm_none": result.llm_none,
@@ -143,7 +145,10 @@ def print_report(results: list[ModelResult], citation_warnings: list[str] | None
             f"{pattern}={count}" for pattern, count in sorted(result.wording_failures.items())
         )
         print(f"  wording failures: {wording or 'none'}")
-        print(f"  checkpoints: {result.review_count} review, {result.unlabelled_count} unlabelled")
+        print(
+            f"  checkpoints: {result.review_count} review, {result.doubt_count} doubt, "
+            f"{result.unlabelled_count} unlabelled"
+        )
         print(f"  LLM calls: {result.llm_errors} errors, {result.llm_none} None returns")
         for scenario in result.scenarios:
             for checkpoint in scenario.checkpoints:

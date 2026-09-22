@@ -1,0 +1,156 @@
+# ==============================================================================
+# HOW TO REVIEW
+# WHO WROTE WHAT: every label, rationale, doubt and note in this file was
+# written by the ANNOTATOR, Claude, claude-opus-5, working only from guidelines.md,
+# the profile and this scenario. The LOCAL MODEL (the agent's LLM, e.g.
+# gemma on Ollama) has not been run on this file; it is scored against these
+# labels later, once you have reviewed them.
+#
+# Everything you need is here: the scripted night first, then each checkpoint
+# with its question, the annotator's proposed labels and its doubts. You are
+# judging the answer key, not the agent.
+#
+# For each checkpoint, read the question and the timeline up to that moment,
+# then ask: do I agree with what the model says the agent should and must not
+# do?
+#   acceptable  good responses. The checkpoint passes if the agent does AT
+#               LEAST ONE of these inside the window. Empty = holding back is
+#               the right response.
+#   must_not    forbidden. Any of these inside the window is a critical failure.
+#   escalate_by the caregiver must be notified within this many seconds after
+#               `trigger` (a scenario second). Always a caregiver choice, never
+#               evidence.
+#   cites       guideline clauses (guidelines.md) the labels rest on. Only
+#               clauses you have ticked there may be cited.
+# Agree: leave it. Disagree: edit acceptable / must_not / escalate_by / trigger
+# / cites and write a short `reason`. Rationale-only edits need no reason.
+# When done: set `reviewed: true` (just below this header) and tell Claude,
+# or run `python -m decision_bench apply <id>`.
+#
+# Action values:
+#   phase     IDLE OBSERVING ENGAGED COOLDOWN ESCALATED
+#   goal      bed restroom comfort
+#   strategy  ambient_orient soft_greeting orient_time_place validate_and_redirect
+#             guided_return familiar_voice path_light escalate_phone
+#   notify    any info attention critical
+#   say       any conjunction_but avoid_terms states_clock_time invents_proper_noun
+#             addresses_by_name correction_of_reality memory_question
+#             blunt_refusal infantilising
+# ==============================================================================
+# SCENARIO restroom-07 (restroom)
+# Says they need the bathroom, then sits on the edge of the bed, says they are too tired,
+# and lies back down.
+#
+# Night starts at 05:10.
+# Consented caregiver voice clip: no
+#
+# TIMELINE (a camera reading holds until the next one)
+#   t=    0s  05:10:00  sitting up, zone bed
+#   t=   10s  05:10:10  says "I should go to the bathroom."
+#   t=   30s  05:10:30  sitting up, zone bed
+#   t=   50s  05:10:50  says "I'm too tired. Maybe later."
+#   t=   65s  05:11:05  in bed, zone bed
+#   t=  240s  05:14:00  in bed, zone bed
+#
+# ANNOTATOR'S NOTES ON THE SCENARIO ITSELF (Claude, claude-opus-5)
+# The lies-back-down window starts at t=50, the moment Jean speaks, but she is still sitting
+# up until t=65. Because of that, the checkpoint cannot tell a brief acknowledgement apart
+# from rousing her once she is settled. Splitting it into 50–64 and 65–240 would make the
+# labels sharper.
+#
+# TRIAGE
+# 2 of 2 checkpoint(s) need you: stated-need, lies-back-down. Look for NEEDS YOUR REVIEW
+# below. The others were accepted as the model labelled them. Set reviewed: true when done.
+# ==============================================================================
+
+scenario: restroom-07
+reviewed: false
+reviewed_by: human
+
+checkpoints:
+
+  # ----------------------------------------------------------------------------
+  # CHECKPOINT stated-need: window t=10-49s (05:10:10-05:10:49)
+  # QUESTION: The person says they should go to the bathroom but stays sitting on the bed.
+  # What should the agent do?
+  # >>> NEEDS YOUR REVIEW <<<
+  #   why: must_not differs: only first [notify: critical], only second [none]
+  # SECOND OPINION: acceptable [goal: restroom, strategy: path_light]; must_not [strategy:
+  # guided_return, say: infantilising]; escalate_by None from None. The acceptable set does
+  # not include a greeting or validation on its own (soft_greeting or
+  # validate_and_redirect), because the stated need calls for restroom support. A reviewer
+  # could argue that a calm acknowledgment is also a good response here. I did not rule out
+  # a notify, since no clause forbids one, but TOIL-04 says a toilet trip alone does not
+  # justify notifying the caregiver.
+  # ANNOTATOR'S DOUBTS (Claude, claude-opus-5): validate_and_redirect is accepted on the
+  # assumption that it points her toward the toilet. If the companion uses it to steer her
+  # back to bed, it will still pass this checkpoint unless guided_return is also recorded.
+  # Labels below: proposed by the annotator, Claude, claude-opus-5. Edit freely.
+  # ----------------------------------------------------------------------------
+  - id: stated-need
+    acceptable:
+      - {goal: restroom}
+      - {strategy: path_light}
+      - {strategy: validate_and_redirect}
+    must_not:
+      - {strategy: guided_return}
+      - {say: infantilising}
+      - {notify: critical}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      At t=10 Jean says she should go to the bathroom and is still sitting up on the bed. TOIL-01 and NICE-01
+      put meeting this need first, so the expected response is goal: restroom. Lighting the route (TOIL-02,
+      TOIL-04; Jean is unsteady at night and uses a walker) or calmly acknowledging the wish and suggesting
+      the next step (AA-01, NICE-02) also count. Steering her back to bed while the need is unmet goes against
+      TOIL-01 and NICE-01. Toileting talk must stay matter-of-fact (TOIL-03). A critical alert is not warranted
+      for a routine toilet trip (TOIL-04, AA-05).
+    cites: [TOIL-01, TOIL-02, TOIL-03, TOIL-04, NICE-01, NICE-02, AA-01, AA-05]
+    reason: ''
+
+  # ----------------------------------------------------------------------------
+  # CHECKPOINT lies-back-down: window t=50-240s (05:10:50-05:14:00)
+  # QUESTION: The person says they are too tired and lies back down. What should the agent
+  # do, and what must it not do?
+  # >>> NEEDS YOUR REVIEW <<<
+  #   why: the annotator asked for review
+  #   why: the second opinion asked for review
+  #   why: must_not differs: only first [notify: attention], only second [say:
+  # blunt_refusal]
+  # SECOND OPINION: acceptable [phase: COOLDOWN, phase: IDLE]; must_not [notify: critical,
+  # say: infantilising, say: blunt_refusal]; escalate_by None from None. NICE-05 implies
+  # silence once she has settled, but the window starts at t=50 while she is still sitting
+  # up and talking. A single short acknowledgment ('that's fine, rest now') seems reasonable
+  # then, so I did not use say: any as a must_not. A reviewer might want a stricter silence
+  # label for t>=65. It is also unclear whether an info notify about an unmet toileting need
+  # (possible incontinence risk) would be welcome. I left notify info and attention allowed
+  # and banned only critical, which rests on NICE-05's no-notify reading and only partly
+  # fits. I also left open whether pressing her gently to go to the toilet counts as
+  # arguing.
+  # ANNOTATOR'S DOUBTS (Claude, claude-opus-5): I did not require silence (say: any) for the
+  # whole window: one short, calm acknowledgement at t=50, while she is still sitting up,
+  # seems reasonable, but a reviewer might want silence required from t=65. path_light was
+  # left out of must_not because a light switched on in the first checkpoint may still be on
+  # at t=50. Switching it on after she has lain down would rouse her, against NICE-05. An
+  # info-level note to Tom that a toilet need is still unmet might be useful. NICE-05 argues
+  # against any notify, so I banned only attention and critical. Whether info is acceptable
+  # is for the caregiver to decide.
+  # Labels below: proposed by the annotator, Claude, claude-opus-5. Edit freely.
+  # ----------------------------------------------------------------------------
+  - id: lies-back-down
+    acceptable:
+      - {phase: COOLDOWN}
+      - {phase: IDLE}
+    must_not:
+      - {notify: critical}
+      - {notify: attention}
+      - {say: infantilising}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      At t=50 Jean says she is too tired and will go later. By t=65 she is in bed, and she is still in bed
+      at t=240. NICE-05 says a person who settles on their own should not be roused, so the companion should
+      wind down (COOLDOWN or IDLE) and not ask for the caregiver's attention. Pushing or scolding her about
+      the toilet would break TOIL-03 and AA-07. Nothing here calls for escalation.
+    cites: [NICE-05, TOIL-03, AA-07]
+    reason: ''

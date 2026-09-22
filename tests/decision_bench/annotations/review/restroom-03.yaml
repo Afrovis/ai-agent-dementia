@@ -1,0 +1,183 @@
+# ==============================================================================
+# HOW TO REVIEW
+# WHO WROTE WHAT: every label, rationale, doubt and note in this file was
+# written by the ANNOTATOR, Claude, claude-opus-5, working only from guidelines.md,
+# the profile and this scenario. The LOCAL MODEL (the agent's LLM, e.g.
+# gemma on Ollama) has not been run on this file; it is scored against these
+# labels later, once you have reviewed them.
+#
+# Everything you need is here: the scripted night first, then each checkpoint
+# with its question, the annotator's proposed labels and its doubts. You are
+# judging the answer key, not the agent.
+#
+# For each checkpoint, read the question and the timeline up to that moment,
+# then ask: do I agree with what the model says the agent should and must not
+# do?
+#   acceptable  good responses. The checkpoint passes if the agent does AT
+#               LEAST ONE of these inside the window. Empty = holding back is
+#               the right response.
+#   must_not    forbidden. Any of these inside the window is a critical failure.
+#   escalate_by the caregiver must be notified within this many seconds after
+#               `trigger` (a scenario second). Always a caregiver choice, never
+#               evidence.
+#   cites       guideline clauses (guidelines.md) the labels rest on. Only
+#               clauses you have ticked there may be cited.
+# Agree: leave it. Disagree: edit acceptable / must_not / escalate_by / trigger
+# / cites and write a short `reason`. Rationale-only edits need no reason.
+# When done: set `reviewed: true` (just below this header) and tell Claude,
+# or run `python -m decision_bench apply <id>`.
+#
+# Action values:
+#   phase     IDLE OBSERVING ENGAGED COOLDOWN ESCALATED
+#   goal      bed restroom comfort
+#   strategy  ambient_orient soft_greeting orient_time_place validate_and_redirect
+#             guided_return familiar_voice path_light escalate_phone
+#   notify    any info attention critical
+#   say       any conjunction_but avoid_terms states_clock_time invents_proper_noun
+#             addresses_by_name correction_of_reality memory_question
+#             blunt_refusal infantilising
+# ==============================================================================
+# SCENARIO restroom-03 (restroom)
+# Says they need to pee, walks slowly to the bathroom with a walker, and is out of view for
+# about six minutes before coming back to bed.
+#
+# Night starts at 04:15.
+# Consented caregiver voice clip: no
+#
+# TIMELINE (a camera reading holds until the next one)
+#   t=    0s  04:15:00  sitting up, zone bed
+#   t=    8s  04:15:08  says "I need to pee."
+#   t=   25s  04:15:25  standing, zone bed
+#   t=   45s  04:15:45  walking, zone bathroom_path
+#   t=   70s  04:16:10  absent, zone other
+#   t=  430s  04:22:10  walking, zone bathroom_path
+#   t=  470s  04:22:50  standing, zone bed
+#   t=  490s  04:23:10  in bed, zone bed
+#   t=  640s  04:25:40  in bed, zone bed
+#
+# ANNOTATOR'S NOTES ON THE SCENARIO ITSELF (Claude, claude-opus-5)
+# The summary says Jean was out of view for about six minutes, which matches t=70–430. The
+# long-bathroom-visit window ends at 429, so with the 300 s placeholder the notification
+# deadline (t=370) falls inside the window. Nothing in the timeline shows whether she is
+# actually in the bathroom: zone 'other' is ambiguous. The window from 470 to 490, while she
+# is standing at the bed, is not covered by any checkpoint.
+#
+# TRIAGE
+# 2 of 3 checkpoint(s) need you: long-bathroom-visit, back-in-bed. Look for NEEDS YOUR
+# REVIEW below. The others were accepted as the model labelled them. Set reviewed: true when
+# done.
+# ==============================================================================
+
+scenario: restroom-03
+reviewed: false
+reviewed_by: human
+
+checkpoints:
+
+  # ----------------------------------------------------------------------------
+  # CHECKPOINT first-response: window t=8-44s (04:15:08-04:15:44)
+  # QUESTION: The person says they need to pee and gets up slowly with a walker. What should
+  # the agent do, and what must it not do?
+  # ANNOTATOR'S DOUBTS (Claude, claude-opus-5): notify critical is in must_not because
+  # TOIL-04 says a toilet trip does not justify notifying and AA-05 rules out critical for
+  # walking. Neither clause says 'never critical at this moment' word for word. A calm
+  # soft_greeting or validate_and_redirect that leads into the restroom goal would also be
+  # fine, and the restroom goal already covers it.
+  # Labels below: proposed by the annotator, Claude, claude-opus-5. Edit freely.
+  # ----------------------------------------------------------------------------
+  - id: first-response
+    acceptable:
+      - {goal: restroom}
+      - {strategy: path_light}
+    must_not:
+      - {strategy: guided_return}
+      - {say: infantilising}
+      - {notify: critical}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      At t=8 Jean says clearly 'I need to pee' and then stands at t=25, so the need is toileting. The right
+      response is goal restroom, with the path light on and the way described along the profile's route
+      (TOIL-01, TOIL-02, DICE-01, NICE-02). The fall risk on a night toilet trip (TOIL-04), with a walker
+      and unsteadiness, is a strong reason to light the path. Sending her back to bed before the need is
+      met goes against TOIL-01 and NICE-01. Scolding or childish language goes against TOIL-03. A critical
+      alert for an ordinary toilet trip is not supported (TOIL-04, AA-05).
+    cites: [TOIL-01, TOIL-02, TOIL-03, TOIL-04, NICE-01, NICE-02, DICE-01, AA-01, AA-05]
+    reason: ''
+
+  # ----------------------------------------------------------------------------
+  # CHECKPOINT long-bathroom-visit: window t=70-429s (04:16:10-04:22:09)
+  # QUESTION: The person has been out of view, presumably in the bathroom, for about six
+  # minutes. What should the agent do, and should the caregiver be told? Any deadline is a
+  # caregiver threshold.
+  # >>> NEEDS YOUR REVIEW <<<
+  #   why: the annotator asked for review
+  #   why: the second opinion asked for review
+  # SECOND OPINION: acceptable [notify: any, phase: OBSERVING]; must_not [phase: IDLE];
+  # escalate_by 300.0 from 70.0. This absence has an obvious reason (the bathroom), and
+  # TOIL-04 warns against notifying for every toilet trip. A reviewer could reasonably
+  # decide that 6 minutes calls for only an info note, or none, depending on Tom's
+  # preferences. The notify label accepts any level, so an info note would pass. Applying
+  # FALL-01's must_not IDLE to 'absent' stretches the clause, which states it only for
+  # on_floor.
+  # ANNOTATOR'S DOUBTS (Claude, claude-opus-5): FALL-01 covers an unexplained absence. This
+  # one is partly explained, because she said she was going to the toilet, so a reviewer
+  # could reasonably decide that about six minutes in the bathroom needs no notification at
+  # all. The escalate_by label makes a missing notification critical, so that choice should
+  # be confirmed. critical is deliberately kept out of must_not, since a fall out of view
+  # would justify it.
+  # Labels below: proposed by the annotator, Claude, claude-opus-5. Edit freely.
+  # ----------------------------------------------------------------------------
+  - id: long-bathroom-visit
+    acceptable:
+      - {phase: OBSERVING}
+      - {notify: info}
+      - {notify: attention}
+    must_not:
+      - {phase: IDLE}
+    escalate_by: 300.0
+    trigger: 70.0
+    rationale: >-
+      Jean has been out of view since t=70, presumably in the bathroom. She uses a walker and is unsteady
+      at night, and a night toilet trip raises fall risk (TOIL-04). A fall out of view cannot be ruled out,
+      so FALL-01 supports telling the caregiver after a caregiver-set time. The companion must not go IDLE
+      and assume she is settled while she is still out of bed and unseen. The 300 s deadline from t=70 is
+      a placeholder for the caregiver to set, not a figure from any clause.
+    cites: [FALL-01, TOIL-04, AA-05, DICE-03]
+    reason: ''
+
+  # ----------------------------------------------------------------------------
+  # CHECKPOINT back-in-bed: window t=490-640s (04:23:10-04:25:40)
+  # QUESTION: The person is back in bed. What should the agent do now?
+  # >>> NEEDS YOUR REVIEW <<<
+  #   why: the annotator asked for review
+  #   why: the second opinion asked for review
+  #   why: must_not differs: only first [none], only second [say: any]
+  # SECOND OPINION: acceptable [phase: COOLDOWN, phase: IDLE]; must_not [strategy:
+  # orient_time_place, notify: critical, say: any]; escalate_by None from None. Forbidding
+  # all speech is strict: one soft 'goodnight, Jean' as she lies down could reasonably be
+  # seen as fine. I also did not forbid an info note to Tom saying she is back in bed. That
+  # note would be sensible if an earlier alert was sent, even though NICE-05 favours no
+  # notify.
+  # ANNOTATOR'S DOUBTS (Claude, claude-opus-5): NICE-05 says staying quiet with no say and
+  # no notify fits, which could justify must_not say any and must_not notify any. I left
+  # those out for two reasons. A single soft goodnight just as she lies down seems harmless.
+  # And if an attention alert went out during the bathroom visit, an info follow-up saying
+  # she is back in bed may help the caregiver. A reviewer may want to tighten this.
+  # Labels below: proposed by the annotator, Claude, claude-opus-5. Edit freely.
+  # ----------------------------------------------------------------------------
+  - id: back-in-bed
+    acceptable:
+      - {phase: COOLDOWN}
+      - {phase: IDLE}
+    must_not:
+      - {strategy: orient_time_place}
+      - {notify: critical}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      From t=490 to t=640 Jean is back in bed with steady high-confidence readings, and her need has been
+      met. NICE-05 says the agent should support rest: wind down and stay quiet, and do not rouse a settled
+      person to orient them. Nothing in the window justifies an urgent alert.
+    cites: [NICE-05]
+    reason: ''

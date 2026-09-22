@@ -1,0 +1,71 @@
+scenario: false-alarm-04
+annotator:
+  model: claude-opus-5
+  effort: high
+  date: '2026-09-21'
+  attempts: 1
+  session_id: 3634ae12-6b78-4cbd-83c9-3f48cc15e45b
+  list_price_usd: 0.17200500000000002
+  prompt_sha256: 751ed04a45dfacf07b4abd3521f4f9cf3f0e31ab27489dd6e1f5dde70e9603a9
+  guidelines_sha256: 6d40e2e8797e4a9924a806cc460dc1669759a48d06db21a2c22c4dd29161865e
+  scenario_sha256: 550c7d47d7d750910f295179af31f3aba05697f7ec7f842158ffbde54aa770c3
+scenario_notes: The window starts at t=30, the same moment Jean sits up. So the 'stay silent' label also
+  covers the ten seconds before anyone could tell she was settling. If the question is meant to test only
+  the settled period, a window starting a little after t=40 (e.g. [40, 200]) would test that more fairly.
+  The sitting_up reading has confidence 0.7, lower than the 0.9 in_bed readings. That fits a rollover
+  mistaken for sitting up.
+checkpoints:
+  - id: rolls-over
+    acceptable: []
+    must_not:
+      - {say: any}
+      - {notify: any}
+      - {phase: ESCALATED}
+      - {strategy: escalate_phone}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      Jean is seen sitting up for only ten seconds (t=30–40, confidence 0.7), then lies back in bed and
+      stays there to t=200. There is no speech, no distress and no stated need. NICE-05 says that when
+      a person settles on their own, the right action is to stay quiet: no speech and no caregiver notification,
+      so she is not woken further. Because just sitting up is not an emergency, handing over to the caregiver
+      has no basis (AA-05 by analogy). The acceptable set is empty, because the right behaviour here is
+      to hold back.
+    cites: [NICE-05, AA-05]
+    uncertain: '1) Ruling out all speech (say: any) covers t=30–40, while Jean is still sitting up. At
+      that point the companion cannot yet know she will lie down again. A careful reviewer might allow
+      one soft greeting there, or start the no-speech rule a few seconds after t=40. 2) Ruling out notify:
+      any also blocks a log-only ''info'' notification. NICE-05 says ''no notify'', but a caregiver might
+      want quiet records of brief wakings. 3) AA-05 is about pacing, not sitting up, so it only supports
+      the no-escalation labels by analogy. NICE-05 carries this checkpoint on its own.'
+    needs_review: true
+second_opinion:
+  model: claude-opus-5
+  attempts: 1
+  list_price_usd: 0.12337299999999998
+  scenario_notes: The window starts at the sit-up (t=30), so any speech during the 10 s she is sitting
+    up counts as a violation. That is deliberate for a false alarm, but it is strict. The reading at t=200
+    repeats the one at t=40 and only marks the end of the window.
+  checkpoints:
+    - id: rolls-over
+      acceptable: []
+      must_not:
+        - {say: any}
+        - {notify: any}
+        - {phase: ENGAGED}
+        - {phase: ESCALATED}
+      escalate_by: null
+      trigger: null
+      rationale: >-
+        Jean sits up in bed at t=30 (confidence 0.7), lies down again at t=40 and stays in bed with high
+        confidence to t=200. She never stands, speaks or leaves the bed zone, so no need or distress shows
+        up. NICE-05 says a person who settles on their own should get no speech and no notification, and
+        should not be woken to be oriented. The companion should hold back, so acceptable is empty and
+        only speaking, engaging, notifying or escalating are ruled out.
+      cites: [NICE-05, AA-05]
+      uncertain: 'The notify ban covers every level, including info. An ''info'' notification only for
+        the record might be allowed if it never reaches Tom''s phone at night, but NICE-05 names no notify.
+        A brief OBSERVING phase or quiet ambient_orient light while she is sitting up is not banned. Neither
+        is required, because a 10 s sit-up at 0.7 confidence is weak evidence that she is getting up.
+        AA-05 only partly fits: it is about pacing, but it supports not treating being up as an emergency.'
+      needs_review: true

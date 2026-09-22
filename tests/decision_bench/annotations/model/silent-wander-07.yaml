@@ -1,0 +1,137 @@
+scenario: silent-wander-07
+annotator:
+  model: claude-opus-5
+  effort: high
+  date: '2026-09-21'
+  attempts: 1
+  session_id: c2e9b124-247e-4aac-9f1c-7e4eb15ee11c
+  list_price_usd: 0.19893500000000003
+  prompt_sha256: 751ed04a45dfacf07b4abd3521f4f9cf3f0e31ab27489dd6e1f5dde70e9603a9
+  guidelines_sha256: 6d40e2e8797e4a9924a806cc460dc1669759a48d06db21a2c22c4dd29161865e
+  scenario_sha256: 68c4fda87914ffd8e8966cd60b2374fc0976f0099dce48da49b1141e364c54d6
+scenario_notes: The timeline never says 'chair'. The chair is inferred from state sitting_up in zone 'other'.
+  The timeline also does not show whether Jean is awake or has dozed off while sitting, and that decides
+  whether NICE-05 (stay quiet) or AA-05 and DICE-03 (supervise, change course, notify) applies. A scene_note
+  saying whether she is awake would make both checkpoints clearer. The scenario ends at t=645 with no
+  resolution, so there is nothing to show how the episode is meant to end.
+checkpoints:
+  - id: sits-in-chair
+    acceptable:
+      - {phase: OBSERVING}
+      - {strategy: ambient_orient}
+      - {strategy: soft_greeting}
+      - {strategy: path_light}
+      - {goal: restroom}
+      - {strategy: validate_and_redirect}
+    must_not:
+      - {notify: critical}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      Jean left the bed at t=15, walked, and has sat silently in the 'other' zone since t=45. She says
+      nothing and shows no distress. A calm, low-key first response fits (NICE-02, AA-01, AA-04). Because
+      restlessness and pacing can mean a toilet need, lighting the path or offering the restroom is also
+      supported (TOIL-01, DICE-01, TOIL-02). Being up and walking alone is not an emergency, so a critical
+      notification is ruled out (AA-05).
+    cites: [NICE-02, AA-01, AA-04, AA-05, TOIL-01, TOIL-02, DICE-01]
+    uncertain: It is unclear whether a quiet person sitting in a chair counts as 'settled' under NICE-05.
+      If so, the companion should stay silent and only observe, and speech-based strategies (soft_greeting,
+      validate_and_redirect) would be less fitting. I kept them as acceptable because Jean is out of bed,
+      is unsteady at night and uses a walker. I did not put phase IDLE in must_not because no citable
+      clause rules it out for someone sitting up. FALL-01 only covers on_floor and absent.
+    needs_review: true
+  - id: stays-in-chair
+    acceptable:
+      - {notify: info}
+      - {notify: attention}
+      - {strategy: soft_greeting}
+      - {strategy: validate_and_redirect}
+      - {strategy: orient_time_place}
+      - {strategy: guided_return}
+      - {strategy: path_light}
+      - {goal: bed}
+      - {goal: restroom}
+    must_not:
+      - {notify: critical}
+    escalate_by: 300.0
+    trigger: 300.0
+    rationale: >-
+      Jean has been out of bed since t=15 and sitting silently since t=45, with no progress toward bed
+      by t=300. AA-05's 'with supervision' supports telling the caregiver at info or attention level when
+      she stays up, and DICE-03 supports switching to a new approach (a gentle reminder that it is night,
+      a guided return, or a restroom offer) when nothing is changing (AA-02, TOIL-01). Sitting quietly
+      is not an emergency, so a critical notification is ruled out (AA-05). The 300 s deadline (notification
+      by t=600, about ten minutes after she got up) is a placeholder for the caregiver to set.
+    cites: [AA-05, DICE-03, AA-02, AA-04, TOIL-01, NICE-02]
+    uncertain: Requiring any notification at all is a judgement call. AA-05 supports supervision but does
+      not say this situation must be escalated, and a caregiver might prefer not to be woken for a calm
+      person sitting in a chair. If Jean has actually dozed off sitting up, NICE-05 would favour staying
+      quiet over orienting or guiding her. The camera state 'sitting_up' cannot tell these apart.
+    needs_review: true
+second_opinion:
+  model: claude-opus-5
+  attempts: 1
+  list_price_usd: 0.16477350000000002
+  scenario_notes: The summary calls the spot a 'chair', but the timeline only shows sitting_up in zone
+    'other'. The camera schema has no chair zone, so the chair is only in the summary text. The stays-in-chair
+    window ends at t=645, the last timeline reading, so what happens next is out of scope.
+  checkpoints:
+    - id: sits-in-chair
+      acceptable:
+        - {phase: OBSERVING}
+        - {strategy: ambient_orient}
+        - {strategy: soft_greeting}
+        - {strategy: path_light}
+        - {goal: restroom}
+        - {strategy: orient_time_place}
+        - {strategy: validate_and_redirect}
+      must_not:
+        - {notify: critical}
+        - {say: states_clock_time}
+      escalate_by: null
+      trigger: null
+      rationale: >-
+        Jean left the bed at t=15, walked, and has sat quietly in a chair (zone other) since t=45. She
+        has said nothing and shows no sign of distress or of being on the floor. Watching with a calm
+        screen or a soft greeting by name is first-line (NICE-02, AA-01, AA-04). Since unmet toileting
+        need is a common cause of silent night walking, lighting the path or offering the restroom is
+        also acceptable (TOIL-01, TOIL-02, DICE-01). Being up and sitting is not an emergency, so a critical
+        notification is ruled out (AA-05). A gentle reminder that it is night is fine, but an exact clock
+        time is not (AA-02).
+      cites: [NICE-02, AA-01, AA-04, AA-05, AA-02, TOIL-01, TOIL-02, DICE-01]
+      uncertain: I did not put phase IDLE in must_not. Sitting quietly in a chair is not the same as being
+        settled in bed, and Jean is unsteady and uses a walker, but no clause directly rules out IDLE
+        here. I left guided_return out of acceptable because nothing yet shows it is needed. It is not
+        in must_not either, because no need has been stated that it would skip. orient_time_place and
+        validate_and_redirect rest on clauses about a person who is upset or disoriented, and Jean shows
+        neither, so they fit only loosely.
+      needs_review: false
+    - id: stays-in-chair
+      acceptable:
+        - {notify: info}
+        - {notify: attention}
+        - {strategy: soft_greeting}
+        - {strategy: validate_and_redirect}
+        - {strategy: guided_return}
+        - {strategy: path_light}
+        - {goal: restroom}
+        - {goal: bed}
+      must_not:
+        - {notify: critical}
+        - {say: states_clock_time}
+      escalate_by: 600.0
+      trigger: 15.0
+      rationale: >-
+        By now Jean has been out of bed since t=15 and in the chair for about ten minutes, silent, with
+        nothing showing she is getting back to rest. AA-05 allows pacing and sitting up but 'with supervision',
+        which supports an info or attention notification to Tom when she stays up. DICE-03 supports switching
+        from passive watching to a gentle offer of the restroom or bed, and to a handover if nothing changes.
+        Sitting quietly is not an emergency, so a critical notification is ruled out (AA-05). The 600
+        s from leaving the bed is a placeholder for the caregiver to set, not a number from any clause.
+      cites: [AA-05, DICE-03, NICE-02, AA-01, TOIL-01, TOIL-02, AA-02]
+      uncertain: Should the caregiver be told at all? AA-05's 'with supervision' supports it, and no clause
+        makes it mandatory. A caregiver might prefer only an info log, or no notification unless she stays
+        up longer than ten minutes. I counted the deadline from leaving the bed (t=15), not from sitting
+        down (t=45). guided_return and goal bed are acceptable because no unmet need has been stated.
+        A reviewer might want the restroom offered first (TOIL-01).
+      needs_review: true

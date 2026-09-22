@@ -252,7 +252,7 @@ def test_second_opinion_that_agrees_is_accepted_by_triage(tmp_path):
     assert "NEEDS YOUR REVIEW" not in review_path.read_text()
 
 
-def test_flagged_checkpoint_is_marked_for_the_human(tmp_path):
+def test_self_flags_alone_no_longer_block_application(tmp_path):
     scenario = load_scenario(FIXTURE)
     output = _output(scenario)
     for item in output["checkpoints"]:
@@ -274,5 +274,95 @@ def test_flagged_checkpoint_is_marked_for_the_human(tmp_path):
         second=result,
     )
     text = review_path.read_text()
+    assert yaml.safe_load(text)["reviewed"] is True
+    assert yaml.safe_load(text)["reviewed_by"] == "model"
+    assert "NEEDS YOUR REVIEW" not in text
+
+
+def test_flagged_checkpoint_is_marked_for_the_human(tmp_path):
+    scenario = load_scenario(FIXTURE)
+    output = _output(scenario)
+    second_output = _output(scenario, must_not=[])
+    result = annotate_scenario(
+        scenario,
+        profile=load_default_profile(),
+        guidelines_text=GUIDELINES_PATH.read_text(),
+        citable=citable_clauses(),
+        runner=lambda *args: _fake_result(output),
+    )
+    second = annotate_scenario(
+        scenario,
+        profile=load_default_profile(),
+        guidelines_text=GUIDELINES_PATH.read_text(),
+        citable=citable_clauses(),
+        runner=lambda *args: _fake_result(second_output),
+    )
+    _, review_path = write_annotation_files(
+        scenario,
+        result,
+        annotations_dir=tmp_path,
+        effort="high",
+        guidelines_text=GUIDELINES_PATH.read_text(),
+        force=False,
+        second=second,
+    )
+    text = review_path.read_text()
     assert yaml.safe_load(text)["reviewed"] is False
     assert "NEEDS YOUR REVIEW" in text and "SECOND OPINION" in text
+
+
+def _run(scenario, output):
+    return annotate_scenario(
+        scenario,
+        profile=load_default_profile(),
+        guidelines_text=GUIDELINES_PATH.read_text(),
+        citable=citable_clauses(),
+        runner=lambda *args: _fake_result(output),
+    )
+
+
+def test_third_opinion_that_reaches_a_majority_is_applied_with_doubtful_labels(tmp_path):
+    scenario = load_scenario(FIXTURE)
+    first = _run(scenario, _output(scenario, must_not=[{"say": "any"}]))
+    second = _run(scenario, _output(scenario, must_not=[]))
+    third = _run(scenario, _output(scenario, must_not=[{"say": "any"}]))
+    _, review_path = write_annotation_files(
+        scenario,
+        first,
+        annotations_dir=tmp_path,
+        effort="high",
+        guidelines_text=GUIDELINES_PATH.read_text(),
+        force=False,
+        second=second,
+        third=third,
+    )
+    model = yaml.safe_load((tmp_path / "model" / f"{scenario.id}.yaml").read_text())
+    assert model["third_opinion"]["checkpoints"][0]["must_not"] == [{"say": "any"}]
+    review = yaml.safe_load(review_path.read_text())
+    assert review["reviewed"] is True
+    assert review["reviewed_by"] == "model"
+    assert review["checkpoints"][0]["must_not"] == [{"say": "any"}]
+
+
+def test_third_opinion_without_a_majority_needs_a_human_and_shows_all_three_runs(tmp_path):
+    scenario = load_scenario(FIXTURE)
+    first = _run(scenario, _output(scenario, acceptable=[{"strategy": "path_light"}]))
+    second = _run(scenario, _output(scenario, acceptable=[{"strategy": "soft_greeting"}]))
+    third = _run(scenario, _output(scenario, acceptable=[{"strategy": "ambient_orient"}]))
+    _, review_path = write_annotation_files(
+        scenario,
+        first,
+        annotations_dir=tmp_path,
+        effort="high",
+        guidelines_text=GUIDELINES_PATH.read_text(),
+        force=False,
+        second=second,
+        third=third,
+    )
+    text = review_path.read_text()
+    review = yaml.safe_load(text)
+    assert review["reviewed"] is False
+    assert review["reviewed_by"] == "human"
+    assert "NEEDS YOUR REVIEW" in text
+    assert "RUN 1" in text and "RUN 2" in text and "RUN 3" in text
+    assert "no majority on acceptable" in text

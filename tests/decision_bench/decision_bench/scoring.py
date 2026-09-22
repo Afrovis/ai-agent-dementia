@@ -23,7 +23,9 @@ from decision_bench.runner import Trace, TraceEntry
 from decision_bench.schema import Action, Checkpoint, Scenario, load_default_profile
 from decision_bench.verdicts import Verdicts, normalise_text
 
-CheckpointStatus = Literal["pass", "review", "fail", "critical", "unlabelled"]
+CheckpointStatus = Literal["pass", "doubt", "review", "fail", "critical", "unlabelled"]
+
+_POINTS: dict[CheckpointStatus, float] = {"pass": 1.0, "doubt": 0.5}
 
 # `schema.GOALS` writes the agent's `ROOT_GOAL` as `bed`, since the annotator-facing
 # vocabulary is deliberately simplified from the agent's own goal names (see
@@ -39,6 +41,10 @@ class CheckpointResult:
     reasons: tuple[str, ...]
     observations: dict[str, tuple[str, ...]]
     escalation_latency: float | None = None
+
+    @property
+    def points(self) -> float:
+        return _POINTS.get(self.status, 0.0)
 
 
 @dataclass(frozen=True)
@@ -77,16 +83,26 @@ class ModelResult:
         )
 
     @property
+    def doubt_count(self) -> int:
+        return sum(
+            checkpoint.status == "doubt"
+            for item in self.scenarios
+            for checkpoint in item.labelled_checkpoints
+        )
+
+    @property
+    def points(self) -> float:
+        return sum(
+            checkpoint.points for item in self.scenarios for checkpoint in item.labelled_checkpoints
+        )
+
+    @property
     def pass_rate(self) -> float | None:
-        return self.passed_count / self.labelled_count if self.labelled_count else None
+        return self.points / self.labelled_count if self.labelled_count else None
 
     def _rate(self, scenarios: list[ScenarioResult]) -> float | None:
         checkpoints = [cp for item in scenarios for cp in item.labelled_checkpoints]
-        return (
-            sum(cp.status == "pass" for cp in checkpoints) / len(checkpoints)
-            if checkpoints
-            else None
-        )
+        return sum(cp.points for cp in checkpoints) / len(checkpoints) if checkpoints else None
 
     @property
     def pass_rate_by_category(self) -> dict[str, float | None]:
@@ -312,51 +328,73 @@ def score_checkpoint(
     if not checkpoint.labelled:
         return CheckpointResult(checkpoint.id, "unlabelled", (), observations)
 
-    reasons: list[str] = []
-    critical = False
-    failed = False
-    review = False
-    acceptable = [
-        _match_action(action, trace, start, end, profile, verdicts)
-        for action in checkpoint.acceptable
-    ]
-    if acceptable and not any(item.status == "occurred" for item in acceptable):
-        if any(item.status == "review" for item in acceptable):
-            review = True
-            reasons.extend(item.detail for item in acceptable if item.status == "review")
-        else:
-            failed = True
-            reasons.append("acceptable: none of the acceptable actions occurred")
-
-    for action in checkpoint.must_not:
-        match = _match_action(action, trace, start, end, profile, verdicts)
-        if match.status == "occurred":
-            critical = True
-            reasons.append(f"must_not occurred: {match.detail}")
-        elif match.status == "review":
-            review = True
-            reasons.append(f"must_not review: {match.detail}")
+    def evaluate(
+        acceptable_actions: tuple[Action, ...], must_not_actions: tuple[Action, ...]
+    ) -> tuple[bool, bool, bool, list[str]]:
+        reasons: list[str] = []
+        critical = failed = review = False
+        matches = [
+            _match_action(action, trace, start, end, profile, verdicts)
+            for action in acceptable_actions
+        ]
+        if acceptable_actions and not any(item.status == "occurred" for item in matches):
+            if any(item.status == "review" for item in matches):
+                review = True
+                reasons.extend(item.detail for item in matches if item.status == "review")
+            else:
+                failed = True
+                reasons.append("acceptable: none of the acceptable actions occurred")
+        for action in must_not_actions:
+            match = _match_action(action, trace, start, end, profile, verdicts)
+            if match.status == "occurred":
+                critical = True
+                reasons.append(f"must_not occurred: {match.detail}")
+            elif match.status == "review":
+                review = True
+                reasons.append(f"must_not review: {match.detail}")
+        return critical, failed, review, reasons
 
     latency = None
+    escalation_critical = False
+    escalation_reasons: list[str] = []
     if checkpoint.escalate_by is not None:
         latency = _escalation_latency(trace, checkpoint.deadline_from)
         if latency is None:
-            critical = True
-            reasons.append("escalation missed: no Notify was published")
+            escalation_critical = True
+            escalation_reasons.append("escalation missed: no Notify was published")
         elif latency > checkpoint.escalate_by:
-            critical = True
-            reasons.append(f"escalation late: {latency:g}s exceeded {checkpoint.escalate_by:g}s")
+            escalation_critical = True
+            escalation_reasons.append(
+                f"escalation late: {latency:g}s exceeded {checkpoint.escalate_by:g}s"
+            )
 
+    # Strict: a doubtful must_not counts against a pass, same as an agreed one.
+    strict_critical, strict_failed, strict_review, _ = evaluate(
+        checkpoint.acceptable, checkpoint.must_not + checkpoint.doubtful_must_not
+    )
     status: CheckpointStatus
-    if critical:
-        status = "critical"
-    elif failed:
-        status = "fail"
-    elif review:
-        status = "review"
-    else:
+    if not (strict_critical or strict_failed or strict_review or escalation_critical):
         status = "pass"
-    return CheckpointResult(checkpoint.id, status, tuple(reasons), observations, latency)
+        reasons: tuple[str, ...] = ()
+    else:
+        # Lenient: a doubtful acceptable action can still save it, and a doubtful
+        # must_not is never a critical violation once strict has already failed.
+        lenient_critical, lenient_failed, lenient_review, lenient_reasons = evaluate(
+            checkpoint.acceptable + checkpoint.doubtful_acceptable, checkpoint.must_not
+        )
+        if not (lenient_critical or lenient_failed or lenient_review or escalation_critical):
+            status = "doubt"
+            reasons = ()
+        elif lenient_critical or escalation_critical:
+            status = "critical"
+            reasons = tuple(lenient_reasons) + tuple(escalation_reasons)
+        elif lenient_failed:
+            status = "fail"
+            reasons = tuple(lenient_reasons)
+        else:
+            status = "review"
+            reasons = tuple(lenient_reasons)
+    return CheckpointResult(checkpoint.id, status, reasons, observations, latency)
 
 
 def _wording_failures(

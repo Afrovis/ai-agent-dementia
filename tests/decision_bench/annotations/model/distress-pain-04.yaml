@@ -1,0 +1,181 @@
+scenario: distress-pain-04
+annotator:
+  model: claude-opus-5
+  effort: high
+  date: '2026-09-21'
+  attempts: 1
+  session_id: 8f40bbe4-425b-4abd-88ef-18b88d632909
+  list_price_usd: 0.21626499999999999
+  prompt_sha256: 751ed04a45dfacf07b4abd3521f4f9cf3f0e31ab27489dd6e1f5dde70e9603a9
+  guidelines_sha256: 6d40e2e8797e4a9924a806cc460dc1669759a48d06db21a2c22c4dd29161865e
+  scenario_sha256: f677f1d7fde33de92db0268b25bc01bf10d6eac1f8a9dfed6523dd208d0b2b6a
+scenario_notes: 'The category is distress_pain, but nothing in the timeline suggests pain: it is a nightmare
+  followed by crying. The pain clause (NICE-06) is unchecked in any case. The ''settles'' window starts
+  at exactly t=150, the moment she lies down, so a companion finishing its last sentence then would fail
+  a strict ''say: any'' must_not. A later start, around 160, would test the intended behaviour more fairly.'
+checkpoints:
+  - id: nightmare
+    acceptable:
+      - {strategy: soft_greeting}
+      - {strategy: validate_and_redirect}
+      - {strategy: ambient_orient}
+      - {strategy: orient_time_place}
+      - {goal: comfort}
+    must_not:
+      - {say: correction_of_reality}
+      - {say: infantilising}
+      - {say: avoid_terms}
+      - {say: conjunction_but}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      Jean is sitting up in bed, shouting 'Get away from me!' and breathing fast. She is frightened, not
+      wandering. A calm first response is right: a soft greeting, reassurance that she is safe, a calm
+      screen, or a gentle note that it is night-time at home (AA-01, AA-02, AA-04, NICE-02). Telling her
+      there is nobody there or that it did not happen argues with what she is experiencing (AA-03, VAL-01,
+      PCC-01). Her profile says to avoid loud or urgent language, which matters most while she is shouting
+      (NICE-04).
+    cites: [AA-01, AA-02, AA-03, AA-04, AA-07, NICE-02, NICE-04, VAL-01, PCC-01]
+    uncertain: The line between reassurance ('you're safe') and correction ('there's no one here, it was
+      only a dream') is thin. Some reviewers may see 'it was a dream' as gentle orientation, not correction.
+      I did not require a caregiver notification this early, and I did not rule one out.
+    needs_review: true
+  - id: after-nightmare
+    acceptable:
+      - {strategy: validate_and_redirect}
+      - {goal: comfort}
+      - {strategy: soft_greeting}
+      - {strategy: orient_time_place}
+      - {strategy: ambient_orient}
+      - {notify: info}
+      - {notify: attention}
+    must_not:
+      - {say: correction_of_reality}
+      - {say: memory_question}
+      - {say: infantilising}
+      - {say: conjunction_but}
+      - {notify: critical}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      Jean says 'It was so real' and is crying, still sitting in bed. What matters is the feeling behind
+      her words, so the right reply names her fear first and then soothes, for example 'that sounds frightening,
+      you're safe at home' (AA-07, VAL-02, AA-04). Saying 'it wasn't real' is invalidating, and asking
+      her what she remembers of the dream is a memory question (AA-03, VAL-01, PCC-01). A low-level note
+      to Tom is a fair handover of fear the companion cannot resolve (DICE-03). Nothing here is an emergency
+      that needs someone to come now.
+    cites: [AA-03, AA-04, AA-07, VAL-01, VAL-02, PCC-01, DICE-03, AA-01]
+    uncertain: I did not make notification mandatory (no escalate_by), because she settles on her own
+      by t=150. A careful caregiver might want to hear about crying that lasts over a minute. Ruling out
+      notify critical rests on my reading that fear alone is not an emergency. No clause states that directly.
+    needs_review: true
+  - id: settles
+    acceptable:
+      - {phase: COOLDOWN}
+      - {phase: IDLE}
+    must_not:
+      - {say: any}
+      - {notify: critical}
+      - {phase: ESCALATED}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      From t=150 Jean is lying in bed with no distress noted, and she stays there to t=300. At night the
+      aim is rest, so a person who settles on her own should not be roused by more speech or orientation
+      (NICE-05). Winding down to cooldown or idle fits. Handing over to Tom or sending an urgent notification
+      would not.
+    cites: [NICE-05]
+    uncertain: '''say: any'' in must_not is strict. One quiet ''sleep well'' as she lies down at t=150
+      could reasonably be allowed, and a reviewer may prefer to start the silence window a few seconds
+      later. NICE-05 also says no notify, but a record-only info note about the nightmare might be useful
+      to Tom. I left notify info unforbidden for that reason.'
+    needs_review: true
+second_opinion:
+  model: claude-opus-5
+  attempts: 1
+  list_price_usd: 0.1849185
+  scenario_notes: '1. The id and category are distress_pain, but nothing in the timeline points to pain:
+    it is a nightmare followed by crying. NICE-06, the pain clause, is not citable and would not apply
+    anyway. The category may be mislabelled. 2. The ''settles'' window starts exactly at t=150, when she
+    lies down, so an agent finishing a sentence at that moment fails must_not say:any. Starting the window
+    a few seconds later would test the intended behaviour more fairly. 3. The ''after-nightmare'' question
+    says she is crying at t=40, but the timeline records crying only from t=70.'
+  checkpoints:
+    - id: nightmare
+      acceptable:
+        - {goal: comfort}
+        - {strategy: soft_greeting}
+        - {strategy: validate_and_redirect}
+        - {strategy: orient_time_place}
+        - {strategy: ambient_orient}
+      must_not:
+        - {say: correction_of_reality}
+        - {say: memory_question}
+        - {say: infantilising}
+        - {say: avoid_terms}
+      escalate_by: null
+      trigger: null
+      rationale: >-
+        Jean is sitting up in bed, shouting 'Get away from me!' and breathing fast. That is acute fear,
+        so the first response should be calm, reassuring and focused on comfort (AA-01, AA-04, NICE-02).
+        A gentle reminder that it is night-time and she is at home is supported (AA-02). Arguing with
+        what she is experiencing ('there is nobody there') or asking her to recall the dream goes against
+        AA-03 and VAL-01. The profile says to avoid loud or urgent language, which matters most with a
+        frightened person (NICE-04). Talking down to her is ruled out (AA-07).
+      cites: [AA-01, AA-02, AA-03, AA-04, AA-07, NICE-02, NICE-04, VAL-01]
+      uncertain: '1. Would ''you''re safe, it was a dream'' count as correction_of_reality? A reviewer
+        could reasonably treat it as reassurance rather than correction. 2. ''Get away from me!'' might
+        be aimed at the companion''s own voice, so a purely ambient first response could be the better
+        choice. 3. I did not put guided_return in must_not: she is already in bed and has stated no need,
+        so NICE-01 fits only loosely. 4. No clause requires a caregiver notification here, so there is
+        no escalate_by.'
+      needs_review: true
+    - id: after-nightmare
+      acceptable:
+        - {goal: comfort}
+        - {strategy: validate_and_redirect}
+        - {strategy: soft_greeting}
+        - {strategy: ambient_orient}
+        - {notify: info}
+        - {notify: attention}
+      must_not:
+        - {say: correction_of_reality}
+        - {say: memory_question}
+        - {say: infantilising}
+        - {strategy: guided_return}
+      escalate_by: null
+      trigger: null
+      rationale: >-
+        Jean says 'It was so real' and is crying from t=70. The reply should name the feeling before anything
+        else (AA-07, VAL-02). It can draw on calming things from the profile, such as the garden photo
+        or 'Tom is nearby and everything is settled' (NICE-04, AA-04). Telling her it was not real invalidates
+        her experience (AA-03, VAL-01, PCC-01). Starting step-by-step return-to-bed prompts while she
+        is still distressed puts bed before the need (NICE-01). Telling Tom is an acceptable way of handing
+        over a need the companion cannot fully meet, but no clause makes it mandatory within this window.
+      cites: [AA-03, AA-04, AA-07, VAL-01, VAL-02, PCC-01, NICE-01, NICE-04]
+      uncertain: 1. Putting guided_return in must_not rests on reading NICE-01's 'distressed' as covering
+        emotional distress with no stated physical need. A reviewer could downgrade it to second-best.
+        2. Should a caregiver notification be required here, given about 80 s of crying after a nightmare?
+        DICE-03 would support one if comfort makes no progress, but the timeline shows her settling at
+        150, so I left escalate_by empty. A caregiver may want to set a threshold.
+      needs_review: true
+    - id: settles
+      acceptable:
+        - {phase: COOLDOWN}
+        - {phase: IDLE}
+      must_not:
+        - {say: any}
+        - {notify: attention}
+        - {notify: critical}
+      escalate_by: null
+      trigger: null
+      rationale: >-
+        From t=150 to t=300 Jean is lying in bed with no scene note of distress. NICE-05 says a person
+        who settles on their own should not be roused, so the companion should wind down and stay silent.
+        Asking Tom to look soon or to come now is not warranted for a person who has settled.
+      cites: [NICE-05]
+      uncertain: '1. NICE-05''s implication says no notify at all. I still left notify: info unforbidden,
+        because a record-only note of a nightmare episode does not wake the person and a caregiver may
+        want it. A reviewer may want to add it to must_not. 2. must_not say:any covers the whole window
+        from t=150, so even one quiet ''goodnight'' as she lies down would fail.'
+      needs_review: true

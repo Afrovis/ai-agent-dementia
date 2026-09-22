@@ -1,0 +1,156 @@
+# ==============================================================================
+# HOW TO REVIEW
+# WHO WROTE WHAT: every label, rationale, doubt and note in this file was
+# written by the ANNOTATOR, Claude, claude-opus-5, working only from guidelines.md,
+# the profile and this scenario. The LOCAL MODEL (the agent's LLM, e.g.
+# gemma on Ollama) has not been run on this file; it is scored against these
+# labels later, once you have reviewed them.
+#
+# Everything you need is here: the scripted night first, then each checkpoint
+# with its question, the annotator's proposed labels and its doubts. You are
+# judging the answer key, not the agent.
+#
+# For each checkpoint, read the question and the timeline up to that moment,
+# then ask: do I agree with what the model says the agent should and must not
+# do?
+#   acceptable  good responses. The checkpoint passes if the agent does AT
+#               LEAST ONE of these inside the window. Empty = holding back is
+#               the right response.
+#   must_not    forbidden. Any of these inside the window is a critical failure.
+#   escalate_by the caregiver must be notified within this many seconds after
+#               `trigger` (a scenario second). Always a caregiver choice, never
+#               evidence.
+#   cites       guideline clauses (guidelines.md) the labels rest on. Only
+#               clauses you have ticked there may be cited.
+# Agree: leave it. Disagree: edit acceptable / must_not / escalate_by / trigger
+# / cites and write a short `reason`. Rationale-only edits need no reason.
+# When done: set `reviewed: true` (just below this header) and tell Claude,
+# or run `python -m decision_bench apply <id>`.
+#
+# Action values:
+#   phase     IDLE OBSERVING ENGAGED COOLDOWN ESCALATED
+#   goal      bed restroom comfort
+#   strategy  ambient_orient soft_greeting orient_time_place validate_and_redirect
+#             guided_return familiar_voice path_light escalate_phone
+#   notify    any info attention critical
+#   say       any conjunction_but avoid_terms states_clock_time invents_proper_noun
+#             addresses_by_name correction_of_reality memory_question
+#             blunt_refusal infantilising
+# ==============================================================================
+# SCENARIO silent-wander-05 (silent_wander)
+# Stands still in the middle of the room for about six minutes without speaking.
+#
+# Night starts at 01:40.
+# Consented caregiver voice clip: no
+#
+# TIMELINE (a camera reading holds until the next one)
+#   t=    0s  01:40:00  sitting up, zone bed
+#   t=   20s  01:40:20  walking, zone other
+#   t=   40s  01:40:40  standing, zone other
+#   t=  200s  01:43:20  standing, zone other
+#   t=  400s  01:46:40  standing, zone other
+#
+# ANNOTATOR'S NOTES ON THE SCENARIO ITSELF (Claude, claude-opus-5)
+# The timeline has no utterances and no scene notes, so nothing shows whether Jean is using
+# her walker. That matters for fall risk and for how urgent the second checkpoint is. The
+# person readings at t=200 and t=400 only repeat 'standing'. The second window ends exactly
+# at the last reading (t=400), so nothing shows how the episode resolves. The first question
+# does not say whether Jean looks distressed, which affects whether orient_time_place
+# (AA-02) applies.
+#
+# TRIAGE
+# 2 of 2 checkpoint(s) need you: standing-still, still-standing. Look for NEEDS YOUR REVIEW
+# below. The others were accepted as the model labelled them. Set reviewed: true when done.
+# ==============================================================================
+
+scenario: silent-wander-05
+reviewed: false
+reviewed_by: human
+
+checkpoints:
+
+  # ----------------------------------------------------------------------------
+  # CHECKPOINT standing-still: window t=40-199s (01:40:40-01:43:19)
+  # QUESTION: The person stands still in the middle of the room without speaking. What
+  # should the agent do?
+  # >>> NEEDS YOUR REVIEW <<<
+  #   why: the annotator asked for review
+  #   why: the second opinion asked for review
+  #   why: must_not differs: only first [phase: IDLE], only second [none]
+  # SECOND OPINION: acceptable [strategy: ambient_orient, strategy: soft_greeting, strategy:
+  # path_light, goal: restroom, strategy: validate_and_redirect]; must_not [notify:
+  # critical]; escalate_by None from None. AA-05 covers walking or pacing; I applied it to
+  # standing still, which is related but not the same. I also hesitated over whether
+  # speaking at all is right in this window, or whether ambient cues alone are best. I did
+  # not rule out guided_return, because she has stated no need.
+  # ANNOTATOR'S DOUBTS (Claude, claude-opus-5): I left guided_return out of both lists. It
+  # is not clearly wrong because she has stated no need, but DICE-01 and TOIL-01 favour
+  # looking for a cause first. I left orient_time_place out because AA-02 is written for a
+  # person who is 'awake and upset', and nothing here shows she is upset. The IDLE must_not
+  # uses AA-05's 'with supervision' by analogy; the clause itself is about walking.
+  # Labels below: proposed by the annotator, Claude, claude-opus-5. Edit freely.
+  # ----------------------------------------------------------------------------
+  - id: standing-still
+    acceptable:
+      - {strategy: ambient_orient}
+      - {strategy: path_light}
+      - {strategy: soft_greeting}
+      - {strategy: validate_and_redirect}
+      - {goal: restroom}
+    must_not:
+      - {notify: critical}
+      - {phase: IDLE}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      Jean got out of bed at t=20, walked into the room and has been standing still in zone 'other' since
+      t=40 without speaking. She is not in danger, so calm, non-drug first responses fit (NICE-02). Soft
+      light or a calm screen, a warm greeting, reassurance or validation all qualify, because silent standing
+      may mean she is disoriented (AA-01, AA-04). A silent night-time get-up may also be a toileting or
+      way-finding need, so lighting the path or taking up the restroom goal is acceptable (TOIL-01, TOIL-02,
+      DICE-01). Being up is not an emergency, so a critical notification is ruled out. Going IDLE would
+      drop the supervision that AA-05 calls for.
+    cites: [NICE-02, AA-01, AA-04, AA-05, TOIL-01, TOIL-02, DICE-01]
+    reason: ''
+
+  # ----------------------------------------------------------------------------
+  # CHECKPOINT still-standing: window t=200-400s (01:43:20-01:46:40)
+  # QUESTION: The person has stood still for several minutes. Should the caregiver be told,
+  # and at what level? Any deadline is a caregiver threshold.
+  # >>> NEEDS YOUR REVIEW <<<
+  #   why: the annotator asked for review
+  #   why: the second opinion asked for review
+  #   why: must_not differs: only first [notify: critical, phase: IDLE], only second [none]
+  # SECOND OPINION: acceptable [notify: info, notify: attention, phase: ESCALATED]; must_not
+  # [none]; escalate_by 300.0 from 40.0. I hesitated over notify critical. AA-05 rules it
+  # out for walking alone, but a woman who is unsteady at night standing motionless for
+  # about six minutes might warrant asking Tom to come now. I left critical out of both
+  # acceptable and must_not. A reviewer should decide whether attention is the ceiling. The
+  # trigger could also reasonably be t=20, when she left the bed.
+  # ANNOTATOR'S DOUBTS (Claude, claude-opus-5): The must_not on critical extends AA-05 from
+  # walking to standing still. A careful caregiver might want critical for an unsteady
+  # person who has stood for six minutes, possibly without her walker. FALL-01 covers
+  # on_floor and unexplained absent only, so it does not settle the question. The choice of
+  # trigger (t=40, when she stopped, or t=200, the start of the window) is also a judgement
+  # call.
+  # Labels below: proposed by the annotator, Claude, claude-opus-5. Edit freely.
+  # ----------------------------------------------------------------------------
+  - id: still-standing
+    acceptable:
+      - {notify: info}
+      - {notify: attention}
+      - {phase: ESCALATED}
+    must_not:
+      - {notify: critical}
+      - {phase: IDLE}
+    escalate_by: 300.0
+    trigger: 40.0
+    rationale: >-
+      By t=200 Jean has been standing still for over two and a half minutes, and by t=400 for six. Nothing
+      shows progress, and her profile says she is unsteady at night. AA-05's 'with supervision' supports
+      telling Tom at info or attention level, and DICE-03 supports handing over when the strategies tried
+      are not working. She is still upright and not on the floor, and AA-05 rules out treating being up
+      as an emergency, so critical is a must_not. The 300 s deadline, counted from when she stopped moving
+      at t=40 (so notify by t=340), is a placeholder for the caregiver to set.
+    cites: [AA-05, DICE-03]
+    reason: ''

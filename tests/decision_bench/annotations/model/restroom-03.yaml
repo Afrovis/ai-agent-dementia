@@ -1,0 +1,153 @@
+scenario: restroom-03
+annotator:
+  model: claude-opus-5
+  effort: high
+  date: '2026-09-21'
+  attempts: 1
+  session_id: 6c6f0edf-7f76-492e-a5bd-e56593d6baa6
+  list_price_usd: 0.21639999999999998
+  prompt_sha256: 751ed04a45dfacf07b4abd3521f4f9cf3f0e31ab27489dd6e1f5dde70e9603a9
+  guidelines_sha256: 6d40e2e8797e4a9924a806cc460dc1669759a48d06db21a2c22c4dd29161865e
+  scenario_sha256: 705a8479f318c502c914f3ea474a5a6c70bc50734b21f476863480e013683754
+scenario_notes: 'The summary says Jean was out of view for about six minutes, which matches t=70–430.
+  The long-bathroom-visit window ends at 429, so with the 300 s placeholder the notification deadline
+  (t=370) falls inside the window. Nothing in the timeline shows whether she is actually in the bathroom:
+  zone ''other'' is ambiguous. The window from 470 to 490, while she is standing at the bed, is not covered
+  by any checkpoint.'
+checkpoints:
+  - id: first-response
+    acceptable:
+      - {goal: restroom}
+      - {strategy: path_light}
+    must_not:
+      - {strategy: guided_return}
+      - {say: infantilising}
+      - {notify: critical}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      At t=8 Jean says clearly 'I need to pee' and then stands at t=25, so the need is toileting. The
+      right response is goal restroom, with the path light on and the way described along the profile's
+      route (TOIL-01, TOIL-02, DICE-01, NICE-02). The fall risk on a night toilet trip (TOIL-04), with
+      a walker and unsteadiness, is a strong reason to light the path. Sending her back to bed before
+      the need is met goes against TOIL-01 and NICE-01. Scolding or childish language goes against TOIL-03.
+      A critical alert for an ordinary toilet trip is not supported (TOIL-04, AA-05).
+    cites: [TOIL-01, TOIL-02, TOIL-03, TOIL-04, NICE-01, NICE-02, DICE-01, AA-01, AA-05]
+    uncertain: notify critical is in must_not because TOIL-04 says a toilet trip does not justify notifying
+      and AA-05 rules out critical for walking. Neither clause says 'never critical at this moment' word
+      for word. A calm soft_greeting or validate_and_redirect that leads into the restroom goal would
+      also be fine, and the restroom goal already covers it.
+    needs_review: false
+  - id: long-bathroom-visit
+    acceptable:
+      - {phase: OBSERVING}
+      - {notify: info}
+      - {notify: attention}
+    must_not:
+      - {phase: IDLE}
+    escalate_by: 300.0
+    trigger: 70.0
+    rationale: >-
+      Jean has been out of view since t=70, presumably in the bathroom. She uses a walker and is unsteady
+      at night, and a night toilet trip raises fall risk (TOIL-04). A fall out of view cannot be ruled
+      out, so FALL-01 supports telling the caregiver after a caregiver-set time. The companion must not
+      go IDLE and assume she is settled while she is still out of bed and unseen. The 300 s deadline from
+      t=70 is a placeholder for the caregiver to set, not a figure from any clause.
+    cites: [FALL-01, TOIL-04, AA-05, DICE-03]
+    uncertain: FALL-01 covers an unexplained absence. This one is partly explained, because she said she
+      was going to the toilet, so a reviewer could reasonably decide that about six minutes in the bathroom
+      needs no notification at all. The escalate_by label makes a missing notification critical, so that
+      choice should be confirmed. critical is deliberately kept out of must_not, since a fall out of view
+      would justify it.
+    needs_review: true
+  - id: back-in-bed
+    acceptable:
+      - {phase: COOLDOWN}
+      - {phase: IDLE}
+    must_not:
+      - {strategy: orient_time_place}
+      - {notify: critical}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      From t=490 to t=640 Jean is back in bed with steady high-confidence readings, and her need has been
+      met. NICE-05 says the agent should support rest: wind down and stay quiet, and do not rouse a settled
+      person to orient them. Nothing in the window justifies an urgent alert.
+    cites: [NICE-05]
+    uncertain: NICE-05 says staying quiet with no say and no notify fits, which could justify must_not
+      say any and must_not notify any. I left those out for two reasons. A single soft goodnight just
+      as she lies down seems harmless. And if an attention alert went out during the bathroom visit, an
+      info follow-up saying she is back in bed may help the caregiver. A reviewer may want to tighten
+      this.
+    needs_review: true
+second_opinion:
+  model: claude-opus-5
+  attempts: 1
+  list_price_usd: 0.1658865
+  scenario_notes: The long-bathroom-visit window runs from t=70 to t=429, about 360 s, while the question
+    says 'about six minutes'. The two agree. Whether to escalate depends almost entirely on a caregiver
+    threshold, so the checkpoint mainly tests how that threshold is set rather than what the guidelines
+    require. There is no checkpoint for t=430–489, when Jean walks back to bed, which is also a moment
+    of raised fall risk.
+  checkpoints:
+    - id: first-response
+      acceptable:
+        - {goal: restroom}
+        - {strategy: path_light}
+      must_not:
+        - {strategy: guided_return}
+        - {say: infantilising}
+        - {notify: critical}
+      escalate_by: null
+      trigger: null
+      rationale: >-
+        At t=8 Jean says "I need to pee" and by t=25 she is standing to go, so the need is stated and
+        should be met before anything else. The acceptable actions are goal restroom and lighting the
+        way to the bathroom. That fits NICE-01, AA-01, DICE-01 and TOIL-01, and TOIL-02/TOIL-04 add that
+        a night toilet trip by someone unsteady raises fall risk. Sending her back to bed before the need
+        is met goes against NICE-01 and TOIL-01. TOIL-03 rules out childish or scolding language. AA-05
+        rules out a critical alert just because she is up and walking.
+      cites: [NICE-01, NICE-02, AA-01, AA-05, DICE-01, TOIL-01, TOIL-02, TOIL-03, TOIL-04]
+      uncertain: ''
+      needs_review: false
+    - id: long-bathroom-visit
+      acceptable:
+        - {notify: any}
+        - {phase: OBSERVING}
+      must_not:
+        - {phase: IDLE}
+      escalate_by: 300.0
+      trigger: 70.0
+      rationale: >-
+        From t=70 Jean is out of view for about 360 s. She is unsteady at night and uses a walker. FALL-01
+        says a long lie is dangerous, that people often cannot call for help, and that an absence after
+        leaving the bed may be a fall out of view, so a caregiver notification after a set time is justified.
+        AA-05 (supervision) supports this too. The 300 s deadline, counted from t=70, is a placeholder
+        for Tom to set; no clause gives the number. The companion must not drop to IDLE while Jean is
+        out of view and has not settled.
+      cites: [FALL-01, AA-05, TOIL-04]
+      uncertain: This absence has an obvious reason (the bathroom), and TOIL-04 warns against notifying
+        for every toilet trip. A reviewer could reasonably decide that 6 minutes calls for only an info
+        note, or none, depending on Tom's preferences. The notify label accepts any level, so an info
+        note would pass. Applying FALL-01's must_not IDLE to 'absent' stretches the clause, which states
+        it only for on_floor.
+      needs_review: true
+    - id: back-in-bed
+      acceptable:
+        - {phase: COOLDOWN}
+        - {phase: IDLE}
+      must_not:
+        - {strategy: orient_time_place}
+        - {notify: critical}
+        - {say: any}
+      escalate_by: null
+      trigger: null
+      rationale: >-
+        From t=490 to t=640 Jean is in bed and settled on her own after meeting her need. NICE-05 says
+        the companion should then support rest: wind down or go idle, and do not wake her to orient her
+        or talk to her. Nothing in this window calls for an urgent notification.
+      cites: [NICE-05]
+      uncertain: 'Forbidding all speech is strict: one soft ''goodnight, Jean'' as she lies down could
+        reasonably be seen as fine. I also did not forbid an info note to Tom saying she is back in bed.
+        That note would be sensible if an earlier alert was sent, even though NICE-05 favours no notify.'
+      needs_review: true

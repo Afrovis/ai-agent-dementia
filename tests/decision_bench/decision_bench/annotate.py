@@ -12,6 +12,7 @@ import tempfile
 import textwrap
 from collections import Counter
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -31,7 +32,8 @@ from decision_bench.schema import (
     load_default_profile,
     load_scenarios,
 )
-from decision_bench.triage import scenario_flags
+from decision_bench.triage import scenario_blocked, scenario_flags
+from decision_bench.vote import Vote, vote_scenario
 
 ANNOTATOR_PROMPT_PATH = Path(__file__).with_name("annotator_prompt.md")
 ANNOTATIONS_DIR = PACKAGE_ROOT / "annotations"
@@ -179,7 +181,13 @@ def validate_annotation(
         if not isinstance(raw, dict) or raw.get("id") not in source:
             continue
         checkpoint_id = str(raw["id"])
-        if not raw.get("acceptable") and not raw.get("must_not") and raw.get("escalate_by") is None:
+        if (
+            not raw.get("acceptable")
+            and not raw.get("must_not")
+            and not raw.get("doubtful_acceptable")
+            and not raw.get("doubtful_must_not")
+            and raw.get("escalate_by") is None
+        ):
             problems.append(f"{checkpoint_id}: needs at least one label")
         if raw.get("trigger") is not None and raw.get("escalate_by") is None:
             problems.append(f"{checkpoint_id}: trigger requires escalate_by")
@@ -197,6 +205,8 @@ def validate_annotation(
                     "window": source[checkpoint_id].window,
                     "acceptable": raw.get("acceptable", []),
                     "must_not": raw.get("must_not", []),
+                    "doubtful_acceptable": raw.get("doubtful_acceptable", []),
+                    "doubtful_must_not": raw.get("doubtful_must_not", []),
                     "escalate_by": raw.get("escalate_by"),
                     "trigger": raw.get("trigger"),
                     "threshold_source": "caregiver" if raw.get("escalate_by") is not None else None,
@@ -421,8 +431,51 @@ def _checkpoint_output(raw: dict[str, object], checkpoint: Checkpoint) -> dict[s
     }
 
 
-def _dump(value: object) -> str:
+def dump_yaml(value: object) -> str:
     return yaml.dump(value, Dumper=_Dumper, sort_keys=False, allow_unicode=True, width=100)
+
+
+def _checkpoints_list(run: dict[str, object]) -> list[dict[str, object]]:
+    output = run["structured_output"]
+    assert isinstance(output, dict)
+    raw = {item["id"]: item for item in output["checkpoints"]}
+    return [_checkpoint_output(raw[item.id], item) for item in run["checkpoints"]]
+
+
+def opinion_doc(run: dict[str, object]) -> dict[str, object]:
+    """The `second_opinion`/`third_opinion` shape stored in the model file."""
+    output = run["structured_output"]
+    assert isinstance(output, dict)
+    return {
+        "model": run["model"],
+        "attempts": run["attempts"],
+        "list_price_usd": run.get("total_cost_usd", 0),
+        "scenario_notes": output.get("scenario_notes", ""),
+        "checkpoints": _checkpoints_list(run),
+    }
+
+
+def probe_doc(result: dict[str, object], second: dict[str, object] | None) -> dict[str, object]:
+    """A minimal in-memory model document, just enough for `triage` to check
+    whether the two runs agree, without writing anything to disk."""
+    doc: dict[str, object] = {"checkpoints": _checkpoints_list(result)}
+    if second is not None:
+        doc["second_opinion"] = {"checkpoints": _checkpoints_list(second)}
+    return doc
+
+
+def status_flags(
+    model_doc: dict[str, object], *, votes: dict[str, Vote] | None = None
+) -> dict[str, list[str]]:
+    """Checkpoints that still need a human: `triage`'s disagreements when there is
+    no third run, or a vote's `no_majority` reasons once one has voted."""
+    if model_doc.get("third_opinion") is not None:
+        if votes is None:
+            votes = vote_scenario(model_doc)
+        return {
+            checkpoint_id: vote.no_majority for checkpoint_id, vote in votes.items() if vote.no_majority
+        }
+    return scenario_flags(model_doc)
 
 
 def write_annotation_files(
@@ -434,11 +487,16 @@ def write_annotation_files(
     guidelines_text: str,
     force: bool,
     second: dict[str, object] | None = None,
+    third: dict[str, object] | None = None,
 ) -> tuple[Path, Path]:
     """Write the durable model draft and the review copy.
 
     `second` is an independent second annotator run; its labels are stored
-    for triage and shown to the reviewer, never applied.
+    for triage and shown to the reviewer, never applied. `third` is a further
+    independent run made only when the first two disagreed on content
+    (`triage.checkpoint_flags`); when present, the review file votes the
+    three runs per checkpoint instead of showing the first run's labels
+    directly (see `vote.py`).
     """
     model_path = annotations_dir / "model" / f"{scenario.id}.yaml"
     review_path = annotations_dir / "review" / f"{scenario.id}.yaml"
@@ -446,8 +504,6 @@ def write_annotation_files(
         raise AnnotatorError(f"refusing to overwrite existing annotation: {model_path}")
     output = result["structured_output"]
     assert isinstance(output, dict)
-    raw_by_id = {item["id"]: item for item in output["checkpoints"]}
-    checkpoints = result["checkpoints"]
     model_doc = {
         "scenario": scenario.id,
         "annotator": {
@@ -462,24 +518,15 @@ def write_annotation_files(
             "scenario_sha256": hashlib.sha256(scenario_section(scenario).encode()).hexdigest(),
         },
         "scenario_notes": output.get("scenario_notes", ""),
-        "checkpoints": [_checkpoint_output(raw_by_id[item.id], item) for item in checkpoints],
+        "checkpoints": _checkpoints_list(result),
     }
     if second is not None:
-        second_output = second["structured_output"]
-        assert isinstance(second_output, dict)
-        second_raw = {item["id"]: item for item in second_output["checkpoints"]}
-        model_doc["second_opinion"] = {
-            "model": second["model"],
-            "attempts": second["attempts"],
-            "list_price_usd": second.get("total_cost_usd", 0),
-            "scenario_notes": second_output.get("scenario_notes", ""),
-            "checkpoints": [
-                _checkpoint_output(second_raw[item.id], item) for item in second["checkpoints"]
-            ],
-        }
+        model_doc["second_opinion"] = opinion_doc(second)
+    if third is not None:
+        model_doc["third_opinion"] = opinion_doc(third)
     model_path.parent.mkdir(parents=True, exist_ok=True)
     review_path.parent.mkdir(parents=True, exist_ok=True)
-    model_path.write_text(_dump(model_doc), encoding="utf-8")
+    model_path.write_text(dump_yaml(model_doc), encoding="utf-8")
 
     if review_path.exists() and not force:
         return model_path, review_path
@@ -576,9 +623,26 @@ def review_text(scenario: Scenario, model_doc: dict[str, object]) -> str:
     if notes:
         lines += ["#", f"# ANNOTATOR'S NOTES ON THE SCENARIO ITSELF ({annotator_name})"]
         lines += _comment(notes, "")
-    flags = scenario_flags(model_doc)
+
+    votes = vote_scenario(model_doc) if model_doc.get("third_opinion") is not None else None
+    flags = status_flags(model_doc, votes=votes)
     lines += ["#", "# TRIAGE"]
-    if flags:
+    if votes is not None:
+        if flags:
+            lines += _comment(
+                "The two independent runs disagreed, so a third run voted. "
+                f"{len(flags)} of {len(votes)} checkpoint(s) still need you: "
+                f"{', '.join(flags)}. Look for NEEDS YOUR REVIEW below; the vote decided "
+                "the rest. Set reviewed: true when done."
+            )
+        else:
+            lines += _comment(
+                "The two independent runs disagreed, so a third run voted. Every checkpoint "
+                "reached a majority (a lone vote is recorded as doubtful, not dropped), so "
+                "these labels were accepted as voted (reviewed_by: model). Edit and set "
+                "reviewed_by: human to overrule."
+            )
+    elif flags:
         lines += _comment(
             f"{len(flags)} of {len(model_doc['checkpoints'])} checkpoint(s) need you: "
             f"{', '.join(flags)}. Look for NEEDS YOUR REVIEW below. The others were "
@@ -586,9 +650,9 @@ def review_text(scenario: Scenario, model_doc: dict[str, object]) -> str:
         )
     else:
         lines += _comment(
-            "Nothing flagged: the annotator asked for no review and the second opinion "
-            "agreed, so these labels were accepted as the model labelled them "
-            "(reviewed_by: model). Edit and set reviewed_by: human to overrule."
+            "Nothing flagged: the two runs agreed on content, so these labels were "
+            "accepted as the model labelled them (reviewed_by: model). Edit and set "
+            "reviewed_by: human to overrule."
         )
     reviewed = "false" if flags else "true"
     lines += [
@@ -604,10 +668,30 @@ def review_text(scenario: Scenario, model_doc: dict[str, object]) -> str:
         str(item["id"]): item
         for item in (model_doc.get("second_opinion") or {}).get("checkpoints") or ()
     }
+    third_by_id = {
+        str(item["id"]): item
+        for item in (model_doc.get("third_opinion") or {}).get("checkpoints") or ()
+    }
+
+    def fmt_actions(actions: object) -> str:
+        return (
+            ", ".join(f"{k}: {v}" for a in actions or () for k, v in dict(a).items()) or "none"
+        )
+
+    def fmt_run(label: str, run: dict[str, object] | None) -> str:
+        if run is None:
+            return f"{label} ({annotator_name}): no checkpoint"
+        return (
+            f"{label} ({annotator_name}): acceptable [{fmt_actions(run.get('acceptable'))}]; "
+            f"must_not [{fmt_actions(run.get('must_not'))}]; escalate_by {run.get('escalate_by')} "
+            f"from {run.get('trigger')}. {run.get('uncertain') or ''}"
+        )
 
     by_id = {checkpoint.id: checkpoint for checkpoint in scenario.checkpoints}
     for item in model_doc["checkpoints"]:
         checkpoint = by_id[item["id"]]
+        second = second_by_id.get(checkpoint.id)
+        third = third_by_id.get(checkpoint.id)
         lines.append("")
         lines.append("  # " + "-" * 76)
         if checkpoint.window is not None:
@@ -624,35 +708,58 @@ def review_text(scenario: Scenario, model_doc: dict[str, object]) -> str:
             lines.append("  # >>> NEEDS YOUR REVIEW <<<")
             for reason in flags[checkpoint.id]:
                 lines += _comment(f"  why: {reason}", "  ")
-        second = second_by_id.get(checkpoint.id)
-        if second is not None and checkpoint.id in flags:
-
-            def fmt(actions: object) -> str:
-                return (
-                    ", ".join(f"{k}: {v}" for a in actions or () for k, v in dict(a).items())
-                    or "none"
-                )
-
+        if votes is not None:
+            if checkpoint.id in flags:
+                lines += _comment(fmt_run("RUN 1, the annotator", item), "  ")
+                lines += _comment(fmt_run("RUN 2, second opinion", second), "  ")
+                lines += _comment(fmt_run("RUN 3, third opinion", third), "  ")
+        elif second is not None and checkpoint.id in flags:
             lines += _comment(
-                f"SECOND OPINION: acceptable [{fmt(second.get('acceptable'))}]; must_not "
-                f"[{fmt(second.get('must_not'))}]; escalate_by {second.get('escalate_by')} "
+                f"SECOND OPINION: acceptable [{fmt_actions(second.get('acceptable'))}]; must_not "
+                f"[{fmt_actions(second.get('must_not'))}]; escalate_by {second.get('escalate_by')} "
                 f"from {second.get('trigger')}. {second.get('uncertain') or ''}",
                 "  ",
             )
         uncertain = str(item.get("uncertain") or "").strip()
         if uncertain:
             lines += _comment(f"ANNOTATOR'S DOUBTS ({annotator_name}): {uncertain}", "  ")
-        lines.append(f"  # Labels below: proposed by the annotator, {annotator_name}. Edit freely.")
-        lines.append("  # " + "-" * 76)
-        review_item = {
-            key: value for key, value in item.items() if key not in {"uncertain", "needs_review"}
-        }
+        if votes is not None:
+            vote = votes[checkpoint.id]
+            lines.append("  # Labels below: the 2-of-3 vote across all three runs. Edit freely.")
+            lines.append("  # " + "-" * 76)
+            review_item: dict[str, object] = {"id": item["id"]}
+            if vote.acceptable:
+                review_item["acceptable"] = vote.acceptable
+            if vote.must_not:
+                review_item["must_not"] = vote.must_not
+            if vote.doubtful_acceptable:
+                review_item["doubtful_acceptable"] = vote.doubtful_acceptable
+            if vote.doubtful_must_not:
+                review_item["doubtful_must_not"] = vote.doubtful_must_not
+            review_item["escalate_by"] = vote.escalate_by
+            review_item["trigger"] = vote.trigger
+            review_item["rationale"] = vote.rationale
+            review_item["cites"] = vote.cites
+            lines.append("")
+            lines.extend(_comment(f"vote: {vote.record}", "  "))
+        else:
+            lines.append(
+                f"  # Labels below: proposed by the annotator, {annotator_name}. Edit freely."
+            )
+            lines.append("  # " + "-" * 76)
+            review_item = {
+                key: value for key, value in item.items() if key not in {"uncertain", "needs_review"}
+            }
         review_item["acceptable"] = _action_list(review_item.get("acceptable"))
         review_item["must_not"] = _action_list(review_item.get("must_not"))
+        if "doubtful_acceptable" in review_item:
+            review_item["doubtful_acceptable"] = _action_list(review_item["doubtful_acceptable"])
+        if "doubtful_must_not" in review_item:
+            review_item["doubtful_must_not"] = _action_list(review_item["doubtful_must_not"])
         review_item["rationale"] = _Folded(str(review_item.get("rationale") or ""))
         review_item["cites"] = _FlowList(review_item.get("cites") or ())
         review_item["reason"] = ""
-        lines.extend("  " + line for line in _dump([review_item]).rstrip().splitlines())
+        lines.extend("  " + line for line in dump_yaml([review_item]).rstrip().splitlines())
     return "\n".join(lines) + "\n"
 
 
@@ -681,11 +788,72 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="do not apply scenarios whose labels triage accepted without a human",
     )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=1,
+        help="run the Opus calls for up to N scenarios concurrently; writes stay serial",
+    )
+    parser.add_argument(
+        "--tiebreak",
+        action="store_true",
+        help="run a third opinion (or apply directly) for scenarios that already have "
+        "two runs and are not yet reviewed",
+    )
     return parser
+
+
+def _annotate_with_tiebreak(
+    scenario: Scenario,
+    *,
+    profile: dict[str, object],
+    guidelines_text: str,
+    citable: list[str],
+    model: str,
+    effort: str,
+    no_second_opinion: bool,
+) -> tuple[dict[str, object], dict[str, object] | None, dict[str, object] | None]:
+    """Run the first (and, unless skipped, second and third) Opus calls for one
+    scenario. Pure computation, no filesystem writes, so callers can run it in
+    a thread pool and keep all writes serial."""
+    result = annotate_scenario(
+        scenario,
+        profile=profile,
+        guidelines_text=guidelines_text,
+        citable=citable,
+        model=model,
+        effort=effort,
+    )
+    second = None
+    third = None
+    if not no_second_opinion:
+        second = annotate_scenario(
+            scenario,
+            profile=profile,
+            guidelines_text=guidelines_text,
+            citable=citable,
+            model=model,
+            effort=effort,
+        )
+        doc = probe_doc(result, second)
+        if scenario_flags(doc) and not scenario_blocked(doc):
+            third = annotate_scenario(
+                scenario,
+                profile=profile,
+                guidelines_text=guidelines_text,
+                citable=citable,
+                model=model,
+                effort=effort,
+            )
+    return result, second, third
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
+    if args.tiebreak:
+        from decision_bench.tiebreak import tiebreak_main
+
+        return tiebreak_main(args)
     scenarios = load_scenarios(args.scenarios)
     if args.scenario_ids:
         wanted = set(args.scenario_ids)
@@ -728,57 +896,61 @@ def main(argv: list[str] | None = None) -> int:
         ]
         if existing:
             raise SystemExit(f"refusing to overwrite existing annotation: {existing[0]}")
-    for scenario in scenarios:
-        try:
-            result = annotate_scenario(
+    jobs = max(1, args.jobs)
+    with ThreadPoolExecutor(max_workers=jobs) as executor:
+        futures = {
+            scenario.id: executor.submit(
+                _annotate_with_tiebreak,
                 scenario,
                 profile=profile | scenario.profile,
                 guidelines_text=guidelines_text,
                 citable=citable,
                 model=args.model,
                 effort=args.effort,
+                no_second_opinion=args.no_second_opinion,
             )
-            second = None
-            if not args.no_second_opinion:
-                second = annotate_scenario(
-                    scenario,
-                    profile=profile | scenario.profile,
-                    guidelines_text=guidelines_text,
-                    citable=citable,
-                    model=args.model,
-                    effort=args.effort,
-                )
-            model_path, review_path = write_annotation_files(
-                scenario,
-                result,
-                annotations_dir=args.annotations,
-                effort=args.effort,
-                guidelines_text=guidelines_text,
-                force=args.force,
-                second=second,
-            )
-        except AnnotatorError as exc:
-            raise SystemExit(str(exc)) from exc
-        cost = float(result.get("total_cost_usd", 0))
-        if second is not None:
-            cost += float(second.get("total_cost_usd", 0))
-        total += cost
-        flags = scenario_flags(yaml.safe_load(model_path.read_text(encoding="utf-8")))
-        if flags:
-            status = f"{len(flags)} checkpoint(s) need review: {', '.join(flags)} -> {review_path}"
-        elif args.no_apply:
-            status = "accepted by triage, not applied (--no-apply)"
-        else:
-            from decision_bench.review import ReviewError, apply_scenario
-
+            for scenario in scenarios
+        }
+        for scenario in scenarios:
             try:
-                applied, _ = apply_scenario(
-                    scenario.id, annotations_dir=args.annotations, scenarios_dir=args.scenarios
+                result, second, third = futures[scenario.id].result()
+                model_path, review_path = write_annotation_files(
+                    scenario,
+                    result,
+                    annotations_dir=args.annotations,
+                    effort=args.effort,
+                    guidelines_text=guidelines_text,
+                    force=args.force,
+                    second=second,
+                    third=third,
                 )
-            except ReviewError as exc:
+            except AnnotatorError as exc:
                 raise SystemExit(str(exc)) from exc
-            status = f"accepted by triage, {applied} checkpoint(s) applied"
-        print(f"{scenario.id}: attempts={result['attempts']} {status}")
+            cost = float(result.get("total_cost_usd", 0))
+            if second is not None:
+                cost += float(second.get("total_cost_usd", 0))
+            if third is not None:
+                cost += float(third.get("total_cost_usd", 0))
+            total += cost
+            flags = status_flags(yaml.safe_load(model_path.read_text(encoding="utf-8")))
+            if flags:
+                status = (
+                    f"{len(flags)} checkpoint(s) need review: {', '.join(flags)} -> {review_path}"
+                )
+            elif args.no_apply:
+                status = "accepted by triage, not applied (--no-apply)"
+            else:
+                from decision_bench.review import ReviewError, apply_scenario
+
+                try:
+                    applied, _ = apply_scenario(
+                        scenario.id, annotations_dir=args.annotations, scenarios_dir=args.scenarios
+                    )
+                except ReviewError as exc:
+                    raise SystemExit(str(exc)) from exc
+                status = f"accepted by triage, {applied} checkpoint(s) applied"
+            third_note = ", 3rd run voted" if third is not None else ""
+            print(f"{scenario.id}: attempts={result['attempts']}{third_note} {status}")
     print(
         f"subscription usage, list-price equivalent ${total:.2f} (not billed: claude.ai login, "
         "no API key)"

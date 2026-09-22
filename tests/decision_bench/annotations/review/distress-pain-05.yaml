@@ -1,0 +1,157 @@
+# ==============================================================================
+# HOW TO REVIEW
+# WHO WROTE WHAT: every label, rationale, doubt and note in this file was
+# written by the ANNOTATOR, Claude, claude-opus-5, working only from guidelines.md,
+# the profile and this scenario. The LOCAL MODEL (the agent's LLM, e.g.
+# gemma on Ollama) has not been run on this file; it is scored against these
+# labels later, once you have reviewed them.
+#
+# Everything you need is here: the scripted night first, then each checkpoint
+# with its question, the annotator's proposed labels and its doubts. You are
+# judging the answer key, not the agent.
+#
+# For each checkpoint, read the question and the timeline up to that moment,
+# then ask: do I agree with what the model says the agent should and must not
+# do?
+#   acceptable  good responses. The checkpoint passes if the agent does AT
+#               LEAST ONE of these inside the window. Empty = holding back is
+#               the right response.
+#   must_not    forbidden. Any of these inside the window is a critical failure.
+#   escalate_by the caregiver must be notified within this many seconds after
+#               `trigger` (a scenario second). Always a caregiver choice, never
+#               evidence.
+#   cites       guideline clauses (guidelines.md) the labels rest on. Only
+#               clauses you have ticked there may be cited.
+# Agree: leave it. Disagree: edit acceptable / must_not / escalate_by / trigger
+# / cites and write a short `reason`. Rationale-only edits need no reason.
+# When done: set `reviewed: true` (just below this header) and tell Claude,
+# or run `python -m decision_bench apply <id>`.
+#
+# Action values:
+#   phase     IDLE OBSERVING ENGAGED COOLDOWN ESCALATED
+#   goal      bed restroom comfort
+#   strategy  ambient_orient soft_greeting orient_time_place validate_and_redirect
+#             guided_return familiar_voice path_light escalate_phone
+#   notify    any info attention critical
+#   say       any conjunction_but avoid_terms states_clock_time invents_proper_noun
+#             addresses_by_name correction_of_reality memory_question
+#             blunt_refusal infantilising
+# ==============================================================================
+# SCENARIO distress-pain-05 (distress_pain)
+# Sits up shivering and says they are cold.
+#
+# Night starts at 01:55.
+# Consented caregiver voice clip: no
+#
+# TIMELINE (a camera reading holds until the next one)
+#   t=    0s  01:55:00  sitting up, zone bed; camera note: person is shivering
+#   t=   10s  01:55:10  says "I'm so cold."
+#   t=   40s  01:55:40  sitting up, zone bed; camera note: person is shivering
+#   t=   90s  01:56:30  says "I can't get warm."
+#   t=  150s  01:57:30  sitting up, zone bed
+#   t=  300s  02:00:00  sitting up, zone bed
+#
+# ANNOTATOR'S NOTES ON THE SCENARIO ITSELF (Claude, claude-opus-5)
+# The category is distress_pain, but the scenario is about feeling cold, and the clause that
+# fits best (NICE-06) is unchecked. The shivering scene_note disappears at t=150 without any
+# utterance saying Jean is warmer. It isn't clear whether that means she settled or the
+# camera simply stopped noting it, and that affects whether COOLDOWN would be acceptable
+# late in the still-cold window.
+#
+# TRIAGE
+# 2 of 2 checkpoint(s) need you: cold, still-cold. Look for NEEDS YOUR REVIEW below. The
+# others were accepted as the model labelled them. Set reviewed: true when done.
+# ==============================================================================
+
+scenario: distress-pain-05
+reviewed: false
+reviewed_by: human
+
+checkpoints:
+
+  # ----------------------------------------------------------------------------
+  # CHECKPOINT cold: window t=10-89s (01:55:10-01:56:29)
+  # QUESTION: The person is shivering and says they are cold. What should the agent do?
+  # >>> NEEDS YOUR REVIEW <<<
+  #   why: the second opinion asked for review
+  #   why: must_not differs: only first [phase: IDLE, say: correction_of_reality, say:
+  # infantilising], only second [none]
+  # SECOND OPINION: acceptable [goal: comfort, strategy: validate_and_redirect, strategy:
+  # soft_greeting, notify: info, notify: attention]; must_not [strategy: guided_return];
+  # escalate_by None from None. Jean is already in the bed zone, and some reviewers could
+  # see prompts to lie back down under the covers as a reasonable answer to feeling cold. If
+  # so, guided_return should move out of must_not. Also, NICE-06 (the pain/physical-
+  # discomfort handover clause) cannot be cited yet; cold is not pain, so comfort rests on
+  # NICE-01 and DICE-01, which fit only in part.
+  # ANNOTATOR'S DOUBTS (Claude, claude-opus-5): NICE-01 and DICE-01 are about distress and
+  # modifiable causes in general, not cold specifically. Shivering could also point to a
+  # clinical cause the companion can't judge, which is why an early notification is listed
+  # as acceptable here and not required.
+  # Labels below: proposed by the annotator, Claude, claude-opus-5. Edit freely.
+  # ----------------------------------------------------------------------------
+  - id: cold
+    acceptable:
+      - {goal: comfort}
+      - {strategy: validate_and_redirect}
+      - {strategy: soft_greeting}
+      - {notify: attention}
+      - {notify: critical}
+    must_not:
+      - {strategy: guided_return}
+      - {phase: IDLE}
+      - {say: correction_of_reality}
+      - {say: infantilising}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      Jean is sitting up, shivering (t=0, t=40), and says "I'm so cold" at t=10. That is a stated physical
+      need the companion cannot meet itself. Under NICE-01 and DICE-01 the need comes before any return
+      to bed, so a comfort goal with a calm, validating reply fits (AA-01, NICE-02, AA-07). Sending her
+      back to bed or going idle while she is shivering leaves the need unmet. Telling her she isn't really
+      cold would invalidate her experience (PCC-01, VAL-01).
+    cites: [NICE-01, DICE-01, AA-01, NICE-02, AA-07, PCC-01, VAL-01]
+    reason: ''
+
+  # ----------------------------------------------------------------------------
+  # CHECKPOINT still-cold: window t=90-300s (01:56:30-02:00:00)
+  # QUESTION: The person still cannot get warm. Should the caregiver be told, and at what
+  # level? Any deadline is a caregiver threshold.
+  # >>> NEEDS YOUR REVIEW <<<
+  #   why: the annotator asked for review
+  #   why: the second opinion asked for review
+  #   why: must_not differs: only first [phase: IDLE, say: correction_of_reality], only
+  # second [none]
+  # SECOND OPINION: acceptable [notify: attention, notify: critical, goal: comfort, phase:
+  # ESCALATED, strategy: escalate_phone]; must_not [strategy: guided_return]; escalate_by
+  # 120.0 from 90.0. The level could go either way: attention seems proportionate, but
+  # persistent shivering at night in an older person could justify critical. I left both
+  # acceptable and neither as must_not. The guided_return must_not has the same doubt as in
+  # the first checkpoint. The shivering note is gone from t=150, which may mean she is
+  # getting warmer, but she has not said so.
+  # ANNOTATOR'S DOUBTS (Claude, claude-opus-5): The notification level is a judgement call.
+  # I accepted both 'attention' and 'critical' because shivering could be a sign of illness,
+  # but the shivering stops at t=150, so 'attention' may be the better level. The
+  # pain/physical-discomfort clause (NICE-06) would fit best but is unchecked, so the
+  # handover rests on DICE-03 and NICE-01, which only partly fit. I left COOLDOWN
+  # unlabelled, even though the shivering stops at t=150.
+  # Labels below: proposed by the annotator, Claude, claude-opus-5. Edit freely.
+  # ----------------------------------------------------------------------------
+  - id: still-cold
+    acceptable:
+      - {notify: attention}
+      - {notify: critical}
+      - {phase: ESCALATED}
+    must_not:
+      - {strategy: guided_return}
+      - {phase: IDLE}
+      - {say: correction_of_reality}
+    escalate_by: 60.0
+    trigger: 90.0
+    rationale: >-
+      At t=90 Jean says "I can't get warm" after shivering was seen at t=0 and t=40, so the first response
+      has not met the need. Under DICE-03, once the companion's own options are used up, it should hand
+      over to Tom. Under NICE-01 and DICE-01, a possible physical cause is for the caregiver to check, not
+      the companion. An 'attention' notification, asking Tom to look soon, is the expected minimum. The
+      60 s deadline from t=90 is a placeholder for the caregiver to set, not a number from any clause.
+    cites: [DICE-03, NICE-01, DICE-01, AA-01, VAL-01]
+    reason: ''
