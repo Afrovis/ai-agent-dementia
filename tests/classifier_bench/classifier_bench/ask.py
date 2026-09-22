@@ -32,6 +32,7 @@ OUTPUT_SCHEMA: dict[str, object] = {
 # A runner performs one attempt. ask_questions owns retry policy so tests and future
 # backends can inject the same small interface.
 Runner = Callable[[Path, str, dict[str, object], str, float], dict[str, object]]
+Validator = Callable[[object], dict[str, object]]
 
 
 def _parse_object(text: str) -> dict[str, object]:
@@ -74,6 +75,7 @@ def run_ollama(
     temperature: float,
     *,
     base_url: str = "http://127.0.0.1:11434",
+    validate: Validator = _validate_answer,
 ) -> dict[str, object]:
     """Perform one Ollama JSON-mode call for a classification attempt."""
     payload = {
@@ -112,7 +114,7 @@ def run_ollama(
         # Shared normalization is intentionally applied before validation. For this small
         # schema it is normally a no-op, while keeping Ollama handling aligned with annotate.
         structured = normalize_ollama_output(parsed)
-        return _validate_answer(structured)
+        return validate(structured)
     except (KeyError, TypeError, json.JSONDecodeError, ValueError) as exc:
         raise AnnotatorError(f"ollama returned invalid structured output: {exc}") from exc
 
@@ -167,10 +169,21 @@ def ask_questions(
     limit: int | None = None,
     force: bool = False,
     system_prompt_path: Path = PROBE_PROMPT_PATH,
+    prompt_builder: Callable[[Mapping[str, object], str], str] = user_prompt,
+    schema_for: Callable[[Mapping[str, object]], dict[str, object]] = lambda _: OUTPUT_SCHEMA,
+    validate: Callable[[object, Mapping[str, object]], dict[str, object]] = (
+        lambda answer, _: _validate_answer(answer)
+    ),
+    abstains: Callable[[Mapping[str, object]], bool] = lambda item: (
+        item.get("label") == "irrelevant"
+    ),
+    selection_key: str = "set",
 ) -> list[dict[str, object]]:
     """Ask selected questions, recording failures and continuing the run."""
     candidates = [
-        item for item in questions if selected_set == "all" or item.get("set") == selected_set
+        item
+        for item in questions
+        if selected_set == "all" or item.get(selection_key) == selected_set
     ]
     if limit is not None:
         candidates = candidates[:limit]
@@ -186,21 +199,24 @@ def ask_questions(
     pending = [item for item in candidates if str(item["qid"]) not in completed]
     existing_answers = [item for item in existing if str(item.get("qid")) in candidate_qids]
     answered = len(completed & candidate_qids)
-    abstentions = sum(item.get("label") == "irrelevant" for item in existing_answers)
+    abstentions = sum(abstains(item) for item in existing_answers)
     failures = sum("error" in item for item in existing_answers)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     written: list[dict[str, object]] = []
     with output_path.open("a", encoding="utf-8") as handle:
         for question in pending:
-            prompt = user_prompt(question, guidelines_text)
+            prompt = prompt_builder(question, guidelines_text)
             started = perf_counter()
             answer: dict[str, object] | None = None
             error = "unknown failure"
             attempts = 0
             for attempts, temperature in enumerate((0.0, 0.3), 1):
                 try:
-                    answer = _validate_answer(
-                        runner(system_prompt_path, prompt, OUTPUT_SCHEMA, model, temperature)
+                    answer = validate(
+                        runner(
+                            system_prompt_path, prompt, schema_for(question), model, temperature
+                        ),
+                        question,
                     )
                     break
                 except Exception as exc:  # one bad question must never abort a run
@@ -216,7 +232,7 @@ def ask_questions(
             handle.flush()
             written.append(record)
             answered += 1
-            abstentions += record.get("label") == "irrelevant"
+            abstentions += abstains(record)
             failures += "error" in record
             if answered % 25 == 0:
                 print(

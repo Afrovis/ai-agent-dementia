@@ -22,7 +22,7 @@ dev = [
 include = ["classifier_bench*"]
 
 [tool.setuptools.package-data]
-classifier_bench = ["probe_prompt.md"]
+classifier_bench = ["probe_prompt.md", "choice_prompt.md"]
 
 [tool.ruff]
 target-version = "py312"
