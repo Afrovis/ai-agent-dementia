@@ -50,7 +50,7 @@ from dataclasses import dataclass
 
 import redis
 from nc_shared.bus import Bus
-from nc_shared.events import Health, PersonState
+from nc_shared.events import Health, PersonState, PoseDebug
 
 from perceive.backends import PoseBackend, build_backend
 from perceive.classify import (
@@ -360,6 +360,7 @@ def run_once(
     msg_id, frame = messages[0]
     bus.ack(FRAME_STREAM, FRAME_GROUP, msg_id)
 
+    started = time.perf_counter()
     pose = backend.detect(frame.jpeg)
 
     zone: ZoneName = "other"
@@ -463,6 +464,31 @@ def run_once(
                 positive_streak_count=streak_count,
                 applied=applied,
             )
+
+    snapshot = tracker.snapshot()
+    tracked_state = snapshot[0] if snapshot is not None else None
+    bus.publish(
+        PoseDebug(
+            source=SERVICE_NAME,
+            landmarks=(
+                {
+                    name: (point.x, point.y, point.visibility)
+                    for name, point in pose.landmarks.items()
+                }
+                if pose is not None
+                else {}
+            ),
+            bbox=pose.bbox if pose is not None else None,
+            confidence=pose.confidence if pose is not None else 0.0,
+            detected=pose is not None,
+            candidate_state=tracked_state,
+            state=tracked_state,
+            zone=snapshot[2] if snapshot is not None else None,
+            frame_ts=frame.ts.isoformat(),
+            latency_ms=(time.perf_counter() - started) * 1000,
+        ),
+        maxlen=50,
+    )
 
     if result is None:
         return floor_check_event

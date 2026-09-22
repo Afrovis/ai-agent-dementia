@@ -20,12 +20,13 @@ COPY services/perceive/ /app/services/perceive/
 # instead of the fallen person on video 3) did (docs/FLOOR_DETECTION_HANDOFF.md),
 # so the `yolo` extra is installed here, unlike `capture`'s optional `camera`
 # extra which the default source does not need. `ultralytics` pulls in
-# `torch`; install the CPU-only wheel first so pip does not also pull the
+# `torch` and `torchvision`; install both CPU-only wheels first (a PyPI
+# `torchvision` does not match CPU `torch`: `torchvision::nms does not exist`) so pip does not also pull the
 # much larger CUDA build. `mediapipe` is installed alongside so
 # PERCEIVE_POSE_BACKEND=mediapipe still works without a rebuild;
 # PERCEIVE_POSE_BACKEND=scripted needs neither.
 RUN pip install --no-cache-dir -e /app/shared \
-    && pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu \
     && pip install --no-cache-dir -e "/app/services/perceive[mediapipe,yolo]"
 
 # Bake the default YOLO11s-pose weights into the image at build time so the

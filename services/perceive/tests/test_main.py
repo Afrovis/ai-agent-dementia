@@ -9,7 +9,7 @@ published, including that `on_floor` bypasses hysteresis.
 """
 
 from nc_shared.bus import FakeBus
-from nc_shared.events import Frame, Health, PersonState
+from nc_shared.events import Frame, Health, PersonState, PoseDebug
 from nc_shared.replay import CAPPED_MAXLEN
 
 from perceive.backends import Landmark, PoseResult, ScriptedBackend
@@ -30,6 +30,26 @@ from perceive.vision import FakeVisionClient
 from perceive.zones import ZoneMap
 
 BED_ZONE = ZoneMap(polygons={"bed": [(0.0, 0.2), (0.4, 0.2), (0.4, 0.8), (0.0, 0.8)]})
+
+
+def test_pose_debug_is_published_for_detected_and_empty_frames():
+    bus = FakeBus()
+    bus.ensure_group("frames", "perceive")
+    backend = ScriptedBackend([in_bed_pose(), None])
+    tracker = StateTracker(ClassifyThresholds())
+    for index in range(2):
+        bus.publish(
+            Frame(source="capture", jpeg=b"frame", width=640, height=480, source_kind="browser"),
+            maxlen=50,
+        )
+        run_once(bus, backend, BED_ZONE, tracker, now_fn=lambda: float(index))
+    events = [event for _, event in bus.read("pose_debug", "test", "c1")]
+    assert len(events) == 2
+    assert all(isinstance(event, PoseDebug) and event.latency_ms >= 0 for event in events)
+    assert events[0].landmarks["nose"] == (0.05, 0.5, 0.9)
+    assert events[1].detected is False
+    assert events[1].landmarks == {}
+    assert events[1].bbox is None
 
 
 def _pose(points: dict[str, tuple[float, float]], confidence: float = 0.9) -> PoseResult:
