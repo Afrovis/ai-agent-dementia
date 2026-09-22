@@ -12,6 +12,7 @@ from pathlib import Path
 
 from nc_shared.bus import FakeBus
 from nc_shared.events import (
+    Activity,
     CloudCall,
     GoalChanged,
     LightCommand,
@@ -25,7 +26,7 @@ from nc_shared.events import (
 )
 
 from agent.config import AgentConfig
-from agent.llm import Composition, FakeLLM
+from agent.llm import Composition, FakeLLM, Intent, Interpretation
 from agent.main import (
     PERSON_GROUP,
     PERSON_STREAM,
@@ -33,6 +34,7 @@ from agent.main import (
     UTTERANCE_STREAM,
     _maybe_publish_say,
     _publish_cloud_call,
+    _publish_transition,
     maybe_emit_health,
     maybe_emit_session_heartbeat,
     run_once,
@@ -40,7 +42,7 @@ from agent.main import (
 from agent.profile import PersonProfile
 from agent.rules import Phase
 from agent.session import Session, Transition
-from agent.strategies import DEFAULT_STRATEGIES, FAMILIAR_VOICE_ID
+from agent.strategies import DEFAULT_STRATEGIES, ESCALATE_PHONE_ID, FAMILIAR_VOICE_ID
 
 NIGHT = datetime(2026, 1, 1, 23, 0)
 
@@ -437,7 +439,10 @@ def test_absent_reading_suppresses_ordinary_strategy_say_but_not_show():
             observe_seconds=1.0,
             absent_limit_seconds=600.0,
         ),
-        strategies=small_strategies(dwell=1.0, n=2),
+        strategies=[
+            small_strategies(dwell=1.0, n=2)[0],
+            dc_replace(small_strategies(dwell=1.0, n=2)[1], face="speaking"),
+        ],
     )
     now_fn, advance = make_clock(NIGHT)
 
@@ -454,6 +459,7 @@ def test_absent_reading_suppresses_ordinary_strategy_say_but_not_show():
     assert bus.read("say", "test", "c1", count=10) == []
     shows = [event for _id, event in bus.read("show", "test", "c1", count=20)]
     assert shows[-1].headline == session.strategies[1].headline_template
+    assert shows[-1].face == "awake"
 
 
 def test_terminal_say_still_publishes_when_the_latest_state_is_absent():
@@ -470,6 +476,105 @@ def test_terminal_say_still_publishes_when_the_latest_state_is_absent():
     says = [event for _id, event in bus.read("say", "test", "c1", count=10)]
     assert says[-1].strategy == "escalate_phone"
     assert says[-1].text == "Someone is coming to help."
+
+
+def test_escalated_speech_is_interpreted_and_reassured_after_gap():
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    now_fn, advance = make_clock(NIGHT)
+    bus.publish(PersonState(source="perceive", state="on_floor", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    advance(9)
+    llm = FakeLLM(
+        interpretations=[Interpretation(intent=Intent.UNCLEAR, distress=2)],
+        compositions=[Composition(text="Help is on the way.")],
+    )
+    bus.publish(Utterance(source="listen", text="Help me", confidence=0.9, duration_s=1))
+    run_once(bus, session, now_fn=now_fn, llm=llm)
+
+    assert session.phase == Phase.ESCALATED
+    assert session.goal == "wait_for_caregiver"
+    reassurances = [event for _, event in bus.read("say", "test", "c1")]
+    assert reassurances[-1].strategy == "reassure_waiting"
+    assert reassurances[-1].text == "Help is on the way."
+    assert [name for name, _ in llm.calls] == ["interpret", "compose"]
+    assert len(bus.read("notify", "test", "c1")) == 1
+
+
+def test_escalated_restroom_need_keeps_alert_and_guides():
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    now_fn, advance = make_clock(NIGHT)
+    bus.publish(PersonState(source="perceive", state="on_floor", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    advance(9)
+    llm = FakeLLM(interpretations=[Interpretation(intent=Intent.NEED_RESTROOM, distress=0)])
+    bus.publish(Utterance(source="listen", text="I need the toilet", confidence=0.9, duration_s=1))
+    run_once(bus, session, now_fn=now_fn, llm=llm)
+
+    assert session.phase == Phase.ESCALATED
+    assert session.goal == "wait_for_caregiver"
+    assert [event.state for _, event in bus.read("light", "test", "c1")][-1] == "on"
+    assert [event.strategy for _, event in bus.read("say", "test", "c1")][-1] == "path_light"
+    assert len(bus.read("notify", "test", "c1")) == 1
+
+
+def test_time_question_answers_without_advancing_ladder():
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    now_fn, _advance = make_clock(NIGHT)
+    bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    llm = FakeLLM(interpretations=[Interpretation(intent=Intent.CONFUSED_TIME, distress=0)])
+    bus.publish(Utterance(source="listen", text="What time is it?", confidence=0.9, duration_s=1))
+    run_once(bus, session, now_fn=now_fn, llm=llm)
+
+    assert session.phase == Phase.ENGAGED
+    assert session._engine.current_id == "ambient_orient"
+    assert session.strategy_index == 0
+    says = [event for _, event in bus.read("say", "test", "c1")]
+    assert len(says) == 1
+    assert says[0].strategy == "orient_time_place"
+    assert "11 o'clock at night" in says[0].text
+
+
+def test_recent_utterance_counts_as_presence_after_camera_loses_person():
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    now = NIGHT
+    session.on_person_state("standing", "other", now)
+    session.on_utterance(now)
+    session.on_person_state("absent", "other", now)
+    session.on_utterance(now + timedelta(seconds=1))
+    transition = session.propose_goal("restroom", "test", now + timedelta(seconds=1))
+    assert transition is not None
+    _publish_transition(bus, transition, session, now + timedelta(seconds=1))
+
+    assert session.person_present(now + timedelta(seconds=30))
+    assert not session.person_present(now + timedelta(seconds=32))
+    assert [event.strategy for _, event in bus.read("say", "test", "c1")] == ["path_light"]
+
+
+def test_speaking_face_waits_for_deferred_say():
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    now_fn, advance = make_clock(NIGHT)
+    bus.publish(PersonState(source="perceive", state="on_floor", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    bus.read("show", "test", "baseline")
+    advance(1)
+    llm = FakeLLM(interpretations=[Interpretation(intent=Intent.NEED_RESTROOM, distress=0)])
+    bus.publish(Utterance(source="listen", text="I need the toilet", confidence=0.9, duration_s=1))
+    run_once(bus, session, now_fn=now_fn, llm=llm)
+    assert [event.face for _, event in bus.read("show", "test", "before")][-1] == "awake"
+    assert [event.strategy for _, event in bus.read("say", "test", "before")][
+        -1
+    ] == "escalate_phone"
+
+    advance(8)
+    run_once(bus, session, now_fn=now_fn)
+    assert [event.face for _, event in bus.read("show", "test", "after")][-1] == "speaking"
+    assert [event.strategy for _, event in bus.read("say", "test", "after")][-1] == "path_light"
 
 
 def test_rejected_llm_composition_uses_the_rendered_caregiver_template(caplog):
@@ -493,6 +598,13 @@ def test_rejected_llm_composition_uses_the_rendered_caregiver_template(caplog):
     says = [event for _id, event in bus.read("say", "test", "c1", count=10)]
     assert says[-1].text == "It's alright, Jean, let's rest now and talk more in the morning."
     assert unsafe not in caplog.text
+    activities = [event for _, event in bus.read("activity", "test", "c1")]
+    assert all(isinstance(event, Activity) for event in activities)
+    assert [(event.kind, event.phase, event.ok) for event in activities] == [
+        ("compose", "start", True),
+        ("compose", "end", False),
+    ]
+    assert "rejected" in activities[-1].detail
 
 
 def test_familiar_voice_publishes_clip_say_and_family_show(tmp_path, monkeypatch):
@@ -572,6 +684,96 @@ def test_the_minimum_say_gap_is_enforced_across_strategy_advances():
     run_once(bus, session, now_fn=now_fn)
     second_says = [e for _id, e in bus.read("say", "test", "c1", count=10)]
     assert second_says == []
+
+
+def _session_with_pending_say(bus, *, gap=8.0):
+    terminal = next(item for item in DEFAULT_STRATEGIES if item.id == ESCALATE_PHONE_ID)
+    session = Session(
+        config=AgentConfig(say_min_gap_seconds=gap),
+        strategies=[*small_strategies(dwell=100.0, n=4), terminal],
+    )
+    bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=lambda: NIGHT)
+    bus.publish(Utterance(source="listen", text="Hello", confidence=0.9, duration_s=1.0))
+    run_once(bus, session, now_fn=lambda: NIGHT)
+    for offset, strategy in ((1, "s2"), (2, "s3")):
+        now = NIGHT + timedelta(seconds=offset)
+        transition = session.propose_strategy(strategy, now)
+        assert transition is not None
+        _publish_transition(bus, transition, session, now)
+    return session
+
+
+def test_deferred_say_publishes_on_quiet_tick_without_duplicate_show(caplog):
+    caplog.set_level("INFO", logger="agent")
+    bus = make_bus()
+    session = _session_with_pending_say(bus)
+    assert [event.strategy for _, event in bus.read("say", "test", "first")] == ["s2"]
+    assert bus.read("show", "test", "first")
+
+    run_once(bus, session, now_fn=lambda: NIGHT + timedelta(seconds=9))
+
+    assert [event.strategy for _, event in bus.read("say", "test", "second")] == ["s3"]
+    assert len(bus.read("show", "test", "second")) == 0
+    assert "deferred Say" in caplog.text
+    assert "published deferred Say" in caplog.text
+
+
+def test_newer_say_supersedes_pending_say():
+    bus = make_bus()
+    session = _session_with_pending_say(bus)
+    now = NIGHT + timedelta(seconds=3)
+    transition = session.propose_strategy("s4", now)
+    assert transition is not None
+    _publish_transition(bus, transition, session, now)
+
+    run_once(bus, session, now_fn=lambda: NIGHT + timedelta(seconds=9))
+
+    assert [event.strategy for _, event in bus.read("say", "test", "c1")] == ["s2", "s4"]
+
+
+def test_immediate_terminal_say_cancels_pending_say():
+    bus = make_bus()
+    session = _session_with_pending_say(bus)
+    now = NIGHT + timedelta(seconds=3)
+    transition = session.on_person_state("on_floor", "other", now)
+    assert transition is not None
+    _publish_transition(bus, transition, session, now)
+    run_once(bus, session, now_fn=lambda: NIGHT + timedelta(seconds=10))
+
+    assert session._pending_say is None
+    assert [event.strategy for _, event in bus.read("say", "test", "c1")] == [
+        "s2",
+        "escalate_phone",
+    ]
+
+
+def test_pending_say_drops_after_goal_change_or_session_end(caplog):
+    caplog.set_level("INFO", logger="agent")
+    for ending in ("goal", "session"):
+        bus = make_bus()
+        session = _session_with_pending_say(bus)
+        now = NIGHT + timedelta(seconds=3)
+        if ending == "goal":
+            session.propose_goal("restroom", "test", now)
+        else:
+            session.on_person_state("in_bed", "bed", now)
+            session.on_person_state("in_bed", "bed", now + timedelta(seconds=20))
+        run_once(
+            bus,
+            session,
+            now_fn=lambda: NIGHT + timedelta(seconds=24 if ending == "session" else 12),
+        )
+        assert [event.strategy for _, event in bus.read("say", "test", "c1")] == ["s2"]
+    assert "dropped deferred Say" in caplog.text
+
+
+def test_pending_say_expires_after_max_age():
+    bus = make_bus()
+    session = _session_with_pending_say(bus, gap=60.0)
+    run_once(bus, session, now_fn=lambda: NIGHT + timedelta(seconds=33))
+    assert session._pending_say is None
+    assert [event.strategy for _, event in bus.read("say", "test", "c1")] == ["s2"]
 
 
 def test_escalation_show_reflects_escalate_phone_strategy():

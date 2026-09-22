@@ -57,6 +57,8 @@ STRATEGIES = frozenset(
         "guided_return",
         "familiar_voice",
         "path_light",
+        "reassure_waiting",
+        "acknowledge_return",
         "escalate_phone",
     }
 )

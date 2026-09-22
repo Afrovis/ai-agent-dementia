@@ -40,8 +40,9 @@ Issue #13's goal tree (`agent.goals`) and what it can and cannot observe:
 - `drink_water` and `comfort`: legal `validate_goal` targets. Structured
   interpretation maps pain to `comfort`; a validated planner proposal can
   enter either without putting model code inside this state machine.
-- A stated restroom need is mapped to `restroom` by `on_interpretation`,
-  after `agent.main` obtains a validated local-model result.
+- A stated restroom need is mapped to `restroom`, and a stated wish to
+  return to bed (or completion of the restroom trip) maps to the root goal,
+  by `on_interpretation` after `agent.main` obtains a validated result.
 - `propose_goal()` is the one public entry point for an LLM's `plan`
   proposal (issue #15) to go through: it runs the same
   `agent.rules.validate_goal` check as every deterministic switch above,
@@ -82,7 +83,9 @@ from __future__ import annotations
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timedelta
+
+from nc_shared.events import Say, Show
 
 from agent.config import AgentConfig
 from agent.goals import COMFORT_GOAL, RESTROOM_GOAL, ROOT_GOAL, WAIT_FOR_CAREGIVER_GOAL
@@ -98,7 +101,11 @@ from agent.strategies import (
 
 DEFAULT_GOAL = ROOT_GOAL
 
-INTENT_GOALS = {"need_restroom": RESTROOM_GOAL, "pain": COMFORT_GOAL}
+INTENT_GOALS = {
+    "need_restroom": RESTROOM_GOAL,
+    "wants_bed": DEFAULT_GOAL,
+    "pain": COMFORT_GOAL,
+}
 """The only interpreted intents with a clear goal-tree meaning; every other
 intent is inert and leaves the goal where it is."""
 
@@ -130,6 +137,18 @@ class GoalChangeResult:
     from_goal: str
     to_goal: str
     reason: str
+
+
+@dataclass(frozen=True)
+class PendingSay:
+    """A validated sentence awaiting only the minimum silence gap."""
+
+    event: Say
+    goal: str
+    strategy_index: int
+    queued_at: datetime
+    show: Show | None = None
+    direct: bool = False
 
 
 @dataclass(frozen=True)
@@ -202,6 +221,7 @@ class Session:
     # When the `restroom` goal was entered, or `None` while it is not
     # active. Drives `config.restroom_timeout_seconds` (issue #13).
     _restroom_since: datetime | None = field(default=None, init=False, repr=False)
+    _restroom_need_resolved: bool = field(default=False, init=False, repr=False)
 
     # Consecutive-reading hysteresis on `PersonState.zone` for zone-driven
     # goal switching, mirroring `perceive.classify.StateTracker`'s
@@ -215,6 +235,11 @@ class Session:
     # `IDLE`, `_reset_timers`), which that check treats as "no minimum gap
     # to enforce yet".
     _last_say_at: datetime | None = field(default=None, init=False, repr=False)
+    _pending_say: PendingSay | None = field(default=None, init=False, repr=False)
+    _compliance_until: datetime | None = field(default=None, init=False, repr=False)
+    _say_history: list[tuple[datetime, str, str]] = field(
+        default_factory=list, init=False, repr=False
+    )
 
     # The LLM is deliberately kept out of this state machine.  `main`
     # passes its already-validated interpretation here and this small
@@ -410,9 +435,12 @@ class Session:
         self._in_bed_since = None
         self._cooldown_since = None
         self._restroom_since = None
+        self._restroom_need_resolved = False
         self._pending_zone = None
         self._pending_zone_count = 0
         self._last_say_at = None
+        self._compliance_until = None
+        self._say_history.clear()
         self._consecutive_distress = 0
         self._recent_utterances.clear()
         self._last_scene_note = None
@@ -453,6 +481,15 @@ class Session:
         particular nudging session.
         """
         return self._last_person_state
+
+    def person_present(self, now: datetime) -> bool:
+        """Recent complete speech establishes presence despite a missed camera frame."""
+        return self._last_person_state != "absent" or (
+            self._last_utterance_at is not None
+            and 0
+            <= (now - self._last_utterance_at).total_seconds()
+            <= self.config.utterance_presence_seconds
+        )
 
     @property
     def settled(self) -> bool:
@@ -636,12 +673,14 @@ class Session:
             change = self._apply_goal(RESTROOM_GOAL, reason="perceived_heading_to_bathroom")
             if change is not None:
                 self._restroom_since = now
+                self._restroom_need_resolved = False
             return change
 
         if self.goal == RESTROOM_GOAL and (confirmed_zone == "bed" or state == "in_bed"):
             change = self._apply_goal(DEFAULT_GOAL, reason="returned_from_bathroom")
             if change is not None:
                 self._restroom_since = None
+                self._restroom_need_resolved = True
             return change
 
         return None
@@ -715,6 +754,7 @@ class Session:
             return None
         if goal == RESTROOM_GOAL:
             self._restroom_since = now
+            self._restroom_need_resolved = False
         elif change.from_goal == RESTROOM_GOAL:
             self._restroom_since = None
         return self._combine(None, change, now)
@@ -728,6 +768,8 @@ class Session:
         manufacture an escalation.  Rejections are ordinary advisory no-ops.
         """
         if self.phase != Phase.ENGAGED:
+            return None
+        if self.compliance_hold(now):
             return None
         strategy = self._engine.propose_next(strategy_id, now)
         if strategy is None:
@@ -751,10 +793,19 @@ class Session:
         session.  A non-distressed utterance resets the counter, so a pair
         of unrelated, ambiguous readings cannot accumulate into an alert.
 
-        Intent is advisory as well: only the two mappings that have a clear
+        Intent is advisory as well: only the mappings that have a clear
         goal-tree meaning are proposed here, and ``propose_goal`` still
         routes them through ``validate_goal``.  Unknown intents are inert.
         """
+        if self.phase == Phase.ESCALATED:
+            if intent == "wants_bed":
+                self.start_compliance_grace(now)
+            elif intent in {"need_restroom", "pain"} or distress >= 2:
+                self._compliance_until = None
+            # Keep tracking distress, but never issue a second escalation or
+            # let speech undo the caregiver alert.
+            self._consecutive_distress = self._consecutive_distress + 1 if distress >= 2 else 0
+            return None
         if self.phase != Phase.ENGAGED:
             self._consecutive_distress = 0
             return None
@@ -776,10 +827,49 @@ class Session:
                 ),
             )
 
+        was_returning_to_bed = self.goal == DEFAULT_GOAL
         target_goal = INTENT_GOALS.get(intent)
         if target_goal is None:
             return None
-        return self.propose_goal(target_goal, f"interpreted_{intent}", now)
+        transition = self.propose_goal(target_goal, f"interpreted_{intent}", now)
+        if intent == "wants_bed" and self.goal == DEFAULT_GOAL:
+            self._restroom_need_resolved = True
+            if was_returning_to_bed:
+                self.start_compliance_grace(now)
+        elif intent in {"need_restroom", "pain"} or distress >= 2:
+            self._compliance_until = None
+        return transition
+
+    def start_compliance_grace(self, now: datetime) -> None:
+        self._compliance_until = now + timedelta(seconds=self.config.compliance_grace_seconds)
+
+    def compliance_hold(self, now: datetime) -> bool:
+        return self._compliance_until is not None and now < self._compliance_until
+
+    def recently_said(self, strategy_id: str, now: datetime) -> bool:
+        return any(
+            sid == strategy_id
+            and 0 <= (now - at).total_seconds() < self.config.repeat_window_seconds
+            for at, sid, _ in self._say_history
+        )
+
+    def is_self_echo(self, text: str, now: datetime) -> bool:
+        import re
+
+        tokens = re.findall(r"[a-z0-9]+", text.lower())
+        if not tokens:
+            return False
+        for at, _, said in self._say_history:
+            if not 0 <= (now - at).total_seconds() <= 20:
+                continue
+            own = re.findall(r"[a-z0-9]+", said.lower())
+            if len(tokens) <= 3 and any(
+                own[i : i + len(tokens)] == tokens for i in range(len(own))
+            ):
+                return True
+            if len(set(tokens) & set(own)) / len(set(tokens)) >= 0.6:
+                return True
+        return False
 
     def on_utterance(self, now: datetime) -> Transition | None:
         """Any `Utterance` moves `OBSERVING` straight to `ENGAGED`
@@ -856,6 +946,8 @@ class Session:
         # session to COOLDOWN.
         if self._in_bed_since is not None:
             return None
+        if self.compliance_hold(now):
+            return None
 
         if state is not None and self._is_progress(state, zone or ""):
             # Extends the dwell window, but only up to
@@ -872,6 +964,9 @@ class Session:
             self._engine.note_progress(now)
 
         new_strategy, changed, exhausted = self._engine.maybe_advance(now)
+        while changed and new_strategy is not None and self.recently_said(new_strategy.id, now):
+            # Advance silently past a phrase already heard in this short session.
+            new_strategy, changed, exhausted = self._engine.skip_current(now)
         if exhausted:
             return self._apply(
                 Phase.ESCALATED,
@@ -897,13 +992,20 @@ class Session:
             )
         return None
 
-    def record_say(self, now: datetime) -> None:
+    def record_say(self, now: datetime, strategy_id: str = "", text: str = "") -> None:
         """Record that a `Say` was just published, for `agent.rules.
         validate_say`'s minimum-gap check on the next one. Called by
         `agent.main` only after a `Say` actually passes validation and is
         published -- a rejected `Say` must not reset this clock, since
         nothing was actually said."""
         self._last_say_at = now
+        if strategy_id:
+            self._say_history.append((now, strategy_id, text))
+            self._say_history = [
+                entry
+                for entry in self._say_history
+                if (now - entry[0]).total_seconds() <= max(120, self.config.repeat_window_seconds)
+            ]
 
     def seconds_since_last_say(self, now: datetime) -> float | None:
         """`None` before any `Say` has been published this session (also

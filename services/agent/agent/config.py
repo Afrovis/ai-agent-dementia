@@ -74,6 +74,9 @@ class AgentConfig:
     lying on the floor never is; that asymmetry is why `absent` gets a
     grace period and `on_floor` does not. `AGENT_ABSENT_LIMIT_SECONDS`."""
 
+    utterance_presence_seconds: float = 30.0
+    """A complete utterance establishes presence for this long despite an absent camera reading."""
+
     restroom_timeout_seconds: float = 900.0
     """How long the `restroom` goal (issue #13) is allowed to sit unresolved
     before `agent.session.Session` gives up waiting for the person to be
@@ -98,6 +101,8 @@ class AgentConfig:
     `config/person.yaml`, then `config/person.example.yaml`. `PERSON_PATH`."""
 
     say_min_gap_seconds: float = 8.0
+    compliance_grace_seconds: float = 120.0
+    repeat_window_seconds: float = 120.0
     """The minimum silence, in seconds, `agent.rules.validate_say` requires
     between one published `Say` and the next (HANDOFF.md rule 3: "Spoken
     output is one sentence, then silence for at least 8 seconds").
@@ -155,6 +160,8 @@ class AgentConfig:
             strategies_path=env.get("STRATEGIES_PATH"),
             person_path=env.get("PERSON_PATH") or None,
             say_min_gap_seconds=float(env.get("AGENT_SAY_MIN_GAP_SECONDS", "8")),
+            compliance_grace_seconds=float(env.get("AGENT_COMPLIANCE_GRACE_SECONDS", "120")),
+            repeat_window_seconds=float(env.get("AGENT_REPEAT_WINDOW_SECONDS", "120")),
             zone_confirm_readings=int(env.get("AGENT_ZONE_CONFIRM_READINGS", "3")),
             llm_model=env.get("AGENT_LLM_MODEL") or "gemma4:e4b-mlx",
             llm_timeout_seconds=float(env.get("AGENT_LLM_TIMEOUT_SECONDS") or "10"),

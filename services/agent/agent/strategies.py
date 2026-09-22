@@ -83,6 +83,8 @@ logger = logging.getLogger(SERVICE_NAME)
 
 ESCALATE_PHONE_ID = "escalate_phone"
 PATH_LIGHT_ID = "path_light"
+REASSURE_WAITING_ID = "reassure_waiting"
+ACKNOWLEDGE_RETURN_ID = "acknowledge_return"
 GUIDED_RETURN_ID = "guided_return"
 FAMILIAR_VOICE_ID = "familiar_voice"
 
@@ -223,7 +225,7 @@ DEFAULT_STRATEGIES: tuple[StrategyDef, ...] = (
         # One sentence (rule 3) -- see the module-level comment above this
         # tuple for why this is not PLAN.md's original two-sentence text.
         body_template="You are in your bedroom, and it is {time_words}.",
-        say_template="You are home in your bedroom, and it is night-time.",
+        say_template="You are home in your bedroom, and it is {time_words}.",
         photo_id="demo_room",
     ),
     StrategyDef(
@@ -276,6 +278,20 @@ DEFAULT_STRATEGIES: tuple[StrategyDef, ...] = (
         photo_id="demo_family",
     ),
     StrategyDef(
+        id=ACKNOWLEDGE_RETURN_ID,
+        order=7,
+        enabled=True,
+        intrusiveness=2,
+        dwell_seconds=0.0,
+        cooldown_seconds=0.0,
+        face="speaking",
+        brightness=0.5,
+        headline_template="Take your time",
+        body_template="You can settle back into bed.",
+        say_template="That's right{name_vocative}, take your time getting back to bed.",
+        goal_only=True,
+    ),
+    StrategyDef(
         id=PATH_LIGHT_ID,
         order=8,
         enabled=True,
@@ -290,6 +306,20 @@ DEFAULT_STRATEGIES: tuple[StrategyDef, ...] = (
         headline_template="The restroom path is lit",
         body_template="{restroom_direction}.",
         say_template="{restroom_direction}{name_vocative}.",
+        goal_only=True,
+    ),
+    StrategyDef(
+        id=REASSURE_WAITING_ID,
+        order=9,
+        enabled=True,
+        intrusiveness=2,
+        dwell_seconds=0.0,
+        cooldown_seconds=0.0,
+        face="speaking",
+        brightness=0.5,
+        headline_template="Help is coming",
+        body_template="Someone is on their way.",
+        say_template="Someone is on their way{name_vocative}, and you're safe here.",
         goal_only=True,
     ),
     StrategyDef(
@@ -826,6 +856,14 @@ class StrategyEngine:
         if next_id is None:
             return None, True, True
         return self.current(), True, False
+
+    def skip_current(self, now: datetime) -> tuple[StrategyDef | None, bool, bool]:
+        """Skip a newly selected rung whose speech was heard recently."""
+        current = self.current()
+        if current is None or current.terminal or current.goal_only:
+            return current, False, False
+        self._started_at = now - timedelta(seconds=current.dwell_seconds)
+        return self.maybe_advance(now)
 
     def reset(self) -> None:
         """Clear all per-session state: current strategy, its start time,

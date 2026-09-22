@@ -28,8 +28,9 @@ caregiver, fail quiet to the person"):
   the same way, and only after it passes `agent.rules.validate_say`
   (HANDOFF.md rule 3: one sentence, a minimum silence gap, no forbidden
   phrasing, no memory-testing question by form). A `Say` that fails
-  validation is logged loudly and never published -- silence, not a wrong
-  sentence at 3am. Issue #15 composes strategy 4 from the latest utterance
+  validation is logged loudly. A sentence blocked only by the silence gap
+  waits briefly for its turn; other rejections remain silent. Issue #15
+  composes strategy 4 from the latest utterance
   with the local LLM; a failed call falls back to the caregiver's fixed
   template, and both paths pass through the same deterministic validator.
 - `Notify(critical, repeat_until_ack=True, source="agent")` on entering
@@ -59,11 +60,13 @@ import logging
 import os
 import time
 from collections.abc import Callable
-from datetime import datetime
+from dataclasses import replace
+from datetime import UTC, datetime
 
 import redis
 from nc_shared.bus import Bus
 from nc_shared.events import (
+    Activity,
     CloudCall,
     GoalChanged,
     Health,
@@ -82,11 +85,12 @@ from agent.goals import GOALS
 from agent.llm import ClaudeLLM, FallbackLLM, LLMClient
 from agent.llm import local_llm as build_local_llm
 from agent.profile import DEFAULT_PROFILE, PersonProfile, load_profile
-from agent.rules import Phase, validate_composition, validate_say
-from agent.session import Session, Transition
+from agent.rules import Phase, RuleResult, validate_composition, validate_goal, validate_say
+from agent.session import PendingSay, Session, Transition
 from agent.strategies import (
     ESCALATE_PHONE_ID,
     PATH_LIGHT_ID,
+    REASSURE_WAITING_ID,
     StrategyDef,
     load_strategies,
     render_template,
@@ -97,6 +101,7 @@ from agent.veto import Proposal, VetoContext
 SERVICE_NAME = "agent"
 HEALTH_INTERVAL_S = 30.0
 HEARTBEAT_INTERVAL_S = 60.0
+PENDING_SAY_MAX_AGE_S = 30.0
 
 PERSON_STREAM = "person"
 PERSON_GROUP = "agent"
@@ -105,6 +110,28 @@ UTTERANCE_GROUP = "agent"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(SERVICE_NAME)
+
+
+def _activity(
+    bus, kind: str, phase: str, *, session_id=None, ok=True, duration_ms=None, detail=None
+):
+    event = Activity(
+        source=SERVICE_NAME,
+        session_id=session_id,
+        service=SERVICE_NAME,
+        kind=kind,
+        phase=phase,
+        ok=ok,
+        duration_ms=duration_ms,
+        detail=detail,
+    )
+    bus.publish(event, maxlen=200)
+    _log("published Activity", event_type="Activity", kind=kind, phase=phase, ok=ok, detail=detail)
+
+
+def _llm_model_name(llm) -> str:
+    local = getattr(llm, "_local", llm)
+    return str(getattr(local, "model", type(local).__name__))
 
 
 def _log(message: str, level: int = logging.INFO, **fields: object) -> None:
@@ -122,6 +149,7 @@ def veto_context(session: Session, profile: PersonProfile, now: datetime) -> Vet
         settled=session.settled,
         in_night_window=session.config.in_night_window(now),
         things_to_avoid=profile.things_to_avoid,
+        restroom_need_resolved=session._restroom_need_resolved,
     )
 
 
@@ -278,16 +306,19 @@ def _maybe_publish_say(
     llm: LLMClient | None = None,
     *,
     context: VetoContext | None = None,
-) -> None:
+    direct: bool = False,
+) -> bool:
     """Publish a `Say` for `transition.strategy`, if it has a
     `say_template`, after passing it through `agent.rules.validate_say`
-    (HANDOFF.md rule 3). A rejection is logged loudly and nothing is
-    published -- silence, never a wrong sentence at 3am -- and does not
-    move `session`'s minimum-gap clock, since nothing was actually said.
+    (HANDOFF.md rule 3). A min-gap-only rejection is queued until the gap
+    elapses; all other rejections remain silent. The minimum-gap clock moves
+    only when speech is actually published.
     """
     strategy = transition.strategy
     if strategy is None or strategy.say_template is None:
-        return
+        return False
+    if session._pending_say is not None:
+        _drop_pending_say(session, "superseded")
 
     # Occupancy suppresses only ordinary bedside speech. The Show still
     # updates, the ladder and its dwell timers continue unchanged, and the
@@ -295,32 +326,66 @@ def _maybe_publish_say(
     # just outside the camera's view. The latest raw reading is used rather
     # than waiting for rule 5's absence limit: speaking to a room currently
     # believed empty has no benefit during that grace period.
-    if session.last_person_state == "absent" and not strategy.terminal:
+    if not session.person_present(now) and not strategy.terminal:
         _log(
             "suppressed ordinary Say while person is absent",
             event_type="Say",
             strategy=strategy.id,
         )
-        return
+        return False
 
     text = render_template(strategy.say_template, profile, time_words=time_as_words(now))
-    if llm is not None and strategy.id == "validate_and_redirect":
-        composition = llm.compose(
-            strategy.id,
-            # The rendered phrase, so the model never sees a raw placeholder.
-            text,
-            _profile_for_llm(profile),
-            time_as_words(now),
-            session.last_scene_note,
-            session.recent_utterances[-1] if session.recent_utterances else None,
-            session.goal,
-        )
+    compose = llm is not None and (
+        strategy.id == "validate_and_redirect"
+        or (direct and strategy.id in (REASSURE_WAITING_ID, "orient_time_place"))
+    )
+    if compose:
+        model = _llm_model_name(llm)
+        _activity(bus, "compose", "start", session_id=session.session_id, detail=model)
+        started = time.perf_counter()
+        outcome = "unavailable"
+        composition_result = None
+        try:
+            composition = llm.compose(
+                strategy.id,
+                # The rendered phrase, so the model never sees a raw placeholder.
+                text,
+                _profile_for_llm(profile),
+                time_as_words(now),
+                session.last_scene_note,
+                session.recent_utterances[-1] if session.recent_utterances else None,
+                session.goal,
+            )
+            if composition is not None:
+                composition_result = validate_composition(composition.text, profile)
+                if (
+                    composition_result.accepted
+                    and strategy.id == "orient_time_place"
+                    and (
+                        time_as_words(now).lower() not in composition.text.lower()
+                        or not any(word in composition.text.lower() for word in ("home", "bedroom"))
+                    )
+                ):
+                    composition_result = RuleResult(False, "orientation lacks local time or place")
+                outcome = "ok" if composition_result.accepted else "rejected"
+        except Exception:
+            outcome = "error"
+            raise
+        finally:
+            _activity(
+                bus,
+                "compose",
+                "end",
+                session_id=session.session_id,
+                ok=outcome == "ok",
+                duration_ms=(time.perf_counter() - started) * 1000,
+                detail=f"{model} {outcome}",
+            )
         # A model failure cannot replace the caregiver's known-safe phrase.
         # The rendered template still passes the same deterministic Say gate.
         if composition is None:
             _log("LLM composition unavailable; using caregiver fallback", level=logging.WARNING)
         else:
-            composition_result = validate_composition(composition.text, profile)
             if not composition_result.accepted:
                 # Log the deterministic reason only. The candidate may
                 # paraphrase a private utterance and must never be copied
@@ -348,7 +413,13 @@ def _maybe_publish_say(
         seconds_since_last_say=seconds_since_last_say,
         min_gap_seconds=session.config.say_min_gap_seconds,
     )
-    if not result.accepted:
+    gap_only = (
+        not result.accepted
+        and validate_say(
+            text, seconds_since_last_say=None, min_gap_seconds=session.config.say_min_gap_seconds
+        ).accepted
+    )
+    if not result.accepted and not gap_only:
         _log(
             "rejected Say, falling back to silence",
             level=logging.WARNING,
@@ -356,12 +427,12 @@ def _maybe_publish_say(
             strategy=strategy.id,
             reason=result.reason,
         )
-        return
+        return False
 
     if context is None:
         context = veto_context(session, profile, now)
     if _vetoed(Proposal("say", strategy.id, text=text, terminal=strategy.terminal), context):
-        return
+        return False
 
     say_event = Say(
         source=SERVICE_NAME,
@@ -374,9 +445,88 @@ def _maybe_publish_say(
         interruptible=strategy.id != ESCALATE_PHONE_ID,
         clip_id=strategy.clip_id,
     )
+    if gap_only:
+        session._pending_say = PendingSay(
+            say_event, transition.goal, transition.strategy_index, now, direct=direct
+        )
+        _log(
+            "deferred Say",
+            event_type="Say",
+            strategy=strategy.id,
+            session_id=transition.session_id,
+            goal=transition.goal,
+            reason=result.reason,
+        )
+        return False
+
     bus.publish(say_event)
-    session.record_say(now)
+    session.record_say(now, strategy.id, say_event.text)
     _log("published Say", event_type="Say", strategy=strategy.id)
+    return True
+
+
+def _drop_pending_say(session: Session, reason: str) -> None:
+    pending = session._pending_say
+    if pending is None:
+        return
+    session._pending_say = None
+    _log(
+        "dropped deferred Say",
+        event_type="Say",
+        strategy=pending.event.strategy,
+        session_id=pending.event.session_id,
+        reason=reason,
+    )
+
+
+def _flush_pending_say(bus, session: Session, now: datetime, profile: PersonProfile) -> None:
+    pending = session._pending_say
+    if pending is None:
+        return
+    age = (now - pending.queued_at).total_seconds()
+    current = session._engine.current()
+    seconds_since_last_say = session.seconds_since_last_say(now)
+    if age > PENDING_SAY_MAX_AGE_S:
+        _drop_pending_say(session, "max_age")
+    elif session.session_id != pending.event.session_id:
+        _drop_pending_say(session, "session_changed")
+    elif session.phase not in (Phase.OBSERVING, Phase.ENGAGED, Phase.ESCALATED):
+        _drop_pending_say(session, "session_inactive")
+    elif session.goal != pending.goal:
+        _drop_pending_say(session, "goal_changed")
+    elif not pending.direct and (
+        current is None
+        or current.id != pending.event.strategy
+        or session.strategy_index != pending.strategy_index
+    ):
+        _drop_pending_say(session, "strategy_changed")
+    elif not session.person_present(now) and pending.event.strategy != ESCALATE_PHONE_ID:
+        _drop_pending_say(session, "person_absent")
+    elif (
+        seconds_since_last_say is not None
+        and seconds_since_last_say < session.config.say_min_gap_seconds
+    ):
+        return
+    else:
+        context = veto_context(session, profile, now)
+        strategy_id = pending.event.strategy
+        terminal = strategy_id == ESCALATE_PHONE_ID
+        if _vetoed(Proposal("strategy", strategy_id, terminal=terminal), context) or _vetoed(
+            Proposal("say", strategy_id, text=pending.event.text, terminal=terminal), context
+        ):
+            _drop_pending_say(session, "vetoed")
+            return
+        if pending.show is not None:
+            bus.publish(pending.show.model_copy(update={"ts": datetime.now(UTC)}))
+        bus.publish(pending.event.model_copy(update={"ts": datetime.now(UTC)}))
+        session.record_say(now, pending.event.strategy, pending.event.text)
+        session._pending_say = None
+        _log(
+            "published deferred Say",
+            event_type="Say",
+            strategy=pending.event.strategy,
+            session_id=pending.event.session_id,
+        )
 
 
 def _publish_transition(
@@ -495,11 +645,60 @@ def _publish_transition(
         Proposal("strategy", strategy.id, terminal=strategy.terminal), context
     ):
         show_event = _show_for_transition(transition, now, profile)
+        spoke = _maybe_publish_say(bus, transition, session, now, profile, llm, context=context)
+        if show_event.face == "speaking" and not spoke:
+            if (
+                session._pending_say is not None
+                and session._pending_say.event.strategy == strategy.id
+            ):
+                session._pending_say = replace(session._pending_say, show=show_event)
+            show_event = show_event.model_copy(update={"face": "awake"})
         bus.publish(show_event)
         _log("published Show", event_type="Show", face=show_event.face)
-        _maybe_publish_say(bus, transition, session, now, profile, llm, context=context)
 
     return event
+
+
+def _reply_to_utterance(
+    bus, session: Session, strategy_id: str, now: datetime, profile: PersonProfile, llm
+) -> None:
+    """Answer once without selecting a ladder rung or changing the session goal."""
+    strategy = next((item for item in session.strategies if item.id == strategy_id), None)
+    if strategy is None:
+        return
+    context = veto_context(session, profile, now)
+    if strategy_id == PATH_LIGHT_ID:
+        # validate_goal rejects wait_for_caregiver -> restroom. Keep the
+        # caregiver alert active while still meeting the stated toilet need.
+        assert not validate_goal(session.goal, "restroom").accepted
+        light = LightCommand(
+            source=SERVICE_NAME,
+            session_id=session.session_id,
+            light="hallway",
+            state="on",
+            reason="escalated_restroom_need",
+        )
+        if not _vetoed(Proposal("light", "on"), context):
+            bus.publish(light)
+    if _vetoed(Proposal("strategy", strategy.id), context):
+        return
+    transition = Transition(
+        phase=session.phase,
+        session_id=session.session_id,
+        goal=session.goal,
+        strategy_index=session.strategy_index,
+        reason="utterance_reply",
+        strategy=strategy,
+    )
+    show = _show_for_strategy(strategy, session.session_id, now, profile)
+    spoke = _maybe_publish_say(
+        bus, transition, session, now, profile, llm, context=context, direct=True
+    )
+    if show.face == "speaking" and not spoke:
+        if session._pending_say is not None and session._pending_say.event.strategy == strategy.id:
+            session._pending_say = replace(session._pending_say, show=show)
+        show = show.model_copy(update={"face": "awake"})
+    bus.publish(show)
 
 
 def run_once(
@@ -542,7 +741,7 @@ def run_once(
             )
 
     utterance_messages = bus.read(
-        UTTERANCE_STREAM, UTTERANCE_GROUP, consumer, count=count, block_ms=0
+        UTTERANCE_STREAM, UTTERANCE_GROUP, consumer, count=count, block_ms=None
     )
     for msg_id, event in utterance_messages:
         bus.ack(UTTERANCE_STREAM, UTTERANCE_GROUP, msg_id)
@@ -552,9 +751,14 @@ def run_once(
         if not isinstance(event, Utterance):
             continue
         now = now_fn()
+        if session.is_self_echo(event.text, now):
+            _log(
+                "ignored self-echo Utterance", event_type="Utterance", session_id=session.session_id
+            )
+            continue
         prior_turns = session.recent_utterances
         transition = session.on_utterance(now)
-        llm_active = session.phase in (Phase.OBSERVING, Phase.ENGAGED)
+        llm_active = session.phase in (Phase.OBSERVING, Phase.ENGAGED, Phase.ESCALATED)
         if llm_active:
             # Record only after snapshotting the prior turns used by
             # ``interpret``. Composition triggered by this same update can
@@ -566,8 +770,29 @@ def run_once(
             )
 
         if llm is not None and llm_active:
-            interpretation = llm.interpret(event.text, prior_turns, _profile_for_llm(profile))
+            model = _llm_model_name(llm)
+            _activity(bus, "interpret", "start", session_id=session.session_id, detail=model)
+            started = time.perf_counter()
+            interpretation = None
+            outcome = "unavailable"
+            try:
+                interpretation = llm.interpret(event.text, prior_turns, _profile_for_llm(profile))
+                outcome = "ok" if interpretation is not None else "unavailable"
+            except Exception:
+                outcome = "error"
+                raise
+            finally:
+                _activity(
+                    bus,
+                    "interpret",
+                    "end",
+                    session_id=session.session_id,
+                    ok=outcome == "ok",
+                    duration_ms=(time.perf_counter() - started) * 1000,
+                    detail=f"{model} {outcome}",
+                )
             if interpretation is not None:
+                goal_before_interpretation = session.goal
                 interpreted = session.on_interpretation(
                     interpretation.intent.value, interpretation.distress, now
                 )
@@ -578,15 +803,49 @@ def run_once(
                         )
                     )
 
+                intent = interpretation.intent.value
+                if session.phase in (Phase.ENGAGED, Phase.ESCALATED):
+                    reply_id = None
+                    if intent == "wants_bed" and (
+                        goal_before_interpretation == "return_to_bed"
+                        or session.phase == Phase.ESCALATED
+                    ):
+                        reply_id = "acknowledge_return"
+                    elif intent == "confused_time":
+                        explicit_question = "?" in event.text or any(
+                            phrase in event.text.lower()
+                            for phrase in (
+                                "what time",
+                                "where am i",
+                                "what's the time",
+                                "is it morning",
+                            )
+                        )
+                        if explicit_question or not session.recently_said("orient_time_place", now):
+                            reply_id = "orient_time_place"
+                    elif intent == "need_restroom" and session.phase == Phase.ESCALATED:
+                        reply_id = PATH_LIGHT_ID
+                    elif session.phase == Phase.ESCALATED:
+                        reply_id = REASSURE_WAITING_ID
+                    if reply_id is not None and session._last_say_at != now:
+                        _reply_to_utterance(bus, session, reply_id, now, profile, llm)
+            elif session.phase == Phase.ESCALATED and session._last_say_at != now:
+                _reply_to_utterance(bus, session, REASSURE_WAITING_ID, now, profile, llm)
+
             # Interpretation may just have escalated. A plan must never run
             # afterward and use an otherwise legal goal-reset edge to undo
             # ``wait_for_caregiver``.
             plan = (
                 llm.plan(_session_state_for_llm(session), _profile_for_llm(profile))
                 if session.phase == Phase.ENGAGED
+                and not session.compliance_hold(now)
+                and (interpretation is None or interpretation.intent.value != "confused_time")
                 else None
             )
-            if plan is not None:
+            reply_scheduled = session._last_say_at == now or (
+                session._pending_say is not None and session._pending_say.queued_at == now
+            )
+            if plan is not None and not reply_scheduled:
                 if plan.goal_change is not None:
                     proposed = session.propose_goal(plan.goal_change, "llm_plan", now)
                     if proposed is not None:
@@ -615,6 +874,8 @@ def run_once(
                             level=logging.WARNING,
                             strategy=plan.next_strategy,
                         )
+        elif session.phase == Phase.ESCALATED and session._last_say_at != now:
+            _reply_to_utterance(bus, session, REASSURE_WAITING_ID, now, profile, None)
 
     now = now_fn()
     transition = session.tick(now)
@@ -622,6 +883,8 @@ def run_once(
         published.append(
             _publish_transition(bus, transition, session, now, profile=profile, llm=llm)
         )
+
+    _flush_pending_say(bus, session, now, profile)
 
     return published
 
@@ -737,6 +1000,9 @@ def run() -> None:
         model=config.llm_model,
         timeout_seconds=config.llm_timeout_seconds,
     )
+    warm_up = getattr(local_llm, "warm_up", None)
+    if warm_up is not None:
+        _log("local llm warm-up", model=config.llm_model, ok=warm_up())
     cloud_llm = None
     if profile.enable_cloud_fallback:
         api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
