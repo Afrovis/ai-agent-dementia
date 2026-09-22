@@ -13,24 +13,25 @@ class FakeSegment:
     start: float
     end: float
     avg_logprob: float
+    no_speech_prob: float = 0.0
 
 
 class FakeModel:
-    def __init__(self) -> None:
+    def __init__(self, segments=None) -> None:
         self.kwargs = None
+        self.segments = segments
 
     def transcribe(self, audio, **kwargs):
         self.audio = audio
         self.kwargs = kwargs
-        return iter(
-            [
-                FakeSegment(" I need", 0.0, 0.5, -0.1),
-                FakeSegment(" water. ", 0.5, 1.0, -0.3),
-            ]
-        ), object()
+        segments = self.segments or [
+            FakeSegment(" I need", 0.0, 0.5, -0.1),
+            FakeSegment(" water. ", 0.5, 1.0, -0.3),
+        ]
+        return iter(segments), object()
 
 
-def test_pcm_is_transcribed_as_english_without_second_vad_pass():
+def test_pcm_is_transcribed_as_english_with_silero_vad():
     transcriber = FasterWhisperTranscriber()
     model = FakeModel()
     transcriber._model = model
@@ -43,7 +44,7 @@ def test_pcm_is_transcribed_as_english_without_second_vad_pass():
     assert model.kwargs == {
         "language": "en",
         "beam_size": 1,
-        "vad_filter": False,
+        "vad_filter": True,
         "condition_on_previous_text": False,
     }
 
@@ -51,3 +52,24 @@ def test_pcm_is_transcribed_as_english_without_second_vad_pass():
 def test_non_16khz_audio_is_rejected():
     with pytest.raises(ValueError, match="16 kHz"):
         FasterWhisperTranscriber().transcribe(b"\x00\x00", 8_000)
+
+
+def test_segments_whisper_marks_as_non_speech_are_dropped():
+    transcriber = FasterWhisperTranscriber()
+    transcriber._model = FakeModel(
+        [FakeSegment(" Thank you.", 0.0, 2.0, avg_logprob=-1.2, no_speech_prob=0.8)]
+    )
+
+    result = transcriber.transcribe(b"\x00\x00", 16_000)
+
+    assert result.text == ""
+    assert result.confidence == 0.0
+
+
+def test_confident_speech_survives_a_high_no_speech_probability():
+    transcriber = FasterWhisperTranscriber()
+    transcriber._model = FakeModel(
+        [FakeSegment(" I need the bathroom.", 0.0, 2.0, avg_logprob=-0.2, no_speech_prob=0.7)]
+    )
+
+    assert transcriber.transcribe(b"\x00\x00", 16_000).text == "I need the bathroom."

@@ -6,6 +6,12 @@ import math
 from dataclasses import dataclass
 from typing import Protocol
 
+# Whisper's own silence rule (openai/whisper `transcribe`): a segment the model
+# thinks is probably not speech, decoded with low confidence, is dropped.
+# On noise, Whisper otherwise invents stock phrases such as "Thank you."
+NO_SPEECH_PROB_THRESHOLD = 0.6
+LOW_LOGPROB_THRESHOLD = -1.0
+
 
 @dataclass(frozen=True)
 class Transcript:
@@ -60,10 +66,14 @@ class FasterWhisperTranscriber:
             audio,
             language="en",
             beam_size=1,
-            vad_filter=False,
+            # WebRTC VAD upstream is coarse and passes fan hum, clicks and
+            # typing. Silero (bundled with faster-whisper) strips non-speech
+            # before decoding, so noise-only audio costs almost nothing.
+            vad_filter=True,
             condition_on_previous_text=False,
         )
-        segments = list(segments_iter)  # Inference happens while consuming the generator.
+        # Inference happens while consuming the generator.
+        segments = [segment for segment in segments_iter if not _is_non_speech(segment)]
         text = " ".join(
             segment.text.strip() for segment in segments if segment.text.strip()
         ).strip()
@@ -75,3 +85,9 @@ class FasterWhisperTranscriber:
         ) / sum(weights)
         confidence = min(1.0, max(0.0, math.exp(mean_log_probability)))
         return Transcript(text=text, confidence=confidence)
+
+
+def _is_non_speech(segment) -> bool:
+    """Whisper's silence rule for one decoded segment."""
+    no_speech_prob = getattr(segment, "no_speech_prob", 0.0)
+    return no_speech_prob > NO_SPEECH_PROB_THRESHOLD and segment.avg_logprob < LOW_LOGPROB_THRESHOLD
