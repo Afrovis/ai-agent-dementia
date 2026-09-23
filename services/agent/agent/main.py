@@ -91,8 +91,11 @@ from agent.questions import is_direct_question
 from agent.rules import Phase, RuleResult, validate_composition, validate_say
 from agent.session import PendingSay, Session, Transition
 from agent.strategies import (
+    ACKNOWLEDGE_FEELING_ID,
     ACKNOWLEDGE_PAIN_ID,
     ACKNOWLEDGE_PROGRESS_ID,
+    ASK_NEED_ID,
+    CAREGIVER_ALERTED_ID,
     COMFORT_PAIN_ID,
     ESCALATE_PHONE_ID,
     PATH_LIGHT_ID,
@@ -202,14 +205,23 @@ def _reassure_or_stay_silent(
     llm,
     *,
     distress: int | None = None,
+    preferred_id: str = REASSURE_WAITING_ID,
 ) -> None:
-    """Reserve silence after two replies while still answering questions or maximum distress."""
+    """Pace all escalated replies together; a person query prefers the alerted wording.
+
+    If it was just spoken, use the rotating reassurance phrases instead.
+    """
     urgent = is_direct_question(text) or distress == 3
     since_last_say = session.seconds_since_last_say(now)
     if session.reassurance_count < MAX_REASSURANCES or (
         urgent and (since_last_say is None or since_last_say >= REASSURE_AFTER_CAP_INTERVAL_S)
     ):
-        _reply_to_utterance(bus, session, REASSURE_WAITING_ID, now, profile, llm)
+        if (
+            preferred_id == CAREGIVER_ALERTED_ID
+            and session._last_reassurance_strategy_id == CAREGIVER_ALERTED_ID
+        ):
+            preferred_id = REASSURE_WAITING_ID
+        _reply_to_utterance(bus, session, preferred_id, now, profile, llm)
         return
     detail = {
         "decision": "no_reply",
@@ -438,7 +450,7 @@ def _maybe_publish_say(
     time_words = spoken_time_words(session.wall_clock(now), session._spoken_time_variant)
     text = render_template(strategy.say_template, profile, time_words=time_words)
     compose = llm is not None and (
-        strategy.id == "validate_and_redirect"
+        strategy.id in ("validate_and_redirect", ACKNOWLEDGE_FEELING_ID)
         or (direct and strategy.id in (REASSURE_WAITING_ID, "orient_time_place"))
     )
     if compose:
@@ -892,6 +904,8 @@ def _reply_to_utterance(
     strategy = next((item for item in session.strategies if item.id == strategy_id), None)
     if strategy is None:
         return
+    if strategy_id == CAREGIVER_ALERTED_ID and session.phase != Phase.ESCALATED:
+        return
     context = veto_context(session, profile, now)
     if _vetoed(bus, Proposal("strategy", strategy.id), context, session_id=session.session_id):
         return
@@ -1195,7 +1209,11 @@ def run_once(
                         else:
                             _intentional_silence(bus, session, event.text, "pain_acknowledged")
                             intentional_silence = True
-                    elif session.phase == Phase.ENGAGED and session.goal == "restroom":
+                    elif (
+                        session.phase == Phase.ENGAGED
+                        and session.goal == "restroom"
+                        and intent in {"fine", "unclear", "need_restroom"}
+                    ):
                         # "Nearly there." is often read as need_restroom; with the
                         # goal already restroom it is progress, not a new need.
                         progress = intent in {"fine", "unclear"} or (
@@ -1209,17 +1227,53 @@ def run_once(
                                     bus, session, event.text, "progress_acknowledged"
                                 )
                                 intentional_silence = True
+                    elif session.phase == Phase.ENGAGED and intent in {
+                        "looking_for_person",
+                        "wants_to_leave",
+                    }:
+                        if (
+                            not is_direct_question(event.text)
+                            and session._last_validation_at is not None
+                            and (now - session._last_validation_at).total_seconds() < 60
+                        ):
+                            _intentional_silence(bus, session, event.text, "validated_recently")
+                            intentional_silence = True
+                        else:
+                            reply_id = (
+                                ACKNOWLEDGE_FEELING_ID
+                                if session.last_person_state == "in_bed"
+                                else "validate_and_redirect"
+                            )
+                    elif session.phase == Phase.ENGAGED and intent == "unclear":
+                        if is_direct_question(event.text) and session._need_asked:
+                            reply_id = (
+                                ACKNOWLEDGE_FEELING_ID
+                                if session.last_person_state == "in_bed"
+                                else "validate_and_redirect"
+                            )
+                        elif not session._need_asked:
+                            reply_id = ASK_NEED_ID
+                        else:
+                            _intentional_silence(bus, session, event.text, "need_asked")
+                            intentional_silence = True
                     elif cooldown_reply and intent in {"looking_for_person", "pain"}:
                         reply_id = REASSURE_WAITING_ID
                     elif session.phase == Phase.ESCALATED:
-                        reply_id = REASSURE_WAITING_ID
+                        reply_id = (
+                            CAREGIVER_ALERTED_ID
+                            if intent == "looking_for_person"
+                            else REASSURE_WAITING_ID
+                        )
                     # A goal or phase transition may already have said or queued
                     # a sentence this tick. A reply must not add a second one.
                     reply_scheduled = session._last_say_at == now or (
                         session._pending_say is not None and session._pending_say.queued_at == now
                     )
                     if reply_id is not None and not reply_scheduled:
-                        if reply_id == REASSURE_WAITING_ID and session.phase == Phase.ESCALATED:
+                        if (
+                            reply_id in {REASSURE_WAITING_ID, CAREGIVER_ALERTED_ID}
+                            and session.phase == Phase.ESCALATED
+                        ):
                             _reassure_or_stay_silent(
                                 bus,
                                 session,
@@ -1228,6 +1282,7 @@ def run_once(
                                 profile,
                                 llm,
                                 distress=interpretation.distress,
+                                preferred_id=reply_id,
                             )
                         else:
                             _reply_to_utterance(bus, session, reply_id, now, profile, llm)

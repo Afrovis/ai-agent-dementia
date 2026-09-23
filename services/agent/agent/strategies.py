@@ -88,6 +88,9 @@ ACKNOWLEDGE_RETURN_ID = "acknowledge_return"
 ACKNOWLEDGE_PAIN_ID = "acknowledge_pain"
 COMFORT_PAIN_ID = "comfort_pain"
 ACKNOWLEDGE_PROGRESS_ID = "acknowledge_progress"
+ACKNOWLEDGE_FEELING_ID = "acknowledge_feeling"
+ASK_NEED_ID = "ask_need"
+CAREGIVER_ALERTED_ID = "caregiver_alerted"
 GUIDED_RETURN_ID = "guided_return"
 FAMILIAR_VOICE_ID = "familiar_voice"
 
@@ -394,6 +397,48 @@ DEFAULT_STRATEGIES: tuple[StrategyDef, ...] = (
         say_template="Good{name_vocative}, take your time.",
         goal_only=True,
     ),
+    StrategyDef(
+        id=ACKNOWLEDGE_FEELING_ID,
+        order=14,
+        enabled=True,
+        intrusiveness=2,
+        dwell_seconds=0.0,
+        cooldown_seconds=0.0,
+        face="speaking",
+        brightness=0.5,
+        headline_template="I'm here with you",
+        body_template="You can rest now.",
+        say_template="I'm here with you{name_vocative}; you can rest now.",
+        goal_only=True,
+    ),
+    StrategyDef(
+        id=ASK_NEED_ID,
+        order=15,
+        enabled=True,
+        intrusiveness=2,
+        dwell_seconds=0.0,
+        cooldown_seconds=0.0,
+        face="speaking",
+        brightness=0.5,
+        headline_template="Is there something you need?",
+        body_template="I'm here to help.",
+        say_template="Is there something you need{name_vocative}?",
+        goal_only=True,
+    ),
+    StrategyDef(
+        id=CAREGIVER_ALERTED_ID,
+        order=16,
+        enabled=True,
+        intrusiveness=2,
+        dwell_seconds=0.0,
+        cooldown_seconds=0.0,
+        face="speaking",
+        brightness=0.5,
+        headline_template="Help is coming",
+        body_template="Someone is on their way.",
+        say_template="I've let {caregiver_name} know{name_vocative}, and help is on the way.",
+        goal_only=True,
+    ),
 )
 
 
@@ -447,7 +492,7 @@ def render_template(template: str, profile: PersonProfile, **extra: str) -> str:
     fields: dict[str, str] = {
         "name": spoken_name,
         "preferred_address": profile.preferred_address,
-        "caregiver_name": profile.caregiver_name,
+        "caregiver_name": profile.caregiver_name or "someone",
         "caregiver_relationship": profile.caregiver_relationship,
         "restroom_location": profile.restroom_location,
         "restroom_direction": (

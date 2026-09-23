@@ -91,6 +91,7 @@ from agent.config import AgentConfig
 from agent.goals import COMFORT_GOAL, RESTROOM_GOAL, ROOT_GOAL, WAIT_FOR_CAREGIVER_GOAL
 from agent.rules import Phase, validate, validate_goal
 from agent.strategies import (
+    CAREGIVER_ALERTED_ID,
     DEFAULT_STRATEGIES,
     ESCALATE_PHONE_ID,
     GUIDED_RETURN_ID,
@@ -245,10 +246,13 @@ class Session:
     # to enforce yet".
     _last_say_at: datetime | None = field(default=None, init=False, repr=False)
     _reassurance_texts: list[str] = field(default_factory=list, init=False, repr=False)
+    _last_reassurance_strategy_id: str | None = field(default=None, init=False, repr=False)
     _reassurance_reply_count: int = field(default=0, init=False, repr=False)
     _spoken_time_variant: int = field(default=0, init=False, repr=False)
     _pain_acknowledged: bool = field(default=False, init=False, repr=False)
     _progress_acknowledged: bool = field(default=False, init=False, repr=False)
+    _need_asked: bool = field(default=False, init=False, repr=False)
+    _last_validation_at: datetime | None = field(default=None, init=False, repr=False)
     _pending_say: PendingSay | None = field(default=None, init=False, repr=False)
     _compliance_until: datetime | None = field(default=None, init=False, repr=False)
     _say_history: list[tuple[datetime, str, str]] = field(
@@ -488,10 +492,13 @@ class Session:
         self._pending_zone_count = 0
         self._last_say_at = None
         self._reassurance_texts.clear()
+        self._last_reassurance_strategy_id = None
         self._reassurance_reply_count = 0
         self._spoken_time_variant = 0
         self._pain_acknowledged = False
         self._progress_acknowledged = False
+        self._need_asked = False
+        self._last_validation_at = None
         self._compliance_until = None
         self._say_history.clear()
         self._consecutive_distress = 0
@@ -1074,8 +1081,16 @@ class Session:
             self._pain_acknowledged = True
         elif strategy_id == "acknowledge_progress":
             self._progress_acknowledged = True
-        if self.phase == Phase.ESCALATED and strategy_id == REASSURE_WAITING_ID:
+        elif strategy_id == "ask_need":
+            self._need_asked = True
+        elif strategy_id in {"validate_and_redirect", "acknowledge_feeling"}:
+            self._last_validation_at = now
+        if self.phase == Phase.ESCALATED and strategy_id in {
+            REASSURE_WAITING_ID,
+            CAREGIVER_ALERTED_ID,
+        }:
             self._reassurance_texts.append(text)
+            self._last_reassurance_strategy_id = strategy_id
             # Scheduled check-ins share wording history but never use the
             # two-reply budget reserved for the person's utterances.
             if trigger != "escalated_checkin":

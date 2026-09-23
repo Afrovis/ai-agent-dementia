@@ -10,7 +10,8 @@
 #
 # HANDOFF.md section 7 / PLAN.md section 5.3 list ten strategies. Eight are
 # implemented, plus reply-only acknowledge_return, acknowledge_pain,
-# comfort_pain, acknowledge_progress, and reassure_waiting strategies:
+# comfort_pain, acknowledge_progress, acknowledge_feeling, ask_need,
+# caregiver_alerted, and reassure_waiting strategies:
 #
 #   1  ambient_orient          2  soft_greeting        3  orient_time_place
 #   4  validate_and_redirect   5  guided_return        6  familiar_voice
@@ -20,6 +21,9 @@
 #   -  acknowledge_pain      acknowledges an urgent pain report
 #   -  comfort_pain          comforts a mild pain report
 #   -  acknowledge_progress  acknowledges restroom progress once
+#   -  acknowledge_feeling   validates a person seeking remark while in bed
+#   -  ask_need              checks an unclear need once per session
+#   -  caregiver_alerted     answers a person seeking remark after escalation
 #
 # Deliberately absent, and not a bug:
 #
@@ -59,7 +63,7 @@
 #                     (`ambient_orient`'s catalogue entry: "Say: none").
 #                     Every `say` here must already satisfy HANDOFF.md
 #                     rule 3 (one sentence, no "no"/"you can't"/"you're
-#                     wrong", no question) -- `agent.rules.validate_say`
+#                     wrong", no memory question) -- `agent.rules.validate_say`
 #                     enforces this at publish time regardless, and a
 #                     template that fails it is simply never spoken.
 #   photo_id          a photo shown behind the face, or omit/null for none.
@@ -113,6 +117,21 @@ strategies:
     headline: Take your time
     body: The path is lit.
     say: "Good{name_vocative}, take your time."
+  - id: acknowledge_feeling
+    enabled: true
+    headline: I'm here with you
+    body: You can rest now.
+    say: "I'm here with you{name_vocative}; you can rest now."
+  - id: ask_need
+    enabled: true
+    headline: Is there something you need?
+    body: I'm here to help.
+    say: "Is there something you need{name_vocative}?"
+  - id: caregiver_alerted
+    enabled: true
+    headline: Help is coming
+    body: Someone is on their way.
+    say: "I've let {caregiver_name} know{name_vocative}, and help is on the way."
   - id: ambient_orient
     order: 1
     enabled: true
