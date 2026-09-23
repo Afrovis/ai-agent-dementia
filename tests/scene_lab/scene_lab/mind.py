@@ -75,15 +75,23 @@ def build_prompt(persona: Persona, context: dict) -> str:
     for row in context.get("history", []):
         kind = row.get("kind")
         if kind == "heard":
-            history.append(f"Agent heard: {_heard(row['text'], persona.hearing)}")
+            history.append(
+                f"The bedside device said to you: {_heard(row['text'], persona.hearing)}"
+            )
         elif kind == "say":
             history.append(f"You said: {row['text']}")
         elif kind == "move":
             history.append(f"You moved: {row['state']} in {row['zone']}")
     scene = "\n".join(history) or "Nothing has happened yet."
     return (
-        "Play this person respectfully: a confused older adult awake at night. "
+        "You play the person in the bed: a confused older adult awake at night. "
+        "You are never the bedside device, a carer or a narrator; the device's words are "
+        "listed as 'The bedside device said to you' and are not yours to repeat or continue. "
+        "Play the person respectfully. "
         "Use plain speech and short lines. Never caricature dementia. Stay in persona. "
+        "Pace like a real person: say one or two short lines, then usually wait 8 to 20 "
+        "seconds for the device to answer before speaking again; only an impatient persona "
+        "or one who interrupts speaks sooner. "
         "Express the hidden need in your own natural way; do not name its keyword unless natural. "
         "Return JSON only with beats, end_scene, and note. Each beat is exactly one of "
         '{"wait": seconds}, {"say": text, "style": "normal|mumble|trailing"}, '

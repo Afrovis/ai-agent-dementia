@@ -28,7 +28,8 @@ def test_prompt_context_and_poor_hearing():
     assert "Good night, Jean" in first
     assert "agent playback ended" in first
     assert "Tom is nearby and everything is settled" not in first
-    assert "Agent heard:" in first
+    assert "The bedside device said to you:" in first
+    assert "never the bedside device" in first
     assert "You moved: walking in door" in first
 
 
@@ -159,6 +160,7 @@ def test_scheduler_replaces_remaining_beats_and_debounces():
             "duration_s": 6,
             "profile": "default",
             "mind": "claude",
+            "mind_silence_s": 1,
             "persona": {"summary": "Jean"},
             "opening": [{"at": 0, "say": "Current line"}],
         }

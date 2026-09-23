@@ -159,6 +159,13 @@ async def schedule(
             # A scripted scene has no mind: decision points must not replace its beats.
             if reason and (scene.mind == "script" or not started_mind):
                 reason = None
+            # The person's own plan is still running: finishing a line or reaching a waypoint
+            # is not a reason to re-plan (that produced a nonstop monologue). The device
+            # speaking and silence still are.
+            if reason in {"person_finished_speaking", "body_reached_waypoint"} and index < len(
+                beats
+            ):
+                reason = None
             if reason and pending_mind is None and not stopped:
                 pending_mind = asyncio.create_task(
                     mind.decide(
