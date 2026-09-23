@@ -38,7 +38,7 @@ logger = logging.getLogger(SERVICE_NAME)
 
 def _log(message: str, level: int = logging.INFO, **fields: object) -> None:
     """One structured JSON line to stdout, same convention as `perceive.main`
-    (CLAUDE.md's "log one structured JSON line per event"). `classify.py` has
+    (AGENTS.md's "log one structured JSON line per event"). `classify.py` has
     no bus and no camera frame to accidentally log, so this is only ever
     used for the fall-drop/floor-suspect triggers `StateTracker.update`
     fires -- rare, worth a line each, and not the per-frame volume that

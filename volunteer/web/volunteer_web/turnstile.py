@@ -1,7 +1,7 @@
 """Cloudflare Turnstile server-side verification (HANDOFF.md section 5.5).
 
 `TurnstileVerifier` is the real client; tests use `StubVerifier` so the V5
-API can be exercised without reaching Cloudflare (CLAUDE.md: no service may
+API can be exercised without reaching Cloudflare (AGENTS.md: no service may
 require a live network to run its tests).
 """
 

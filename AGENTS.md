@@ -1,7 +1,8 @@
 # AGENTS.md
 
-Guidance for coding agents (Claude Code, Codex) and contributors. `CLAUDE.md`
-imports this file, so it is the single source for both tools.
+Guidance for coding agents and contributors. Claude Code and Codex both read
+this file directly; there is deliberately no `CLAUDE.md` (see "Keeping these
+instructions current").
 
 Night Companion is a local, embodied AI agent that helps a person with dementia
 return safely to bed at night. It is not a medical device or a substitute for
@@ -157,6 +158,36 @@ they load only when relevant:
 - `services/listen/AGENTS.md`: VAD/STT gating, Whisper weights, barge-in.
 - `docs/TLS.md`: Tailscale certificates for the media bridge.
 
+## Working with Claude Code
+
+Project skills live in `.claude/skills/`; keep this list in sync with it:
+
+- `run-stack`: start the local stack, check the bridge and pages are alive,
+  tear it down. Use it before claiming a dashboard or embodiment change works.
+- `decision-bench-annotate`: label decision_bench scenarios with the isolated
+  Opus annotator, hand flagged ones to the human, apply reviewed labels.
+- `demo-creation-video`: polished 30 fps demo clips from the bedroom recordings
+  (not the 2 fps `tools/video_eval` review renders).
+
+Tooling that calls Claude (the decision_bench annotator, the scene_lab person
+and director) runs `claude -p` on the claude.ai subscription, never the API.
+Long scene_lab runs can exhaust the subscription session limit, so check
+before starting several in a row.
+
+Delegation in this repo:
+
+- Read the files you know you need directly. Hand a subagent only broad
+  sweeps (for example "which services subscribe to `gaze`"), and give it the
+  absolute path of your worktree: many `.claude/worktrees/*` checkouts sit
+  under the main one, and a search from the wrong root answers about stale
+  code.
+- A Codex or subagent brief must be self-contained: it does not see this
+  conversation. Name the files, the expected change, how to verify it, and
+  the privacy rule above. Recordings, frames and labels outside the repo are
+  never passed on; only face-blurred, verified frames may be.
+- Verify delegated results yourself before reporting them: run the tests,
+  read the cited lines, look at the rendered page (the `run-stack` skill).
+
 ## Keeping these instructions current
 
 These files are part of the code: a change that makes a line here wrong fixes
@@ -172,5 +203,13 @@ because agents act on them with confidence.
 - Leave out what the code already shows (file listings, signatures), dated
   results (they go in `EXPERIMENTS.md`) and plans (they go in `docs/`).
 - Keep this file under about 200 lines; move detail that only one area needs
-  into that area's `AGENTS.md` and list it above. Every nested `AGENTS.md` has
-  a sibling `CLAUDE.md` that contains only `@AGENTS.md`.
+  into that area's `AGENTS.md` and list it under "Where the detail lives".
+- Do not add a `CLAUDE.md` anywhere. Claude Code (2.1.277 and later, default
+  "Project instructions" setting) reads `AGENTS.md` only where no `CLAUDE.md`
+  exists, so one would silently hide the `AGENTS.md` beside it. Put
+  Claude-only notes in "Working with Claude Code" above.
+- When a skill's workflow changes (a command, path, flag or output location),
+  update its `SKILL.md` in the same change. When you repeat a multi-step
+  procedure with traps a second time and no skill covers it, propose a skill
+  rather than growing this file. Remove a skill when the tool it drives goes.
+- Check what actually loads with `/context`.

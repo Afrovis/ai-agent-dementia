@@ -90,7 +90,7 @@ stays eligible to rescue a real person from a *high-confidence* phantom
 override (see `KnownPhantoms.select`). `perceive` calls `detect`/`select`
 once per frame `capture` republishes, at `CAPTURE_FPS` (2fps while the room
 has motion, dropping to `CAPTURE_IDLE_FPS`, 0.5fps by default, once it has
-been still for `CAPTURE_STATIC_SECONDS` -- see CLAUDE.md). 15 calls is
+been still for `CAPTURE_STATIC_SECONDS` -- see AGENTS.md). 15 calls is
 7.5-30s of gap at those rates: generous enough to bridge a stretch where a
 falling person's own confidence dips call after call (the validated
 2026-09-15 case: 12 consecutive frames losing to a painting), short enough

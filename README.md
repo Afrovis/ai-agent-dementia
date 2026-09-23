@@ -149,5 +149,5 @@ whether something is an emergency.
   and [docs/FLOOR_DETECTION_HANDOFF.md](docs/FLOOR_DETECTION_HANDOFF.md) —
   the latest accuracy investigations.
 - [AGENTS.md](AGENTS.md) — how to run the stack locally and test it without
-  hardware; shared by Claude Code (`CLAUDE.md` imports it) and Codex.
+  hardware; read by both Claude Code and Codex.
 - [docs/TLS.md](docs/TLS.md) — certificates for the camera/mic bridge.
