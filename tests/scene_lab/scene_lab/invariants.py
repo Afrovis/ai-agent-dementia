@@ -231,6 +231,30 @@ def _speech_end(trace: Trace, utt: TraceEvent) -> float:
     return start.t if start else utt.t
 
 
+def _utterance_processing_times(trace: Trace) -> list[float]:
+    """When the agent registered each utterance.
+
+    Session stamps `_last_utterance_at` when it processes the utterance, after the
+    interpret call, not when listen published it. The `interpreted` record for the same
+    text carries that time; without one, fall back to the Utterance time.
+    """
+    records = [
+        e for e in trace.events if e.kind == "decision" and e.data.get("decision") == "interpreted"
+    ]
+    times = []
+    for utt in trace.of_type("Utterance"):
+        record = next(
+            (
+                r
+                for r in records
+                if r.data.get("text") == utt.data.get("text") and utt.t <= r.t <= utt.t + 30
+            ),
+            None,
+        )
+        times.append(record.t if record else utt.t)
+    return sorted(times)
+
+
 def _restroom_need_resolved(trace: Trace, t: float) -> bool:
     """Mirror Session._restroom_need_resolved from GoalChanged events up to t."""
     resolved = False
@@ -490,6 +514,9 @@ def check_trace(
             )
     _summary(trace, "TT-7", len(utts) - 1 if len(utts) > 1 else 0, out)
 
+    # Settled, as in the agent's NICE-05 rule: in bed and silent since lying down. Speaking
+    # from bed restarts the settle clock, so a reply to the person is not "after settling".
+    heard = _utterance_processing_times(trace)
     settled_windows = []
     for i, person in enumerate(people):
         if person.data.get("state") != "in_bed" or (
@@ -497,8 +524,10 @@ def check_trace(
         ):
             continue
         end = next((p.t for p in people[i + 1 :] if p.data.get("state") != "in_bed"), trace.end_t)
-        if end - person.t >= thresholds.settle_s:
-            settled_windows.append((person.t + thresholds.settle_s, end))
+        breaks = [person.t] + [u for u in heard if person.t <= u < end] + [end]
+        for begin, stop in zip(breaks, breaks[1:]):
+            if stop - begin >= thresholds.settle_s:
+                settled_windows.append((begin + thresholds.settle_s, stop))
     for start, end in settled_windows:
         for event in trace.events:
             if not start <= event.t < end:
@@ -841,7 +870,7 @@ def _check_veto(trace: Trace, out: list[InvariantResult]) -> None:
         settled = (
             person.data.get("state") == "in_bed"
             and last_lie is not None
-            and not any(u.t >= last_lie and u.t <= action.t for u in trace.of_type("Utterance"))
+            and not any(last_lie <= u <= action.t for u in _utterance_processing_times(trace))
         )
         ctx = VetoContext(
             phase=state["phase"],
