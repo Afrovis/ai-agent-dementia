@@ -13,6 +13,9 @@ from nc_shared.bus import FakeBus
 from nc_shared.events import (
     Activity,
     AudioChunk,
+    BedZoneStatus,
+    CalibrateBed,
+    DebugControl,
     GoalChanged,
     Health,
     PersonState,
@@ -231,7 +234,89 @@ def test_debug_messages_forward_and_late_join_caches_person_and_session():
     assert next(msg for msg in live.messages if msg["type"] == "pose")["latency_ms"] == 2
     late = Socket()
     asyncio.run(manager.send_current_state(late))
-    assert [msg["type"] for msg in late.messages] == ["person", "session"]
+    assert [msg["type"] for msg in late.messages] == ["debug_config", "person", "session"]
+
+
+def test_debug_stream_forwards_applied_state_and_bed_zone_only():
+    bus = FakeBus()
+    manager = ConnectionManager()
+    bus.publish(DebugControl(source="embodiment", time_offset_hours=9), maxlen=100)
+    bus.publish(CalibrateBed(source="embodiment"), maxlen=100)
+    bus.publish(DebugControl(source="agent", time_offset_hours=3, force_in_bed=True), maxlen=100)
+    bus.publish(
+        BedZoneStatus(
+            source="perceive", has_bed=True, polygon=[(0.1, 0.2), (0.8, 0.2), (0.8, 0.9)]
+        ),
+        maxlen=100,
+    )
+
+    class Socket:
+        def __init__(self):
+            self.messages = []
+
+        async def send_text(self, raw):
+            self.messages.append(json.loads(raw))
+
+    live = Socket()
+    manager._connections.append(live)  # noqa: SLF001
+    asyncio.run(broadcast_loop(bus, manager, max_iterations=1))
+    assert [item["type"] for item in live.messages] == ["debug_state", "bed_zone"]
+    assert live.messages[0] == {
+        "type": "debug_state",
+        "time_offset_hours": 3.0,
+        "force_in_bed": True,
+    }
+    assert live.messages[1]["polygon"] == [[0.1, 0.2], [0.8, 0.2], [0.8, 0.9]] or live.messages[1][
+        "polygon"
+    ] == [(0.1, 0.2), (0.8, 0.2), (0.8, 0.9)]
+    assert bus.pending("debug", "embodiment") == []
+    late = Socket()
+    asyncio.run(manager.send_current_state(late))
+    assert [item["type"] for item in late.messages] == ["debug_config", "debug_state", "bed_zone"]
+
+
+def test_debug_controls_disabled_ignores_requests(monkeypatch):
+    monkeypatch.delenv("EMBODIMENT_DEBUG_CONTROLS", raising=False)
+    bus = FakeBus()
+    with TestClient(create_app(bus)) as client, client.websocket_connect("/ws") as websocket:
+        assert websocket.receive_json() == {"type": "debug_config", "enabled": False}
+        websocket.send_json({"type": "debug_control", "time_offset_hours": 2, "force_in_bed": True})
+        websocket.send_json({"type": "calibrate_bed"})
+        websocket.send_json(client_hello())
+        websocket.receive_json()
+    assert bus._streams.get("debug", []) == []  # noqa: SLF001
+
+
+def test_debug_controls_enabled_publishes_validated_requests(monkeypatch):
+    monkeypatch.setenv("EMBODIMENT_DEBUG_CONTROLS", "yes")
+    bus = FakeBus()
+    with TestClient(create_app(bus)) as client, client.websocket_connect("/ws") as websocket:
+        assert websocket.receive_json() == {"type": "debug_config", "enabled": True}
+        websocket.send_json(
+            {"type": "debug_control", "time_offset_hours": 100, "force_in_bed": True}
+        )
+        websocket.send_json(
+            {"type": "debug_control", "time_offset_hours": -100, "force_in_bed": False}
+        )
+        websocket.send_json(
+            {"type": "debug_control", "time_offset_hours": "nan", "force_in_bed": True}
+        )
+        websocket.send_json(
+            {"type": "debug_control", "time_offset_hours": True, "force_in_bed": True}
+        )
+        websocket.send_json({"type": "calibrate_bed"})
+        websocket.send_json(client_hello())
+        websocket.receive_json()
+    events = [
+        (DebugControl if entry.event_type == "DebugControl" else CalibrateBed).model_validate_json(
+            entry.data
+        )
+        for entry in bus._streams["debug"]  # noqa: SLF001
+    ]
+    assert [type(event) for event in events] == [DebugControl, DebugControl, CalibrateBed]
+    assert [event.time_offset_hours for event in events[:2]] == [23, -23]
+    assert [event.force_in_bed for event in events[:2]] == [True, False]
+    assert all(event.source == "embodiment" for event in events)
 
 
 def test_websocket_receives_show_event_delivered_via_bus():
@@ -248,6 +333,7 @@ def test_websocket_receives_show_event_delivered_via_bus():
     bus.publish(show)
 
     with TestClient(app) as client, client.websocket_connect("/ws") as websocket:
+        assert websocket.receive_json() == {"type": "debug_config", "enabled": False}
         # The app's own startup task runs the broadcast loop unbounded in the
         # background; give it a moment to pick up the pre-published event.
         message = websocket.receive_json()
@@ -262,6 +348,7 @@ def test_websocket_delivers_say_event_published_after_connect():
     app = create_app(bus)
 
     with TestClient(app) as client, client.websocket_connect("/ws") as websocket:
+        websocket.receive_json()
         bus.publish(
             Say(source="agent", text="It is night.", strategy="soft_greeting", interruptible=True)
         )
@@ -277,6 +364,7 @@ def test_websocket_synthesizes_say_and_delivers_same_origin_audio_url(tmp_path):
     app = create_app(bus, speech=speech)
 
     with TestClient(app) as client, client.websocket_connect("/ws") as websocket:
+        websocket.receive_json()
         bus.publish(
             Say(
                 source="agent",
@@ -306,6 +394,7 @@ def test_websocket_uses_caregiver_clip_without_calling_piper(tmp_path):
     app = create_app(bus, speech=speech, voice_clip_dir=tmp_path)
 
     with TestClient(app) as client, client.websocket_connect("/ws") as websocket:
+        websocket.receive_json()
         bus.publish(
             Say(
                 source="agent",
@@ -327,6 +416,7 @@ def test_websocket_missing_caregiver_clip_stays_text_only_without_piper(tmp_path
     app = create_app(bus, speech=speech, voice_clip_dir=tmp_path)
 
     with TestClient(app) as client, client.websocket_connect("/ws") as websocket:
+        websocket.receive_json()
         bus.publish(
             Say(
                 source="agent",
@@ -347,6 +437,7 @@ def test_websocket_delivers_early_speech_signal_for_barge_in():
     app = create_app(bus)
 
     with TestClient(app) as client, client.websocket_connect("/ws") as websocket:
+        websocket.receive_json()
         bus.publish(SpeechStarted(source="listen", session_id="session-1"))
         message = websocket.receive_json()
 
@@ -765,6 +856,7 @@ def test_hello_registers_both_sockets_and_disconnect_logs_duration(caplog):
     with caplog.at_level(logging.INFO, logger="embodiment"):
         with TestClient(app) as client:
             with client.websocket_connect("/ws") as ws, client.websocket_connect("/media") as media:
+                ws.receive_json()
                 ws.send_json(client_hello())
                 assert ws.receive_json()["pages"][0]["page_id"] == "page1234"
                 media.send_json(client_hello())
@@ -789,7 +881,7 @@ def test_two_pages_get_count_and_health_update():
     app = create_app(bus)
 
     def clients_message(socket, count):
-        for _ in range(5):
+        for _ in range(6):
             message = socket.receive_json()
             if message["type"] == "clients" and len(message["pages"]) == count:
                 return message
@@ -859,6 +951,7 @@ def test_stale_and_bad_hello_are_ignored(caplog):
     manager = app.state.manager
     with caplog.at_level(logging.INFO, logger="embodiment"):
         with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.receive_json()
             ws.send_json(client_hello(page_id="x" * 65))
             ws.send_json(client_hello(user_agent="x" * 300))
             ws.send_text(json.dumps(client_hello()) + " " * 2100)
