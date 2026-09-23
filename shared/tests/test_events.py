@@ -68,6 +68,13 @@ def test_playback_activity_roundtrip():
     )
     copy = Activity.model_validate_json(event.model_dump_json())
     assert copy == event
+
+
+def test_say_emphasis_defaults_to_normal_and_roundtrips_loud():
+    ordinary = Say(source="agent", text="Rest now.", strategy="soft_greeting", interruptible=True)
+    assert ordinary.emphasis == "normal"
+    loud = ordinary.model_copy(update={"emphasis": "loud"})
+    assert Say.model_validate_json(loud.model_dump_json()).emphasis == "loud"
     assert EVENT_STREAMS[Activity] == "activity"
 
 

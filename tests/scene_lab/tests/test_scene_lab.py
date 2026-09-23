@@ -142,6 +142,13 @@ def test_tt1_scheduled_step_is_not_a_reply():
         _said(4, "validate_and_redirect", True, "utterance_reply"),
     )
     passes(reply, "TT-1")
+    repeated = baseline(
+        ev(2, "Utterance", text="Speak up."),
+        ev(4, "Say", text="Tom is safe.", strategy="repeat_louder", emphasis="loud"),
+        _said(4, "repeat_louder", True, "hearing_request"),
+    )
+    passes(repeated, "TT-1")
+    passes(repeated, "SM-5")
 
 
 def test_tt2_review_and_question_heuristic():

@@ -1,8 +1,10 @@
 """Piper TTS tests with a fake voice: no model weights or audio hardware."""
 
 import wave
+from dataclasses import dataclass
 from datetime import datetime
 
+import numpy as np
 import pytest
 from agent.strategies import spoken_time_words
 
@@ -37,6 +39,40 @@ def test_synthesize_writes_valid_wav_and_reuses_cache(tmp_path):
     with wave.open(str(path), "rb") as wav_file:
         assert wav_file.getframerate() == 16000
         assert wav_file.getnchannels() == 1
+
+
+def test_loud_render_uses_separate_cache_slower_pace_and_soft_gain(tmp_path):
+    @dataclass
+    class Config:
+        length_scale: float = 1.2
+
+    class WaveVoice(FakeVoice):
+        def synthesize_wav(self, text, wav_file, *, syn_config):
+            self.calls.append((text, syn_config))
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(16000)
+            wav_file.writeframes(np.array([0, 2000, -2000, 12000, -12000], dtype="<i2").tobytes())
+
+    voice = WaveVoice()
+    config = Config()
+    speech = PiperSpeech(voice, config, tmp_path, cache_namespace="voice")
+    normal_id = speech.synthesize("Hello.")
+    loud_id = speech.synthesize("Hello.", loud=True)
+    assert normal_id != loud_id
+    assert voice.calls[0][1] is config
+    assert voice.calls[1][1].length_scale == pytest.approx(1.2 * 1.15)
+
+    def samples(audio_id):
+        with wave.open(str(speech.resolve(audio_id)), "rb") as wav_file:
+            return np.frombuffer(wav_file.readframes(wav_file.getnframes()), dtype="<i2")
+
+    normal, loud = samples(normal_id), samples(loud_id)
+    assert np.array_equal(normal, [0, 2000, -2000, 12000, -12000])
+    assert np.mean(loud.astype(float) ** 2) > np.mean(normal.astype(float) ** 2)
+    assert loud.min() >= -32768 and loud.max() <= 32767
+    assert speech.synthesize("Hello.", loud=True) == loud_id
+    assert len(voice.calls) == 2
 
 
 def test_from_model_converts_point_85_speed_to_piper_length_scale(tmp_path, monkeypatch):

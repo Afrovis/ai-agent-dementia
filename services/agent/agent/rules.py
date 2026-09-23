@@ -261,9 +261,9 @@ def validate_composition(text: str, profile: PersonProfile) -> RuleResult:
     This gate is deliberately narrower than `validate_say`: it applies only
     to the text returned by `LLMClient.compose`, before `agent.main` decides
     whether to use that text or the caregiver's fixed fallback template.
-    It rejects the whole word "but", whose contrast can cancel an attempted
-    acknowledgement, and a caregiver name followed within four intervening
-    words by one of `_CAREGIVER_CLAIM_PHRASES`.
+    It rejects quoted template text, the whole word "but", whose contrast can
+    cancel an attempted acknowledgement, and a caregiver name followed within
+    four intervening words by one of `_CAREGIVER_CLAIM_PHRASES`.
 
     The caregiver check is an explicit proxy for common model failures, not
     a general natural-language entailment system. In particular, it permits
@@ -277,6 +277,10 @@ def validate_composition(text: str, profile: PersonProfile) -> RuleResult:
     speech may contain private utterance-derived material that must not be
     copied into logs.
     """
+    if any(mark in text for mark in ('"', "“", "”")) or re.search(
+        r"(?<!\w)'[^'\n]*\s+[^'\n]*'(?!\w)", text
+    ):
+        return RuleResult(accepted=False, reason="composition quotes text instead of speaking it")
     if _CLOCK_TIME_RE.search(text):
         return RuleResult(accepted=False, reason="composition states an exact clock time")
     if re.search(r"\bbut\b", text, flags=re.IGNORECASE):

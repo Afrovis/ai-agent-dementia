@@ -203,6 +203,25 @@ def test_validate_composition_skips_caregiver_claim_check_for_an_empty_name():
     assert result.accepted is True
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Wait for Tom; 'Tom is nearby and everything is settled' is here to help Jean.",
+        'Tom says "rest now".',
+        "Tom says “rest now”.",
+    ],
+)
+def test_validate_composition_rejects_quoted_template(text):
+    result = validate_composition(text, PersonProfile(caregiver_name="Tom"))
+    assert result.reason == "composition quotes text instead of speaking it"
+
+
+def test_validate_composition_allows_contractions():
+    assert validate_composition(
+        "You're safe, and Tom's nearby; let's rest.", PersonProfile()
+    ).accepted
+
+
 # --- validate_say (issue #14, HANDOFF.md rule 3) -------------------------
 
 

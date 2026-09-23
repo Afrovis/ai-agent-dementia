@@ -122,6 +122,68 @@ def decisions(bus):
     ]
 
 
+def test_hearing_request_repeats_immediately_after_reassurance_cap():
+    bus, session, now_fn, advance = engaged_for_reply()
+    session.phase = Phase.ESCALATED
+    session._reassurance_reply_count = 2
+    sentence = "Tom is nearby and everything is settled."
+    session.record_say(now_fn(), "reassure_waiting", sentence)
+    advance(20)
+    llm = FakeLLM(interpretations=[Interpretation(intent=Intent.UNCLEAR, distress=0)])
+
+    say_to_agent(bus, session, now_fn, llm, "What's that? Speak up a bit, dear.")
+
+    says = [event for _, event in bus.read("say", "test", "hearing_say")]
+    shows = [event for _, event in bus.read("show", "test", "hearing_show")]
+    assert [(event.text, event.strategy, event.emphasis) for event in says] == [
+        (sentence, "repeat_louder", "loud")
+    ]
+    assert shows[-1].headline == sentence
+    assert shows[-1].body == ""
+    assert shows[-1].photo_id is None
+    assert session._pending_say is None
+    assert not any(call[0] == "plan" for call in llm.calls)
+    assert any(
+        d.get("decision") == "said"
+        and d.get("trigger") == "hearing_request"
+        and d.get("reply") is True
+        for d in decisions(bus)
+    )
+
+
+def test_hearing_repeat_stops_after_two_and_expires_after_120_seconds():
+    bus, session, now_fn, advance = engaged_for_reply()
+    session.phase = Phase.ESCALATED
+    session._reassurance_reply_count = 2
+    session.record_say(now_fn(), "reassure_waiting", "Please rest now.")
+    llm = FakeLLM(interpretations=[Interpretation(intent=Intent.UNCLEAR, distress=0)] * 4)
+    for _ in range(3):
+        advance(10)
+        say_to_agent(bus, session, now_fn, llm, "Speak up.")
+    says = [event for _, event in bus.read("say", "test", "hearing_limit")]
+    assert [event.strategy for event in says] == ["repeat_louder", "repeat_louder"]
+    advance(121)
+    say_to_agent(bus, session, now_fn, llm, "Speak up.")
+    assert not [
+        event
+        for _, event in bus.read("say", "test", "hearing_expired")
+        if event.strategy == "repeat_louder"
+    ]
+
+
+def test_settled_veto_blocks_hearing_repeat():
+    bus, session, now_fn, advance = engaged_for_reply()
+    session.record_say(now_fn(), "soft_greeting", "Rest now.")
+    session._last_person_state = "in_bed"
+    session._lay_down_at = now_fn()
+    advance(20)
+    from agent.main import _repeat_louder
+
+    assert _repeat_louder(bus, session, now_fn(), PersonProfile())
+    assert not [event for _, event in bus.read("say", "test", "settled_repeat")]
+    assert any(d.get("decision") == "vetoed" for d in decisions(bus))
+
+
 def test_person_question_composes_reply_and_blocks_ladder_step():
     bus, session, now_fn, _ = engaged_for_reply()
     composed = "You're thinking about the children, Jean; let's rest for now."

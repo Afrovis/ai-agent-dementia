@@ -87,7 +87,7 @@ from agent.goals import GOALS
 from agent.llm import ClaudeLLM, FallbackLLM, LLMClient
 from agent.llm import local_llm as build_local_llm
 from agent.profile import DEFAULT_PROFILE, PersonProfile, load_profile
-from agent.questions import is_direct_question
+from agent.questions import is_direct_question, is_hearing_request
 from agent.rules import Phase, RuleResult, validate_composition, validate_say
 from agent.session import PendingSay, Session, Transition
 from agent.strategies import (
@@ -614,6 +614,7 @@ def _maybe_publish_say(
 # scheduled step, even when it happens to follow an utterance.
 _SPEECH_TRIGGERS = frozenset(
     {
+        "hearing_request",
         "utterance",
         "utterance_reply",
         "llm_plan_strategy",
@@ -650,6 +651,50 @@ def _said_decision(
             "goal": session.goal,
         },
     )
+
+
+def _repeat_louder(bus, session: Session, now: datetime, profile: PersonProfile) -> bool:
+    """Answer a hearing request from recent spoken history without the speech gap."""
+    if not session._say_history:
+        return False
+    said_at, _, text = session._say_history[-1]
+    if not 0 <= (now - said_at).total_seconds() <= 120:
+        return False
+    if session._repeat_text == text and session._repeat_count >= 2:
+        return False
+    if not session.person_present(now):
+        _intentional_silence(bus, session, text, "person_absent")
+        return True
+    context = veto_context(session, profile, now)
+    if _vetoed(
+        bus,
+        Proposal("say", "repeat_louder", text=text),
+        context,
+        session_id=session.session_id,
+    ):
+        return True
+    bus.publish(
+        Show(
+            source=SERVICE_NAME,
+            session_id=session.session_id,
+            face="speaking",
+            headline=text,
+            body="",
+            brightness=0.7,
+        )
+    )
+    say = Say(
+        source=SERVICE_NAME,
+        session_id=session.session_id,
+        text=text,
+        strategy="repeat_louder",
+        emphasis="loud",
+        interruptible=True,
+    )
+    bus.publish(say)
+    session.record_say(now, "repeat_louder", text, trigger="hearing_request")
+    _said_decision(bus, session, say, trigger="hearing_request", direct=True)
+    return True
 
 
 def _drop_pending_say(bus, session: Session, reason: str, now: datetime) -> None:
@@ -1167,6 +1212,13 @@ def run_once(
                             )
                         )
 
+                if (
+                    (session.phase in (Phase.ENGAGED, Phase.ESCALATED) or cooldown_reply)
+                    and is_hearing_request(event.text)
+                    and _repeat_louder(bus, session, now, profile)
+                ):
+                    continue
+
                 intent = interpretation.intent.value
                 intentional_silence = False
                 if session.phase in (Phase.ENGAGED, Phase.ESCALATED) or cooldown_reply:
@@ -1286,12 +1338,12 @@ def run_once(
                             )
                         else:
                             _reply_to_utterance(bus, session, reply_id, now, profile, llm)
-            elif (
-                session.phase == Phase.ESCALATED or cooldown_reply
-            ) and session._last_say_at != now:
-                if session.phase == Phase.ESCALATED:
+            elif session.phase in (Phase.ENGAGED, Phase.ESCALATED) or cooldown_reply:
+                if is_hearing_request(event.text) and _repeat_louder(bus, session, now, profile):
+                    continue
+                if session.phase == Phase.ESCALATED and session._last_say_at != now:
                     _reassure_or_stay_silent(bus, session, event.text, now, profile, llm)
-                else:
+                elif cooldown_reply and session._last_say_at != now:
                     _reply_to_utterance(bus, session, REASSURE_WAITING_ID, now, profile, llm)
 
             # Interpretation may just have escalated. A plan must never run
@@ -1341,10 +1393,12 @@ def run_once(
                             level=logging.WARNING,
                             strategy=plan.next_strategy,
                         )
-        elif (session.phase == Phase.ESCALATED or cooldown_reply) and session._last_say_at != now:
-            if session.phase == Phase.ESCALATED:
+        elif session.phase in (Phase.ENGAGED, Phase.ESCALATED) or cooldown_reply:
+            if is_hearing_request(event.text) and _repeat_louder(bus, session, now, profile):
+                continue
+            if session.phase == Phase.ESCALATED and session._last_say_at != now:
                 _reassure_or_stay_silent(bus, session, event.text, now, profile, None)
-            else:
+            elif cooldown_reply and session._last_say_at != now:
                 _reply_to_utterance(bus, session, REASSURE_WAITING_ID, now, profile, None)
 
     now = now_fn()

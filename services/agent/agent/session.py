@@ -258,6 +258,8 @@ class Session:
     _say_history: list[tuple[datetime, str, str]] = field(
         default_factory=list, init=False, repr=False
     )
+    _repeat_text: str | None = field(default=None, init=False, repr=False)
+    _repeat_count: int = field(default=0, init=False, repr=False)
 
     # The LLM is deliberately kept out of this state machine.  `main`
     # passes its already-validated interpretation here and this small
@@ -501,6 +503,8 @@ class Session:
         self._last_validation_at = None
         self._compliance_until = None
         self._say_history.clear()
+        self._repeat_text = None
+        self._repeat_count = 0
         self._consecutive_distress = 0
         self._recent_utterances.clear()
         self._last_scene_note = None
@@ -1077,6 +1081,12 @@ class Session:
         published -- a rejected `Say` must not reset this clock, since
         nothing was actually said."""
         self._last_say_at = now
+        if strategy_id == "repeat_louder":
+            self._repeat_count = self._repeat_count + 1 if self._repeat_text == text else 1
+            self._repeat_text = text
+        elif text != self._repeat_text:
+            self._repeat_text = None
+            self._repeat_count = 0
         if strategy_id == "comfort_pain":
             self._pain_acknowledged = True
         elif strategy_id == "acknowledge_progress":
