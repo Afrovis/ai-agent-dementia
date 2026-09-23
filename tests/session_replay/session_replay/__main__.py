@@ -127,6 +127,8 @@ def main(argv: list[str] | None = None) -> int:
             if spec is not None:
                 passed, reports = check_expectations(timeline, spec)
                 print("\nExpectations:")
+                if not passed and spec.get("known_bug"):
+                    print(f"Known bug: {spec['known_bug']}")
                 print("\n".join(reports))
                 passed_all &= passed
         if invariant_run is not None:

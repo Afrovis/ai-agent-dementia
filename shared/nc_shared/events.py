@@ -281,6 +281,55 @@ class Health(BaseEvent):
     detail: str
 
 
+class DebugControl(BaseEvent):
+    """Operator overrides for debugging the live pipeline. Never for real nights.
+
+    Carries the desired absolute state, not a delta, so redelivery is harmless.
+    `embodiment` publishes requests from the bedside debug overlay (only when
+    ``EMBODIMENT_DEBUG_CONTROLS`` is enabled). `agent` applies them and
+    republishes the state it actually holds with ``source="agent"``, including
+    once at startup, so the overlay always shows what is really in effect.
+
+    ``time_offset_hours`` shifts only the agent's time of day (night window,
+    spoken time), never its session timers. ``force_in_bed`` makes the agent
+    treat every `PersonState` as ``in_bed`` in the ``bed`` zone.
+    """
+
+    time_offset_hours: float = 0.0
+    force_in_bed: bool = False
+
+
+class ResetSession(BaseEvent):
+    """Operator request to abandon the current session and return to ``IDLE``.
+
+    Produced by `embodiment` from the bedside debug overlay (only when
+    ``EMBODIMENT_DEBUG_CONTROLS`` is enabled). `agent` keeps its debug
+    overrides and re-applies the latest person reading, so someone already
+    up at night starts a fresh session straight away.
+    """
+
+
+class CalibrateBed(BaseEvent):
+    """Request that `perceive` trace the bed zone from live frames and save it.
+
+    Produced by `embodiment` from the bedside debug overlay.
+    """
+
+
+class BedZoneStatus(BaseEvent):
+    """The bed zone `perceive` is using, and the state of any calibration.
+
+    Produced by `perceive` at startup and whenever a calibration starts or
+    finishes. ``polygon`` holds normalised (0.0-1.0) image points, or is
+    ``None`` when no bed zone is configured.
+    """
+
+    has_bed: bool
+    polygon: list[tuple[float, float]] | None = None
+    calibration: Literal["idle", "running", "done", "failed"] = "idle"
+    detail: str | None = None
+
+
 EVENT_STREAMS: dict[type[BaseEvent], str] = {
     Frame: "frames",
     RawFrame: "frames_raw",
@@ -300,6 +349,10 @@ EVENT_STREAMS: dict[type[BaseEvent], str] = {
     LightCommand: "light",
     AudioChunk: "audio_in",
     Health: "health",
+    DebugControl: "debug",
+    ResetSession: "debug",
+    CalibrateBed: "debug",
+    BedZoneStatus: "debug",
 }
 
 EVENT_TYPES: dict[str, type[BaseEvent]] = {

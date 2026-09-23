@@ -274,6 +274,18 @@ if the browser blocks autoplay, a bedside "Tap to turn on the voice" button
 appears so a person can unlock and retry a recent clip.
 The overlay also shows this page's identity and audio state, plus the count of connected bedside pages.
 
+For desk testing, set `EMBODIMENT_DEBUG_CONTROLS=true` and restart
+`embodiment` to get operator controls in that overlay: shift the agent's time
+of day by whole hours (so 3 a.m. is reachable at noon) or reset it, force the
+agent to treat every `PersonState` as in bed, and, when perceive reports no bed
+zone, a "Detect bed zone" button that runs `calibrate_bed` on about 20 live
+frames, writes `zones.yaml` and reloads it in `perceive` without a restart.
+These travel as `DebugControl`, `CalibrateBed` and `BedZoneStatus` on the
+`debug` stream. The offset moves only the night window and spoken time, never
+session timers. Overrides live in the agent's memory, so restarting `agent`
+clears them; an amber badge stays on screen while any override is active. The
+page has no login, so leave the flag off anywhere but a desk test.
+
 `dashboard` on port 8444 serves the caregiver pages, including the Zones
 editor (issue #10): draw the bed, door, and bathroom-path zones on a live frame and save them to
 `config/zones.yaml`. Every route needs HTTP Basic auth against

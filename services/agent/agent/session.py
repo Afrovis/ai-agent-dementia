@@ -185,6 +185,12 @@ class Transition:
 
 
 @dataclass
+class DebugOverrides:
+    time_offset_hours: float = 0.0
+    force_in_bed: bool = False
+
+
+@dataclass
 class Session:
     """One instance tracks one ongoing (or currently absent) session.
     `agent.main` owns a single long-lived instance and feeds it every
@@ -192,6 +198,7 @@ class Session:
     timers advance even when nothing new has arrived."""
 
     config: AgentConfig
+    debug_overrides: DebugOverrides = field(default_factory=DebugOverrides)
     id_fn: Callable[[], str] = _new_session_id
     strategies: list[StrategyDef] = field(default_factory=lambda: list(DEFAULT_STRATEGIES))
     """The configured catalogue, in `agent.strategies.StrategyDef` form --
@@ -257,6 +264,7 @@ class Session:
     # latest reading, and an `absent` grace period must still suppress
     # ordinary speech immediately.
     _last_person_state: str | None = field(default=None, init=False, repr=False)
+    _last_real_person: tuple[str, str] | None = field(default=None, init=False, repr=False)
     # Perception and speech facts for the veto, retained across session
     # timer resets so settling remains observable after a phase change.
     _lay_down_at: datetime | None = field(default=None, init=False, repr=False)
@@ -273,6 +281,33 @@ class Session:
 
     def __post_init__(self) -> None:
         self._engine = StrategyEngine(self.strategies)
+
+    def reset(self) -> Transition:
+        """Abandon the session while retaining operator controls and perception.
+
+        Keep the last spoken time across the reset so an immediate new session
+        cannot speak over a sentence that is still playing.
+        """
+        overrides = self.debug_overrides
+        real_person = self._last_real_person
+        last_say_at = self._last_say_at
+        fresh = Session(config=self.config, strategies=self.strategies, id_fn=self.id_fn)
+        self.__dict__.clear()
+        self.__dict__.update(fresh.__dict__)
+        self.debug_overrides = overrides
+        self._last_real_person = real_person
+        self._last_say_at = last_say_at
+        return Transition(
+            phase=self.phase,
+            session_id=self.session_id,
+            goal=self.goal,
+            strategy_index=self.strategy_index,
+            reason="operator_reset",
+        )
+
+    def wall_clock(self, now: datetime) -> datetime:
+        """Shift displayed time and night decisions without moving timer time."""
+        return now + timedelta(hours=self.debug_overrides.time_offset_hours)
 
     def _confirmed_zone(self, zone: str) -> str | None:
         """Consecutive-reading hysteresis for `PersonState.zone`, analogous
@@ -607,7 +642,9 @@ class Session:
         if self.phase == Phase.IDLE:
             # `walking` too: a bed exit can confirm straight into `walking`
             # without a confirmed `standing` frame in between.
-            if state in ("sitting_up", "standing", "walking") and self.config.in_night_window(now):
+            if state in ("sitting_up", "standing", "walking") and self.config.in_night_window(
+                self.wall_clock(now)
+            ):
                 self._observing_since = now
                 return self._apply(Phase.OBSERVING, reason=f"person_{state}", now=now)
             return None

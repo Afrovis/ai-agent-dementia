@@ -1,0 +1,26 @@
+llm: recorded
+interpretations:
+  "Hey, what time is it?": {intent: confused_time, distress: 0}
+  "Hey mua, what time is it?": {intent: confused_time, distress: 0}
+  "Okay, bye.": {intent: fine, distress: 0}
+  "Thank you.": {intent: fine, distress: 0}
+expect:
+  # At 00:59:57 the strategy ladder exhausted and the session escalated.
+  # The 01:00:16 force-in-bed request moved it into COOLDOWN; silence while
+  # that override was active was intended. At 01:04:12 the operator released
+  # the override, but perception still reported sitting_up. The fourth exact
+  # time question at 01:04:25 should receive an answer before cooldown ends.
+  - after: {heard: "Hey, what time is it?", occurrence: 4}
+    within_s: 15
+    events:
+      - {type: Say, strategy: orient_time_place}
+  # Silence while the operator forces the person in bed is intended.
+  - after: {heard: "Hey, what time is it?", occurrence: 2}
+    within_s: 10
+    absent: [{type: Say}]
+  - after: {heard: "Hey, what time is it?", occurrence: 3}
+    within_s: 10
+    absent: [{type: Say}]
+  - after: {heard: "Hey mua, what time is it?"}
+    within_s: 10
+    absent: [{type: Say}]
