@@ -75,13 +75,14 @@ class Bus:
         group: str,
         consumer: str,
         count: int = 10,
-        block_ms: int = 1000,
+        block_ms: int | None = 1000,
     ) -> list[tuple[str, BaseEvent]]:
         """Read up to `count` new messages for `consumer` in `group`.
 
         Returns a list of `(msg_id, event)` pairs. Messages are delivered but
         not removed from the stream; call `ack` once they are fully handled,
-        otherwise they stay pending and will be redelivered.
+        otherwise they stay pending and will be redelivered. `block_ms=None`
+        returns at once; `0` would block forever, as Redis reads `BLOCK 0`.
         """
         response = self._client.xreadgroup(
             group, consumer, {stream: ">"}, count=count, block=block_ms

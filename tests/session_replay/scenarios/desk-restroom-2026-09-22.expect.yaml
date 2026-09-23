@@ -1,0 +1,22 @@
+llm: recorded
+interpretations:
+  "Can you hear me?": {intent: unclear, distress: 0}
+  "I need to go to the restroom.": {intent: need_restroom, distress: 0}
+  "Okay, I'm back from the restroom.": {intent: fine, distress: 0}
+  "Can I go back to bed?": {intent: wants_bed, distress: 0}
+expect:
+  - after: {heard: "I need to go to the restroom."}
+    within_s: 15
+    events:
+      - {type: GoalChanged, to_goal: restroom}
+      - {type: LightCommand, state: "on"}
+      - {type: Say}
+  - after: {heard: "Can I go back to bed?"}
+    within_s: 15
+    events:
+      - {type: GoalChanged, to_goal: return_to_bed}
+      # The person just spoke, so they are present even if the camera lost
+      # them; the return-to-bed guidance must be spoken, not suppressed.
+      - {type: Say}
+# The unchanged ladder exhausts at 97 s, after guided_return's last dwell.
+# Its timer-driven Notify is outside this dialogue/presence fix.

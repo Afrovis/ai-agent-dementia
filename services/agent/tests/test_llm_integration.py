@@ -4,7 +4,16 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 
 from nc_shared.bus import FakeBus
-from nc_shared.events import Notify, PersonState, Say, Utterance
+from nc_shared.events import (
+    Activity,
+    GoalChanged,
+    LightCommand,
+    Notify,
+    PersonState,
+    Say,
+    Show,
+    Utterance,
+)
 
 from agent.config import AgentConfig
 from agent.llm import Composition, FakeLLM, Intent, Interpretation, Plan
@@ -24,6 +33,8 @@ def make_bus() -> FakeBus:
         ("session", "test"),
         ("notify", "test"),
         ("say", "test"),
+        ("show", "test"),
+        ("light", "test"),
     ):
         bus.ensure_group(stream, group)
     return bus
@@ -56,6 +67,12 @@ def test_interpretation_goal_and_planner_are_advisory_and_rule_checked():
 
     assert session.goal == "restroom"
     assert [call[0] for call in llm.calls] == ["interpret", "plan"]
+    activities = [event for _, event in bus.read("activity", "test", "c1")]
+    assert all(isinstance(event, Activity) for event in activities)
+    assert [(event.kind, event.phase, event.ok) for event in activities] == [
+        ("interpret", "start", True),
+        ("interpret", "end", True),
+    ]
     assert llm.calls[0][1]["last_turns"] == []
     assert llm.calls[0][1]["profile"]["night_themes"] == ["looking for work"]
     assert llm.calls[1][1]["profile"] == profile.prompt_data()
@@ -63,6 +80,75 @@ def test_interpretation_goal_and_planner_are_advisory_and_rule_checked():
     assert planner_state["current_strategy"] == "path_light"
     assert planner_state["strategy_order"][0] == "ambient_orient"
     assert "drink_water" in planner_state["allowed_goals"]
+
+
+def test_wants_bed_returns_from_restroom_with_zone_exit_effects():
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    llm = FakeLLM(
+        interpretations=[
+            Interpretation(intent=Intent.NEED_RESTROOM, distress=0),
+            Interpretation(intent=Intent.WANTS_BED, distress=0),
+        ]
+    )
+    bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=lambda: NIGHT, llm=llm)
+    for offset, utterance in ((1, "I need the restroom"), (2, "I am back from the restroom")):
+        bus.publish(Utterance(source="listen", text=utterance, confidence=0.9, duration_s=1.0))
+        run_once(
+            bus, session, now_fn=lambda offset=offset: NIGHT + timedelta(seconds=offset), llm=llm
+        )
+
+    assert session.goal == "return_to_bed"
+    assert session._restroom_since is None
+    assert [
+        event.to_goal
+        for _, event in bus.read("session", "test", "c1")
+        if isinstance(event, GoalChanged)
+    ] == ["restroom", "return_to_bed"]
+    assert [
+        (event.state, event.reason)
+        for _, event in bus.read("light", "test", "c1")
+        if isinstance(event, LightCommand)
+    ] == [
+        ("on", "restroom_goal_started"),
+        ("off", "restroom_goal_ended"),
+    ]
+    assert [
+        event.headline for _, event in bus.read("show", "test", "c1") if isinstance(event, Show)
+    ][-1] == "Let's head back to bed"
+    assert [
+        event.strategy for _, event in bus.read("say", "test", "c1") if isinstance(event, Say)
+    ] == ["path_light"]
+    run_once(bus, session, now_fn=lambda: NIGHT + timedelta(seconds=9), llm=llm)
+    assert [
+        event.strategy for _, event in bus.read("say", "test", "c2") if isinstance(event, Say)
+    ] == ["guided_return"]
+
+
+def test_wants_bed_on_return_goal_preserves_strategy_and_distress_rule():
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    llm = FakeLLM(
+        interpretations=[
+            Interpretation(intent=Intent.WANTS_BED, distress=2),
+            Interpretation(intent=Intent.WANTS_BED, distress=3),
+        ]
+    )
+    bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=lambda: NIGHT, llm=llm)
+    bus.publish(
+        Utterance(source="listen", text="Can I go back to bed?", confidence=0.9, duration_s=1.0)
+    )
+    run_once(bus, session, now_fn=lambda: NIGHT + timedelta(seconds=1), llm=llm)
+    assert session.goal == "return_to_bed"
+    assert session.strategy_index == 0
+    assert not any(isinstance(event, GoalChanged) for _, event in bus.read("session", "test", "c1"))
+
+    bus.publish(Utterance(source="listen", text="I want my bed", confidence=0.9, duration_s=1.0))
+    run_once(bus, session, now_fn=lambda: NIGHT + timedelta(seconds=2), llm=llm)
+    assert session.phase.value == "ESCALATED"
+    assert session.goal == "wait_for_caregiver"
 
 
 def test_planner_may_select_only_the_exact_next_available_strategy():

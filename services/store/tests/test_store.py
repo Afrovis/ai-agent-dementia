@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from nc_shared.bus import FakeBus
-from nc_shared.events import Health, Notify, PersonState
+from nc_shared.events import Activity, Health, Notify, PersonState, PoseDebug
 from sqlmodel import Session, select
 
 from store.main import consume_once, make_engine
@@ -72,6 +72,15 @@ def test_consume_once_does_not_persist_capped_streams(tmp_path):
     bus = FakeBus()
 
     bus.publish(Frame(source="capture", jpeg=b"abc", width=1, height=1, source_kind="usb"))
+    bus.publish(
+        PoseDebug(
+            source="perceive", landmarks={}, bbox=None, confidence=0, detected=False, latency_ms=1
+        ),
+        maxlen=50,
+    )
+    bus.publish(
+        Activity(source="listen", service="listen", kind="transcribe", phase="start"), maxlen=200
+    )
 
     written = consume_once(bus, engine)
     assert written == 0

@@ -43,6 +43,7 @@ class Intent(StrEnum):
     """The fixed, intentionally small set of utterance intents."""
 
     NEED_RESTROOM = "need_restroom"
+    WANTS_BED = "wants_bed"
     LOOKING_FOR_PERSON = "looking_for_person"
     WANTS_TO_LEAVE = "wants_to_leave"
     CONFUSED_TIME = "confused_time"
@@ -168,6 +169,13 @@ _COMPOSE_TASK = (
     "ask a question or test memory, and never say 'no', 'you can't', or 'you're wrong'."
 )
 
+_INTERPRET_TASK = (
+    "Classify the latest utterance's intent and distress (0 calm through 3 severe). "
+    "Use wants_bed for agreement or intention to go back to bed, including "
+    "'Okay, I'll go to bed' and 'I'll go back to bed', or when they say they are "
+    "finished with or back from the restroom. Use need_restroom when they need to go there."
+)
+
 
 class _LocalLLM:
     """The prompts shared by every local backend; subclasses own transport."""
@@ -176,7 +184,7 @@ class _LocalLLM:
         self, utterance: str, turns: Sequence[str], profile: Mapping[str, object]
     ) -> Interpretation | None:
         return self._call(
-            "Classify the latest utterance's intent and distress (0 calm through 3 severe).",
+            _INTERPRET_TASK,
             {"utterance": utterance, "last_turns": list(turns)[-3:], "profile": dict(profile)},
             Interpretation,
         )
@@ -230,6 +238,12 @@ class _LocalLLM:
         )
 
 
+OLLAMA_KEEP_ALIVE = -1
+"""Keep the model loaded indefinitely. Ollama's default unloads it after five
+idle minutes, and reloading gemma4 takes about 13 s -- past the agent's
+timeout -- so after a quiet night the first utterance would always fail."""
+
+
 class OllamaLLM(_LocalLLM):
     """Synchronous local Ollama implementation of :class:`LLMClient`.
 
@@ -248,6 +262,26 @@ class OllamaLLM(_LocalLLM):
         self._model = model
         self._timeout_seconds = timeout_seconds
 
+    def warm_up(self, timeout_seconds: float = 60.0) -> bool:
+        """Load the model now so the first real call is not a cold start.
+
+        A generate request with no prompt only loads the model. Returns
+        whether it succeeded; failure is harmless, the model loads on the
+        first real call instead.
+        """
+        body = json.dumps({"model": self._model, "keep_alive": OLLAMA_KEEP_ALIVE}).encode()
+        request = Request(
+            f"{self._ollama_url}{_OLLAMA_GENERATE_PATH}",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310
+                return response.status == 200
+        except Exception:  # noqa: BLE001 - warm-up is best effort
+            return False
+
     def _call(self, task: str, payload: Mapping[str, Any], output_type: type[_StrictOutput]):
         try:
             body = json.dumps(
@@ -256,6 +290,7 @@ class OllamaLLM(_LocalLLM):
                     "prompt": _prompt(task, payload, output_type),
                     "format": output_type.model_json_schema(),
                     "stream": False,
+                    "keep_alive": OLLAMA_KEEP_ALIVE,
                 },
                 ensure_ascii=False,
             ).encode("utf-8")
@@ -400,7 +435,7 @@ class ClaudeLLM:
     ) -> Interpretation | None:
         return self._call(
             "interpret",
-            "Classify the latest utterance's intent and distress (0 calm through 3 severe).",
+            _INTERPRET_TASK,
             {"utterance": utterance, "last_turns": list(turns)[-3:], "profile": dict(profile)},
             Interpretation,
         )

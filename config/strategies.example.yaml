@@ -9,12 +9,13 @@
 # `perceive`'s `zones.yaml`.
 #
 # HANDOFF.md section 7 / PLAN.md section 5.3 list ten strategies. Eight are
-# implemented, and only those eight may appear below:
+# implemented, plus the reply-only acknowledge_return and reassure_waiting strategies:
 #
 #   1  ambient_orient          2  soft_greeting        3  orient_time_place
 #   4  validate_and_redirect   5  guided_return        6  familiar_voice
-#   8  path_light
+#   8  path_light             9  reassure_waiting
 #   10 escalate_phone
+#   -  acknowledge_return    confirms a stated return to bed
 #
 # Deliberately absent, and not a bug:
 #
@@ -88,6 +89,11 @@
 # to notice than a failing test.
 
 strategies:
+  - id: acknowledge_return
+    enabled: true
+    headline: Take your time
+    body: You can settle back into bed.
+    say: "That's right{name_vocative}, take your time getting back to bed."
   - id: ambient_orient
     order: 1
     enabled: true
@@ -122,7 +128,7 @@ strategies:
     brightness: 0.5
     headline: "You are home"
     body: "You are in your bedroom, and it is {time_words}."
-    say: "You are home in your bedroom, and it is night-time."
+    say: "You are home in your bedroom, and it is {time_words}."
     photo_id: demo_room
 
   - id: validate_and_redirect
@@ -190,6 +196,17 @@ strategies:
     headline: "The restroom path is lit"
     body: "{restroom_direction}."
     say: "{restroom_direction}{name_vocative}."
+
+  # Spoken once in response to an utterance while a caregiver is on the way.
+  - id: reassure_waiting
+    order: 9
+    enabled: true
+    intrusiveness: 2
+    face: speaking
+    brightness: 0.5
+    headline: "Help is coming"
+    body: "Someone is on their way."
+    say: "Someone is on their way{name_vocative}, and you're safe here."
 
   # `agent` never selects this rung by working down the ladder -- it is
   # reached only by an actual escalation, which also alerts the caregiver.

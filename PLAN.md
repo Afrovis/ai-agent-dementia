@@ -181,6 +181,8 @@ Rules the agent must respect:
 - Never ask questions that test memory.
 - Never say "no" or "you can't". Redirect instead.
 - Max one sentence per turn, then wait at least 8 seconds.
+- A direct time question gets a time-and-place answer without moving the strategy ladder. A statement about bedtime does not repeat a recent orientation. After escalation, speech still receives a short reply; a toilet need lights the path and gets guidance while the caregiver alert remains active.
+- An expressed intention to return to bed receives a short acknowledgement. The ordinary ladder pauses for the configured grace period unless a new need is stated or perception sees the person in bed; when it resumes, recently spoken strategies are skipped.
 - If the person is distressed (raised voice, crying, pacing), skip to `validate_and_redirect` and shorten the escalation timer.
 - If the person is on the floor or leaves the room for more than N minutes, skip straight to `escalate_phone`.
 
@@ -188,7 +190,7 @@ Rules the agent must respect:
 
 The LLM is **not** in charge of safety. A deterministic rule layer owns state transitions, escalation timers, and hard limits. The LLM does three things:
 
-1. **Interpret**: classify utterances into intent (`need_restroom`, `looking_for_person`, `wants_to_leave`, `confused_time`, `pain`, `fine`, `unclear`) and sentiment.
+1. **Interpret**: classify utterances into intent (`need_restroom`, `wants_bed`, `looking_for_person`, `wants_to_leave`, `confused_time`, `pain`, `fine`, `unclear`) and distress.
 2. **Compose**: write the actual sentence for the chosen strategy, given the person's profile, the caregiver's preferred phrases, and the current context. Output constrained to one short sentence.
 3. **Plan**: propose the next strategy or a goal change, as a structured JSON decision. The rule layer validates it against the allowed transitions before acting.
 
@@ -228,8 +230,8 @@ Configured by the caregiver, injected into every prompt:
 - Wake-free. The mic is only active during `OBSERVING` and later states. This avoids constant listening.
 - STT with faster-whisper `small.en` on CPU is around real time on the M4, good enough for short utterances.
 - TTS with Piper, a warm, slow voice at 0.85 speed. Pre-render all fixed phrases at startup so the ambient and greeting strategies have zero latency. Implemented in issue #19: `embodiment` serves locally cached WAVs to the bedside browser without putting audio on the event bus.
-- Barge-in: if the person speaks while the agent is speaking, stop TTS and listen.
-- The speakerphone's hardware echo cancellation is what makes barge-in feasible. Do not attempt software AEC in v1.
+- Barge-in: sustained WebRTC speech must also be confirmed by bundled Silero before interrupting TTS; the threshold is longer while embodiment playback is active.
+- The browser requests echo cancellation. The sustained, verified barge-in gate limits interruptions from speaker echo; it is not acoustic echo cancellation.
 
 ## 8. Embodiment details
 

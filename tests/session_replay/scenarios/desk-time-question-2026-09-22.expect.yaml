@@ -1,0 +1,18 @@
+llm: recorded
+interpretations:
+  "Hey, what time is it?": {intent: confused_time, distress: 0}
+  "I need to go to the restroom.": {intent: need_restroom, distress: 0}
+expect:
+  # The strategy ladder ran out while the person sat at the desk, so the
+  # session is ESCALATED by the time they speak. Waiting for the caregiver
+  # must not mean ignoring them: a direct question gets a direct answer.
+  - after: {heard: "Hey, what time is it?"}
+    within_s: 15
+    events:
+      - {type: Say, strategy: orient_time_place, text: "You are home in your bedroom, and it is 7 o'clock at night."}
+  # A stated toilet need while escalated still lights the path and guides.
+  - after: {heard: "I need to go to the restroom."}
+    within_s: 15
+    events:
+      - {type: LightCommand, state: "on"}
+      - {type: Say, strategy: path_light}

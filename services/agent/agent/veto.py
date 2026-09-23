@@ -42,6 +42,7 @@ class VetoContext:
     settled: bool
     in_night_window: bool
     things_to_avoid: tuple[str, ...] = ()
+    restroom_need_resolved: bool = False
 
 
 @dataclass(frozen=True)
@@ -118,8 +119,9 @@ def _deny(rule: str, clause: str, reason: str) -> Verdict:
 
 def _check_strategy(strategy: str, context: VetoContext) -> Verdict:
     if strategy == GUIDED_RETURN:
-        if context.goal == "restroom" or any(
-            _TOILET_RE.search(text) for text in context.recent_utterances
+        if context.goal == "restroom" or (
+            not context.restroom_need_resolved
+            and any(_TOILET_RE.search(text) for text in context.recent_utterances)
         ):
             return _deny(
                 "no_redirect_from_toilet_need",

@@ -53,9 +53,12 @@ def test_ollama_interpret_posts_schema_and_parses_strict_json(monkeypatch):
     assert captured["timeout"] == 0.5
     assert payload["model"] == "test"
     assert payload["stream"] is False
+    assert payload["keep_alive"] == -1
     assert "properties" in payload["format"]
     # The allowed intents are spelled out, not only enforced by `format`.
     assert "JSON schema:" in payload["prompt"] and "need_restroom" in payload["prompt"]
+    assert "wants_bed" in payload["prompt"]
+    assert "back from the restroom" in payload["prompt"]
     assert '"last_turns": ["two", "three", "four"]' in payload["prompt"]
 
 
@@ -270,3 +273,25 @@ def test_fallback_plan_uses_cloud_only_below_point_four_and_never_for_compose():
     assert llm.plan({}, {}).goal_change == "restroom"
     assert llm.plan({}, {}).next_strategy == "soft_greeting"
     assert [name for name, _payload in cloud.calls] == ["plan"]
+
+
+def test_ollama_warm_up_loads_the_model_and_keeps_it(monkeypatch):
+    captured = {}
+
+    def fake_open(request, timeout):
+        captured["payload"] = json.loads(request.data)
+        return _Response({"done": True})
+
+    monkeypatch.setattr("agent.llm.urlopen", fake_open)
+
+    assert OllamaLLM(ollama_url="http://ollama", model="m").warm_up() is True
+    assert captured["payload"] == {"model": "m", "keep_alive": -1}
+
+
+def test_ollama_warm_up_failure_is_harmless(monkeypatch):
+    def fail(request, timeout):
+        raise OSError("down")
+
+    monkeypatch.setattr("agent.llm.urlopen", fail)
+
+    assert OllamaLLM(ollama_url="http://ollama").warm_up() is False

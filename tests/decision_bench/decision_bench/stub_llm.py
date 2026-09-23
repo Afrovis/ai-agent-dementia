@@ -29,7 +29,26 @@ class StubLLM:
         if self.interpretation is not None:
             return self.interpretation
         text = utterance.lower()
-        if any(word in text for word in ("toilet", "bathroom", "loo", "wee")):
+        if (
+            "back to bed" in text
+            or "go to bed" in text
+            or "return to bed" in text
+            or any(
+                phrase in text
+                for phrase in (
+                    "back from the restroom",
+                    "back from the bathroom",
+                    "back from the toilet",
+                    "finished in the restroom",
+                    "finished in the bathroom",
+                    "finished in the toilet",
+                    "finished with the restroom",
+                    "finished with the bathroom",
+                )
+            )
+        ):
+            return Interpretation(intent=Intent.WANTS_BED, distress=0)
+        if any(word in text for word in ("toilet", "bathroom", "restroom", "loo", "wee")):
             return Interpretation(intent=Intent.NEED_RESTROOM, distress=0)
         if any(word in text for word in ("hurt", "pain", "ache")):
             return Interpretation(intent=Intent.PAIN, distress=2)

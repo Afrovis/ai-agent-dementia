@@ -47,7 +47,7 @@ class ExternalConnection:
     declared_at: str
 
 
-CAPPED_STREAMS = {"audio_in": 50, "frames": 50, "frames_raw": 50}
+CAPPED_STREAMS = {"audio_in": 50, "frames": 50, "frames_raw": 50, "pose_debug": 50, "activity": 200}
 
 EXTERNAL_CONNECTIONS = (
     ExternalConnection(

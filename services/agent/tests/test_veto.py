@@ -2,6 +2,7 @@
 
 import json
 import logging
+from dataclasses import replace
 from datetime import datetime, timedelta
 
 import pytest
@@ -30,6 +31,14 @@ def context(
     night=True,
 ):
     return VetoContext(phase, goal, person_state, utterances, settled, night, AVOID)
+
+
+def test_resolved_restroom_need_allows_guided_return():
+    facts = replace(
+        context(utterances=("I need the toilet.", "I am back from the restroom.")),
+        restroom_need_resolved=True,
+    )
+    assert check(Proposal("strategy", "guided_return"), facts).allowed
 
 
 @pytest.mark.parametrize(

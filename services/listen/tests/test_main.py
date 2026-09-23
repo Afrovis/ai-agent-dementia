@@ -6,7 +6,7 @@ import struct
 from datetime import UTC, datetime, timedelta
 
 from nc_shared.bus import FakeBus
-from nc_shared.events import AudioChunk, Health, SessionState, SpeechStarted, Utterance
+from nc_shared.events import Activity, AudioChunk, Health, SessionState, SpeechStarted, Utterance
 
 from listen.main import ListenState, maybe_emit_health, run_once
 from listen.transcribe import Transcript
@@ -132,16 +132,22 @@ def test_observing_audio_publishes_session_attributed_utterance():
 def test_voice_onset_is_published_before_utterance_is_complete():
     bus = FakeBus()
     state = make_state(end_silence_ms=60, min_speech_ms=60)
+    state.barge_in_ms = 60
+    state.verify_speech = lambda pcm: bool(pcm)
     transcriber = FakeTranscriber()
     publish_session(bus, "ENGAGED")
     publish_audio(bus, pcm_frame(1000))
 
     assert run_once(bus, state, transcriber) == 0
     starts = read_speech_starts(bus)
-    assert len(starts) == 1
-    assert starts[0].session_id == "session-1"
+    assert starts == []
     assert transcriber.calls == []
 
+    publish_audio(bus, pcm_frame(1000) * 2)
+    run_once(bus, state, transcriber)
+    starts = read_speech_starts(bus)
+    assert len(starts) == 1
+    assert starts[0].session_id == "session-1"
     publish_audio(bus, pcm_frame(1000))
     run_once(bus, state, transcriber)
     assert len(read_speech_starts(bus)) == 0
@@ -173,6 +179,8 @@ def test_empty_transcript_is_not_published():
 
     assert run_once(bus, state, transcriber) == 0
     assert read_utterances(bus) == []
+    activities = [event for _, event in bus.read("activity", "test", "c1")]
+    assert [(event.phase, event.ok) for event in activities] == [("start", True), ("end", False)]
 
 
 def test_health_reports_processing_failure_without_audio_payload():
@@ -204,6 +212,10 @@ def test_transcription_failure_emits_one_attention_notification():
     assert notifications[0].level == "attention"
     assert "speech" in notifications[0].title.lower()
     assert state.last_error == "RuntimeError: model unavailable"
+    activities = [event for _, event in bus.read("activity", "test", "c1")]
+    assert all(isinstance(event, Activity) for event in activities)
+    assert [(event.phase, event.ok) for event in activities] == [("start", True), ("end", False)]
+    assert activities[-1].detail == "RuntimeError"
 
     publish_audio(bus, audio)
     run_once(bus, state, FailingTranscriber())
@@ -251,3 +263,51 @@ def test_session_backlog_is_drained_before_audio():
     assert run_once(bus, state, transcriber, count=10) == 0
     assert state.phase == "IDLE"
     assert transcriber.calls == []
+
+
+def test_verified_barge_in_uses_longer_playback_window_and_times_out(monkeypatch):
+    from listen import main
+
+    clock = [10.0]
+    monkeypatch.setattr(main.time, "monotonic", lambda: clock[0])
+    bus = FakeBus()
+    state = make_state(end_silence_ms=60, min_speech_ms=60)
+    state.barge_in_ms = 60
+    state.barge_in_while_speaking_ms = 150
+    verified = []
+    state.verify_speech = lambda pcm: verified.append(len(pcm)) or True
+    publish_session(bus, "ENGAGED")
+    bus.publish(
+        Activity(
+            source="embodiment",
+            service="embodiment",
+            kind="playback",
+            phase="start",
+            detail="playing",
+        )
+    )
+    publish_audio(bus, pcm_frame(1000) * 4)
+    run_once(bus, state, FakeTranscriber())
+    assert read_speech_starts(bus) == []
+    publish_audio(bus, pcm_frame(1000))
+    run_once(bus, state, FakeTranscriber())
+    assert len(read_speech_starts(bus)) == 1
+    assert verified == [5 * len(pcm_frame(1000))]
+    publish_audio(bus, pcm_frame(0) * 2)
+    run_once(bus, state, FakeTranscriber())
+    clock[0] = 31.0  # stale playback start expires after 20 seconds
+    publish_audio(bus, pcm_frame(1000) * 2)
+    run_once(bus, state, FakeTranscriber())
+    assert len(read_speech_starts(bus)) == 1
+
+
+def test_silero_rejection_suppresses_barge_in_but_keeps_transcription():
+    bus = FakeBus()
+    state = make_state(end_silence_ms=60, min_speech_ms=60)
+    state.barge_in_ms = 60
+    state.verify_speech = lambda pcm: False
+    publish_session(bus, "ENGAGED")
+    publish_audio(bus, pcm_frame(1000) * 4 + pcm_frame(0) * 2)
+    assert run_once(bus, state, FakeTranscriber()) == 1
+    assert read_speech_starts(bus) == []
+    assert len(read_utterances(bus)) == 1

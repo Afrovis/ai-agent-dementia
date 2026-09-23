@@ -1,14 +1,13 @@
 """Entry point for the `store` service: persistence and morning summaries.
 
-`store` reads every stream except the capped `frames`, `audio_in`, and
-`frames_raw` streams (per HANDOFF.md section 5: "Everything else is
-persisted to SQLite by `store`") via a Redis consumer group, and writes
+`store` reads every stream except the capped media and debug telemetry
+streams via a Redis consumer group, and writes
 each event as one row in the generic `events` table (see
 `store.models.EventRow`).
 
 `PERSISTED_STREAMS` is derived from `nc_shared.events.EVENT_STREAMS`
 rather than hard-coded, so a new event added to `events.py` is picked up
-automatically unless it targets `frames`, `audio_in`, or `frames_raw`.
+automatically unless it targets a stream in `CAPPED_STREAMS`.
 
 Issue #24 also schedules a once-per-night caregiver summary from that event
 history. The summary itself is an informational `Notify` event and therefore
@@ -37,7 +36,7 @@ GROUP = "store"
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(SERVICE_NAME)
 
-CAPPED_STREAMS = {"frames", "audio_in", "frames_raw"}
+CAPPED_STREAMS = {"frames", "audio_in", "frames_raw", "pose_debug", "activity"}
 PERSISTED_STREAMS = sorted(set(EVENT_STREAMS.values()) - CAPPED_STREAMS)
 RETENTION_SWEEP_SECONDS = 60 * 60
 

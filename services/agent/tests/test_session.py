@@ -826,3 +826,44 @@ def test_the_real_catalogue_escalates_rather_than_speaking_the_escalation_line()
     assert escalation.strategy is not None
     assert escalation.strategy.id == ESCALATE_PHONE_ID
     assert session.goal == "wait_for_caregiver"
+
+
+def test_compliance_grace_holds_ladder_until_expiry():
+    session = make_session(observe_seconds=0, compliance_grace_seconds=120)
+    session.on_person_state("standing", "other", NIGHT)
+    session.tick(NIGHT)
+    assert session.phase == Phase.ENGAGED
+    session.on_interpretation("wants_bed", 0, NIGHT + timedelta(seconds=1))
+    assert session.tick(NIGHT + timedelta(seconds=90)) is None
+    assert session.strategy_index == 0
+    advanced = session.tick(NIGHT + timedelta(seconds=121))
+    assert advanced is not None and advanced.strategy.id == "soft_greeting"
+
+
+def test_new_need_breaks_compliance_grace():
+    session = make_session(observe_seconds=0)
+    session.on_person_state("standing", "other", NIGHT)
+    session.tick(NIGHT)
+    session.on_interpretation("wants_bed", 0, NIGHT + timedelta(seconds=1))
+    session.on_interpretation("pain", 0, NIGHT + timedelta(seconds=2))
+    assert not session.compliance_hold(NIGHT + timedelta(seconds=3))
+
+
+def test_self_echo_matches_short_fragment_and_overlap_only_within_twenty_seconds():
+    session = make_session()
+    session.record_say(NIGHT, "guided_return", "Let's go back to bed now, Jean.")
+    assert session.is_self_echo("Go.", NIGHT + timedelta(seconds=2))
+    assert session.is_self_echo("Go back to bed now", NIGHT + timedelta(seconds=2))
+    assert not session.is_self_echo("I need the restroom", NIGHT + timedelta(seconds=2))
+    assert not session.is_self_echo("Go.", NIGHT + timedelta(seconds=21))
+
+
+def test_ladder_skips_a_strategy_already_spoken_as_a_direct_reply():
+    session = make_session(observe_seconds=0)
+    session.on_person_state("standing", "other", NIGHT)
+    session.tick(NIGHT)
+    soft = session.tick(NIGHT + timedelta(seconds=30))
+    assert soft is not None and soft.strategy.id == "soft_greeting"
+    session.record_say(NIGHT + timedelta(seconds=31), "orient_time_place", "You are home.")
+    next_rung = session.tick(NIGHT + timedelta(seconds=50))
+    assert next_rung is not None and next_rung.strategy.id == "validate_and_redirect"

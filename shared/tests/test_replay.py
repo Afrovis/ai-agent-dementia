@@ -240,3 +240,52 @@ def test_replay_applies_maxlen_to_capped_streams(tmp_path):
 
     assert published == fixture_count
     assert len(bus._streams["frames"]) == CAPPED_MAXLEN["frames"]
+
+
+class _XRangeClient:
+    """Minimal stand-in for the redis client: stream name -> [(id, fields)]."""
+
+    def __init__(self, streams):
+        self._streams = streams
+
+    def xrange(self, stream):
+        return self._streams.get(stream, [])
+
+
+def _fields(event):
+    return {
+        b"event_type": type(event).__name__.encode(),
+        b"data": event.model_dump_json().encode(),
+    }
+
+
+def test_export_history_merges_streams_in_ts_order_and_skips_media():
+    from datetime import UTC, datetime
+
+    from nc_shared.replay import export_history
+
+    def at(second):
+        return datetime(2026, 9, 22, 22, 0, second, tzinfo=UTC)
+
+    old = PersonState(source="perceive", ts=at(0), state="in_bed", confidence=0.9, zone="bed")
+    earlier = PersonState(source="perceive", ts=at(1), state="standing", confidence=0.9, zone="bed")
+    frame = Frame(
+        source="capture", ts=at(2), jpeg=b"\xff\xd8", width=1, height=1, source_kind="usb"
+    )
+    later = Say(source="agent", ts=at(3), text="hi", strategy="soft_greeting", interruptible=True)
+    client = _XRangeClient(
+        {
+            "say": [("3-0", _fields(later))],
+            "person": [("0-0", _fields(old)), ("1-0", _fields(earlier))],
+            "frames": [("2-0", _fields(frame))],
+        }
+    )
+
+    out = io.StringIO()
+    count = export_history(client, out, since=at(1), now_fn=lambda: 0.0)
+
+    lines = [json.loads(line) for line in out.getvalue().splitlines()]
+    assert count == 2
+    assert [line["event_type"] for line in lines] == ["PersonState", "Say"]
+    assert lines[0]["payload"]["state"] == "standing"
+    assert export_history(client, io.StringIO(), include_media=True) == 4

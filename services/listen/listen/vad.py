@@ -51,6 +51,8 @@ class SpeechSegmenter:
         self._speech_ms = 0
         self._silence_ms = 0
         self._speech_starts = 0
+        self.on_frame: Callable[[bytes, bool], None] | None = None
+        self.on_segment_end: Callable[[], None] | None = None
 
     def accept(self, pcm16: bytes) -> list[bytes]:
         """Accept an arbitrary chunk and return zero or more complete utterances."""
@@ -60,6 +62,8 @@ class SpeechSegmenter:
             frame = bytes(self._pending[: self.frame_bytes])
             del self._pending[: self.frame_bytes]
             is_speech = self.detector(frame, self.sample_rate)
+            if self.on_frame is not None:
+                self.on_frame(frame, is_speech)
 
             if not self._utterance:
                 if not is_speech:
@@ -100,6 +104,8 @@ class SpeechSegmenter:
 
     def _finish(self) -> bytes | None:
         utterance = bytes(self._utterance) if self._speech_ms >= self.min_speech_ms else None
+        if self.on_segment_end is not None:
+            self.on_segment_end()
         self._utterance.clear()
         self._speech_ms = 0
         self._silence_ms = 0

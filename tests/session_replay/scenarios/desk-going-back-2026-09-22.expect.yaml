@@ -1,0 +1,21 @@
+llm: recorded
+interpretations:
+  "Hey, can you hear me?": {intent: unclear, distress: 0}
+  "It is not yet time to go to sleep.": {intent: confused_time, distress: 0}
+  "Okay, I'll go to bed.": {intent: wants_bed, distress: 0}
+  "And we bet now.": {intent: unclear, distress: 0}
+  "It's okay, I'll go back to bed.": {intent: wants_bed, distress: 0}
+expect:
+  - after: {heard: "Okay, I'll go to bed."}
+    within_s: 10
+    events:
+      - {type: Say, strategy: acknowledge_return}
+  - after: {heard: "Okay, I'll go to bed."}
+    within_s: 60
+    absent:
+      - {type: Say, strategy: guided_return}
+      - {type: Say, strategy: orient_time_place}
+  - after: {heard: "It's okay, I'll go back to bed."}
+    within_s: 10
+    events:
+      - {type: Say, strategy: acknowledge_return}
