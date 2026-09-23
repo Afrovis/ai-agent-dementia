@@ -61,6 +61,10 @@ same anchored window; `never` applies to the whole replay. Failures
 print the matching window and exit 1. Every scenario with a sibling expect
 file is also run by the parametrized pytest regression suite.
 
+Promoted scenarios may also contain an observed `InterpretationMap` row with
+the same mapping. The runner uses it in recorded mode, with the expect file's
+mapping taking precedence when both are present.
+
 `--llm none` is the default without an expect file and exercises the agent's
 deterministic fallbacks. `--llm recorded` uses the interpretation map,
 defaults unknown speech to `unclear` with zero distress, and lets compose and
@@ -78,3 +82,9 @@ name; the checked-in desk scenarios have no duration rows. Alternatively,
 `--llm-latency fixed:2.5` advances every interpret, compose, and plan call by
 2.5 seconds. Inputs during a call arrive after it ends, and the trace records
 the advanced output time and Activity duration.
+
+A promoted draft can use two additional keys on an anchored expectation:
+`delay_s` starts matching that many seconds after the anchor (for example,
+settling in bed), and `min_spacing_s` requires consecutive `Say` events in
+the window to be at least that many seconds apart. Both default to unset;
+existing expectation files behave as before.

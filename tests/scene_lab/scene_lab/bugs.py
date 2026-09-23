@@ -17,6 +17,51 @@ from .thresholds import Thresholds, load
 from .trace import Trace, playbacks
 
 RANK = {"critical": 0, "major": 1, "minor": 2, "review": 3, "info": 4}
+DESCRIPTIONS = {
+    "TT-1": "Reply to each final utterance within five seconds.",
+    "TT-2": "Review whether a question or request was answered or redirected.",
+    "TT-3": "Do not start playback over the person's speech.",
+    "TT-4": "Stop interruptible playback promptly on barge-in.",
+    "TT-5": "Keep eight seconds between unprompted playbacks.",
+    "TT-6": "Do not speak into an empty room.",
+    "TT-7": "Do not publish a stale reply.",
+    "SM-1": "Stay silent once the person is settled in bed.",
+    "SM-2": "Escalate only with a justified cause.",
+    "SM-3": "Keep an engaged session responsive and end it cleanly.",
+    "SM-4": "Turn the hallway light off after the person returns to bed.",
+    "SM-5": "Do not publish an action forbidden by a veto rule.",
+    "TM-1": "Keep input-to-effect loop lag within three seconds.",
+    "TM-2": "Measure reply latency from utterance end to playback start.",
+    "TM-3": "Measure bathroom-path reading to goal change.",
+    "WORD-conjunction_but": "Avoid wording that negates reassurance with 'but'.",
+    "WORD-avoid_terms": "Avoid terms listed in the person's profile.",
+    "WORD-states_clock_time": "Do not state an unsupported clock time.",
+    "WORD-invents_proper_noun": "Do not invent a person or place name.",
+    "HARNESS": "Scene lab infrastructure or director failed.",
+}
+
+
+def decode(key: str) -> dict[str, str]:
+    parts = (key.split("|") + ["-"] * 5)[:5]
+    return dict(zip(("check", "phase", "goal", "strategy", "drop reason"), parts))
+
+
+def _context_lines(key: str, items: list[dict]) -> list[str]:
+    context = decode(key)
+    first = items[0]
+    severity = min((i["severity"] for i in items), key=lambda s: RANK.get(s, 99))
+    return [
+        f"Severity: {severity}; count: {len(items)}",
+        f"Check {context['check']}: {DESCRIPTIONS.get(context['check'], 'See invariant report.')}",
+        "Context: "
+        + "; ".join(
+            f"{name}: {context[name]}" for name in ("phase", "goal", "strategy", "drop reason")
+        ),
+        f"First: {first['summary']}",
+        *[f"Evidence: {line}" for line in first.get("evidence", [])],
+        "Occurrences: "
+        + ", ".join(f"[{i['run']}/{i['scene']} at {i['t']:g}s]({i['report']})" for i in items),
+    ]
 
 
 class BugEntry(BaseModel):
@@ -200,7 +245,18 @@ class RunDir:
         grouped = defaultdict(list)
         for item in _read(self.path / "bugs.jsonl"):
             grouped[item["fingerprint"]].append(item)
-        lines = [f"# Bugs: {self.id}", ""]
+        meta = getattr(self, "metadata", {})
+        counts = Counter(item["severity"] for items in grouped.values() for item in items)
+        lines = [
+            f"# Bugs: {self.id}",
+            "",
+            f"Run: {self.id}; kind: {meta.get('kind', '-')}; "
+            f"commit: {meta.get('commit', '-')}; model: {meta.get('model', '-')}; "
+            f"contention: {meta.get('contention', '-')}; "
+            f"scenes run: {meta.get('scene_count', '-')}",
+            "Counts: " + ", ".join(f"{severity}: {counts[severity]}" for severity in RANK),
+            "",
+        ]
         for key, items in sorted(
             grouped.items(),
             key=lambda pair: (
@@ -210,17 +266,22 @@ class RunDir:
             ),
         ):
             lines.extend([f"## {key} ({len(items)})", ""])
-            for item in items:
-                lines.append(
-                    f"- {item['severity']}: {item['summary']} — "
-                    + f"[{item['scene']} at {item['t']:g}s]({item['report']})"
-                )
+            lines.extend(f"- {line}" for line in _context_lines(key, items))
             lines.append("")
         path = self.path / "bugs.md"
         path.write_text("\n".join(lines))
         return path
 
     def finish(self, kind: str, commit: str, model: str, hours: float, scene_count: int) -> None:
+        self.metadata = {
+            **getattr(self, "metadata", {}),
+            "kind": kind,
+            "commit": commit,
+            "model": model,
+            "hours": hours,
+            "scene_count": scene_count,
+        }
+        self.render_bugs_md()
         counts = Counter(item["severity"] for item in _read(self.path / "bugs.jsonl"))
         record = {
             "id": self.id,
@@ -242,20 +303,24 @@ def merge(run_dirs: list[str | Path]) -> list[dict]:
     paths = sorted([Path(path) for path in run_dirs], key=lambda path: path.name)
     if not paths:
         return []
-    counts = {
-        path.name: Counter(item["fingerprint"] for item in _read(path / "bugs.jsonl"))
-        for path in paths
-    }
+    entries = {path.name: _read(path / "bugs.jsonl") for path in paths}
+    counts = {name: Counter(item["fingerprint"] for item in rows) for name, rows in entries.items()}
     first, last = counts[paths[0].name], counts[paths[-1].name]
     keys = set().union(*(set(count) for count in counts.values()))
     return [
         {
             "fingerprint": key,
             "counts": {name: count[key] for name, count in counts.items()},
+            "occurrences": [
+                {**item, "report": str(path / item["report"])}
+                for path in paths
+                for item in entries[path.name]
+                if item["fingerprint"] == key
+            ],
             "status": "persisting"
             if key in first and key in last
             else "gone"
-            if key in first
+            if key not in last
             else "new",
         }
         for key in sorted(keys)
@@ -263,13 +328,10 @@ def merge(run_dirs: list[str | Path]) -> list[dict]:
 
 
 def render_merge_md(rows: list[dict]) -> str:
-    lines = [
-        "# Scene lab bug comparison",
-        "",
-        "| Fingerprint | Status | Counts by run |",
-        "| --- | --- | --- |",
-    ]
+    lines = ["# Scene lab bug comparison", ""]
     for row in rows:
         counts = ", ".join(f"{run}: {count}" for run, count in row["counts"].items())
-        lines.append(f"| {row['fingerprint']} | {row['status']} | {counts} |")
+        lines.extend([f"## {row['fingerprint']} — {row['status']}", "", f"Counts: {counts}"])
+        lines.extend(f"- {line}" for line in _context_lines(row["fingerprint"], row["occurrences"]))
+        lines.append("")
     return "\n".join(lines) + "\n"

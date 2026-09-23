@@ -1,0 +1,72 @@
+id: restroom-01
+category: restroom
+start: 02:40
+duration_s: 540.0
+profile: config/person.example.yaml
+strategies: default
+persona:
+  summary: Wakes, says they need the toilet, walks to the bathroom, is out of view
+    inside for about three and a half minutes, then comes back to bed.
+  hearing: normal
+  patience: medium
+  interrupts: false
+opening:
+- at: 0.0
+  move:
+    state: sitting_up
+    zone: bed
+    over_s: 0
+- at: 12.0
+  say: I need the toilet.
+- at: 20.0
+  move:
+    state: standing
+    zone: bed
+    over_s: 0
+- at: 35.0
+  move:
+    state: walking
+    zone: bathroom_path
+    over_s: 0
+- at: 60.0
+  move:
+    state: walking
+    zone: bathroom_path
+    over_s: 0
+- at: 80.0
+  move:
+    state: absent
+    zone: other
+    over_s: 0
+- at: 290.0
+  move:
+    state: walking
+    zone: bathroom_path
+    over_s: 0
+- at: 320.0
+  move:
+    state: standing
+    zone: bed
+    over_s: 0
+- at: 335.0
+  move:
+    state: sitting_up
+    zone: bed
+    over_s: 0
+- at: 350.0
+  move:
+    state: in_bed
+    zone: bed
+    over_s: 0
+- at: 480.0
+  move:
+    state: in_bed
+    zone: bed
+    over_s: 0
+- at: 540.0
+  end: true
+stressors: []
+mind: script
+noise:
+  flicker: 0
+  low_confidence: 0

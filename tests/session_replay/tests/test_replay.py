@@ -347,3 +347,37 @@ def test_cli_multi_scenario_invariants(tmp_path, capsys):
     capsys.readouterr()
     run = next(path for path in tmp_path.iterdir() if path.is_dir())
     assert all((run / path.stem / "trace.jsonl").exists() for path in paths)
+
+
+def test_expect_delay_and_say_spacing():
+    from session_replay.core import check_expectations
+
+    timeline = [
+        {"type": "IN", "t": 0, "person": {"state": "in_bed", "zone": "bed"}},
+        {"type": "Say", "t": 10},
+        {"type": "Say", "t": 31},
+        {"type": "Say", "t": 35},
+    ]
+    settled = {
+        "expect": [
+            {
+                "after": {"person": {"state": "in_bed", "zone": "bed"}},
+                "delay_s": 30,
+                "within_s": 40,
+                "absent": [{"type": "Say"}],
+            }
+        ]
+    }
+    spaced = {
+        "expect": [
+            {
+                "after": {"person": {"state": "in_bed", "zone": "bed"}},
+                "within_s": 40,
+                "min_spacing_s": 8,
+            }
+        ]
+    }
+    assert not check_expectations(timeline, settled)[0]
+    assert not check_expectations(timeline, spaced)[0]
+    assert check_expectations(timeline[:2], settled)[0]
+    assert check_expectations(timeline[:3], spaced)[0]

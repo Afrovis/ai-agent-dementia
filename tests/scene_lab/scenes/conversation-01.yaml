@@ -1,0 +1,27 @@
+id: conversation-01
+category: conversation
+start: 02:20
+duration_s: 113.0
+profile: config/person.example.yaml
+strategies: default
+persona:
+  summary: Asks a time question three seconds after the agent's first greeting, inside
+    the eight-second silence gap.
+  hearing: normal
+  patience: medium
+  interrupts: false
+opening:
+- at: 0.0
+  move:
+    state: sitting_up
+    zone: bed
+    over_s: 0
+- at: 53.0
+  say: What time is it?
+- at: 113.0
+  end: true
+stressors: []
+mind: script
+noise:
+  flicker: 0
+  low_confidence: 0

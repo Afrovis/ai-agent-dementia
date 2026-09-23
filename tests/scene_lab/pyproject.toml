@@ -16,7 +16,7 @@ live = ["piper-tts"]
 include = ["scene_lab*"]
 
 [tool.setuptools.package-data]
-scene_lab = ["thresholds.yaml"]
+scene_lab = ["thresholds.yaml", "coverage.yaml"]
 
 [tool.ruff]
 target-version = "py312"

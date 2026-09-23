@@ -120,6 +120,15 @@ def main(argv: list[str] | None = None) -> int:
                     args.person or AgentConfig.from_env().person_path
                 ).prompt_data()
                 normalized.meta["llm_latency"] = args.llm_latency
+                first_ts = next((e.ts for e in normalized.events if e.ts), None)
+                if first_ts:
+                    from datetime import datetime
+                    from zoneinfo import ZoneInfo
+
+                    when = datetime.fromisoformat(first_ts.replace("Z", "+00:00"))
+                    normalized.meta["in_night_window"] = AgentConfig.from_env().in_night_window(
+                        when.astimezone(ZoneInfo(args.tz))
+                    )
                 invariant_run.add(scenario.stem, normalized)
             if spec is not None:
                 passed, reports = check_expectations(timeline, spec)

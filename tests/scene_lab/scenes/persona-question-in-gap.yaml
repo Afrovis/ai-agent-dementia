@@ -1,0 +1,16 @@
+id: persona-question-in-gap
+category: conversation
+start: '02:40'
+duration_s: 420
+profile: config/person.example.yaml
+persona:
+  summary: Jean wakes thinking it is morning and wants to know when Tom is coming. She is a retired teacher who likes clear answers.
+  hidden_need: reassurance about Tom
+  hearing: normal
+  patience: medium
+  interrupts: false
+opening:
+  - {at: 0, move: {state: sitting_up, zone: bed, over_s: 0}}
+  - {at: 2, say: 'Is Tom coming soon?'}
+stressors: [question_in_gap]
+mind: claude

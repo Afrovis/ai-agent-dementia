@@ -23,7 +23,9 @@ def main(argv: list[str] | None = None) -> int:
     bugs = sub.add_parser("bugs")
     bugs.add_argument("runs", nargs="+")
     live = sub.add_parser("run")
-    live.add_argument("scene", type=Path)
+    live.add_argument("scene", type=Path, nargs="?")
+    live.add_argument("--hours", type=float)
+    live.add_argument("--max-scenes", type=int)
     live.add_argument("--no-stack-up", action="store_true")
     live.add_argument("--keep-stack", action="store_true")
     live.add_argument("--runs-root", type=Path)
@@ -38,7 +40,12 @@ def main(argv: list[str] | None = None) -> int:
     offline = sub.add_parser("inprocess")
     offline.add_argument("scene", type=Path)
     offline.add_argument("--out", type=Path)
-    sub.add_parser("promote", help="reserved for phase 5")
+    try:
+        from .promote import register
+
+        register(sub)
+    except ImportError:
+        sub.add_parser("promote", help="reserved for phase 5")
     args = parser.parse_args(argv)
     if args.command == "bugs":
         root = _default_root()
@@ -46,7 +53,24 @@ def main(argv: list[str] | None = None) -> int:
         print(render_merge_md(merge(paths)), end="")
         return 0
     if args.command == "run":
-        from .run import run_live
+        from .run import run_hours, run_live
+
+        if (args.scene is None) == (args.hours is None):
+            parser.error("run needs either a scene card or --hours N")
+        if args.hours is not None:
+            if args.no_stack_up or args.run_dir:
+                parser.error("--no-stack-up and --run-dir require a scene card")
+            print(
+                asyncio.run(
+                    run_hours(
+                        args.hours,
+                        runs_root=args.runs_root,
+                        keep_stack=args.keep_stack,
+                        max_scenes=args.max_scenes,
+                    )
+                )
+            )
+            return 0
 
         print(
             asyncio.run(
@@ -82,7 +106,22 @@ def main(argv: list[str] | None = None) -> int:
         print(run_card(args.scene, args.out))
         return 0
     if args.command == "promote":
-        parser.error("promote is planned for phase 5")
+        if not hasattr(args, "run_dir"):
+            parser.error("promote is planned for phase 5")
+        from .promote import promote
+
+        promote(
+            args.run_dir,
+            scene=args.scene,
+            at=args.at,
+            to=args.to,
+            before=args.before,
+            after=args.after,
+            out_dir=args.out_dir,
+            name=args.name,
+            claude=args.claude,
+        )
+        return 0
     thresholds = load(args.thresholds)
     if args.format == "trace":
         trace = Trace.read_jsonl(args.file)

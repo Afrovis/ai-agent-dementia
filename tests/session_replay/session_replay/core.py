@@ -233,6 +233,10 @@ def run_scenario(
     else:
         raise ValueError(f"invalid --llm-latency: {llm_latency}")
     all_rows = read_jsonl(scenario)
+    scenario_interpretations = {}
+    for row in all_rows:
+        if row.get("event_type") == "InterpretationMap" and row.get("observed"):
+            scenario_interpretations.update(row.get("payload", {}).get("interpretations", {}))
     durations = {kind: [] for kind in LLM_KINDS}
     warned = False
     if llm_latency == "recorded":
@@ -287,7 +291,7 @@ def run_scenario(
     bus.ensure_group("person", "agent")
     bus.ensure_group("speech_in", "agent")
     if llm_mode == "recorded":
-        llm = RecordedLLM((expect or {}).get("interpretations", {}))
+        llm = RecordedLLM({**scenario_interpretations, **(expect or {}).get("interpretations", {})})
     elif llm_mode == "live":
         url = base_url or (
             os.environ.get("OLLAMA_URL", "http://host.docker.internal:11434")
@@ -379,8 +383,10 @@ def check_expectations(timeline: list[dict], spec: dict) -> tuple[bool, list[str
             reports.append(f"FAIL expectation {number}: anchor {anchor!r} not found")
             continue
         start_i = anchors[0]
-        limit = timeline[start_i]["t"] + float(item.get("within_s", float("inf")))
-        excerpt = [row for row in timeline[start_i + 1 :] if row["t"] <= limit]
+        anchor_t = timeline[start_i]["t"]
+        limit = anchor_t + float(item.get("within_s", float("inf")))
+        lower = anchor_t + float(item.get("delay_s", 0))
+        excerpt = [row for row in timeline[start_i + 1 :] if lower <= row["t"] <= limit]
         cursor = 0
         missing = None
         for expected in item.get("events", []):
@@ -408,12 +414,27 @@ def check_expectations(timeline: list[dict], spec: dict) -> tuple[bool, list[str
             ),
             None,
         )
-        ok = missing is None and forbidden is None
+        spacing = item.get("min_spacing_s")
+        close_pair = None
+        if spacing is not None:
+            matching = [
+                row for row in excerpt if row.get("type") == item.get("spacing_type", "Say")
+            ]
+            close_pair = next(
+                (
+                    (a, b)
+                    for a, b in zip(matching, matching[1:])
+                    if b["t"] - a["t"] < float(spacing)
+                ),
+                None,
+            )
+        ok = missing is None and forbidden is None and close_pair is None
         passed &= ok
         reports.append(
             f"{'PASS' if ok else 'FAIL'} expectation {number}: after {anchor!r}"
             + (f" missing {missing!r}" if missing else "")
             + (f" forbidden {forbidden!r}" if forbidden else "")
+            + (f" spacing {close_pair!r}" if close_pair else "")
         )
         reports.extend("  " + format_row(row) for row in excerpt if row["type"] != "IN")
     for number, expected in enumerate(spec.get("never", []), 1):
