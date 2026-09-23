@@ -72,6 +72,8 @@ def main(argv: list[str] | None = None) -> int:
         if spec is not None:
             passed, reports = check_expectations(timeline, spec)
             print("\nExpectations:")
+            if not passed and spec.get("known_bug"):
+                print(f"Known bug: {spec['known_bug']}")
             print("\n".join(reports))
             return 0 if passed else 1
         return 0

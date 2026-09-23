@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from nc_shared.events import PersonState, Utterance
+from nc_shared.events import DebugControl, PersonState, ResetSession, Utterance
 
 from session_replay.core import check_expectations, extract, read_jsonl, run_scenario
 
@@ -114,10 +114,72 @@ def test_ordered_window_and_never():
     assert any("FAIL never" in line for line in report)
 
 
+def test_debug_extract_and_replay(tmp_path):
+    at = datetime(2026, 9, 22, 14, tzinfo=UTC)
+    control = DebugControl(source="embodiment", ts=at, time_offset_hours=13)
+    echo = DebugControl(source="agent", ts=at + timedelta(seconds=1), time_offset_hours=13)
+    reset = ResetSession(source="embodiment", ts=at + timedelta(seconds=2))
+    source = tmp_path / "raw.jsonl"
+    target = tmp_path / "scenario.jsonl"
+    _write(source, [_line(control, "debug"), _line(echo, "debug"), _line(reset, "debug")])
+    assert extract(source, target) == 3
+    assert [row.get("observed") for row in read_jsonl(target)] == [None, True, None]
+    timeline = run_scenario(target, tail_s=0)
+    assert [row["type"] for row in timeline if row["type"] == "IN"] == ["IN", "IN"]
+    assert any(row.get("debug", {}).get("time_offset_hours") == 13 for row in timeline)
+    assert any(row.get("reset_session") for row in timeline)
+    assert any(row["type"] == "DebugControl" for row in timeline)
+    assert any(row.get("phase") == "IDLE" for row in timeline)
+
+
+def test_occurrence_and_debug_anchors():
+    rows = [
+        {"t": 0, "type": "IN", "heard": "again"},
+        {"t": 1, "type": "Say"},
+        {"t": 2, "type": "IN", "heard": "again"},
+        {"t": 3, "type": "IN", "debug": {"force_in_bed": False, "time_offset_hours": 0}},
+        {"t": 4, "type": "IN", "reset_session": True},
+    ]
+    spec = {
+        "expect": [
+            {
+                "after": {"heard": "again", "occurrence": 2},
+                "within_s": 1,
+                "events": [{"type": "Say"}],
+            }
+        ]
+    }
+    assert not check_expectations(rows, spec)[0]
+    spec["expect"][0]["events"] = [{"type": "IN", "debug": rows[3]["debug"]}]
+    assert check_expectations(rows, spec)[0]
+    spec["expect"][0]["after"] = {"debug": {"force_in_bed": False}}
+    spec["expect"][0]["events"] = [{"reset_session": True}]
+    assert check_expectations(rows, spec)[0]
+
+
+def _scenario_param(path):
+    from session_replay.core import load_expect
+
+    reason = load_expect(path.with_suffix(".expect.yaml")).get("known_bug")
+    marks = [pytest.mark.xfail(strict=True, reason=reason)] if reason else []
+    return pytest.param(path, marks=marks, id=path.stem)
+
+
+def test_known_bug_scenario_has_strict_xfail_mark():
+    path = SCENARIOS / "desk-cooldown-sitting-up-2026-09-23.jsonl"
+    parameter = _scenario_param(path)
+    mark = next(mark for mark in parameter.marks if mark.name == "xfail")
+    assert mark.kwargs["strict"] is True
+    assert "COOLDOWN" in mark.kwargs["reason"]
+
+
 @pytest.mark.parametrize(
     "scenario",
-    sorted(path for path in SCENARIOS.glob("*.jsonl") if path.with_suffix(".expect.yaml").exists()),
-    ids=lambda path: path.stem,
+    [
+        _scenario_param(path)
+        for path in sorted(SCENARIOS.glob("*.jsonl"))
+        if path.with_suffix(".expect.yaml").exists()
+    ],
 )
 def test_regression_scenario(scenario):
     from session_replay.core import load_expect

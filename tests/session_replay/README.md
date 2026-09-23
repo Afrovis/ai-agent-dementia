@@ -17,9 +17,11 @@ python -m session_replay extract data/sessions/desk-export.jsonl \
   tests/session_replay/scenarios/desk.jsonl --since 2026-09-22T22:51:40Z --until 2026-09-22T22:53:30Z
 ```
 
-`extract` keeps `PersonState` from `person` and `Utterance` from `speech_in`.
+`extract` keeps `PersonState` from `person`, `Utterance` from `speech_in`,
+operator `DebugControl` requests and `ResetSession` requests from `debug`.
 It also retains `SessionState`, `GoalChanged`, `Say`, `Show`, `LightCommand`,
-and `Notify` as `observed: true` reference rows. It drops speech starts,
+`Notify`, and agent `DebugControl` echoes as `observed: true` reference rows.
+It drops speech starts,
 health, activity, pose debug, frames, and audio. The runner ignores observed
 rows. Review the extracted text before committing; raw exports stay in
 gitignored `data/`, and only extracted, text-only scenarios belong in git.
@@ -34,15 +36,22 @@ pytest tests/session_replay
 ```
 
 The expect file may contain `llm: recorded`, an `interpretations` map keyed
-by exact utterance text, an `expect` list, and a `never` list. Each expectation
-anchors on `after: {heard: "..."}` or `after: {person: {state: standing,
-zone: bed}}`. `events` are matched as an ordered subsequence of agent
-publications following the first matching input, through `within_s` seconds.
+by exact utterance text, an `expect` list, a `never` list, and an optional
+`known_bug` reason. Each expectation anchors on `after: {heard: "..."}`,
+`after: {person: {state: standing, zone: bed}}`,
+`after: {debug: {force_in_bed: false}}`, or `after: {reset_session: true}`.
+Debug anchors may name either or both override fields. Add `occurrence: N`
+inside `after` to select the Nth matching input (1-based; default 1).
+`events` are matched as an ordered subsequence of agent
+publications following the selected input, through `within_s` seconds.
 Each event match can name `type` and any timeline field, such as `to_goal`,
 `state`, `strategy`, or `text`. `absent` lists event patterns forbidden in that
 same anchored window; `never` applies to the whole replay. Failures
 print the matching window and exit 1. Every scenario with a sibling expect
-file is also run by the parametrized pytest regression suite.
+file is also run by the parametrized pytest regression suite. A `known_bug`
+scenario is marked strict xfail there: the suite stays green while the bug
+reproduces and fails if the bug is fixed before the marker is removed. The CLI
+still exits 1 and prints the reason when its expectation fails.
 
 `--llm none` is the default without an expect file and exercises the agent's
 deterministic fallbacks. `--llm recorded` uses the interpretation map,
