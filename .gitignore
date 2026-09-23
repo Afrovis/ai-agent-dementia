@@ -10,3 +10,10 @@ build/
 dist/
 .pytest_cache/
 .ruff_cache/
+
+# Per-install configuration written by the dashboard and calibration tools.
+# Only the *.example.yaml templates belong in git.
+config/zones.yaml
+config/phantoms.yaml
+config/person.yaml
+config/strategies.yaml
