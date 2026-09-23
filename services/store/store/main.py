@@ -36,7 +36,7 @@ GROUP = "store"
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(SERVICE_NAME)
 
-CAPPED_STREAMS = {"frames", "audio_in", "frames_raw", "pose_debug", "activity"}
+CAPPED_STREAMS = {"frames", "audio_in", "frames_raw", "pose_debug", "gaze", "activity"}
 PERSISTED_STREAMS = sorted(set(EVENT_STREAMS.values()) - CAPPED_STREAMS)
 RETENTION_SWEEP_SECONDS = 60 * 60
 

@@ -2,7 +2,9 @@
 
 from pathlib import Path
 
-from embodiment.main import ssl_kwargs_for
+import pytest
+
+from embodiment.main import _clock_time, ssl_kwargs_for
 from embodiment.tts import PiperSpeech
 
 
@@ -41,3 +43,14 @@ def test_piper_from_model_rejects_invalid_speed_before_loading_a_model(tmp_path:
         assert "PIPER_SPEED" in str(exc)
     else:
         raise AssertionError("invalid Piper speed was accepted")
+
+
+@pytest.mark.parametrize("value", ["24:00", "12:60", "7:00", "07:0", "noon"])
+def test_clock_time_rejects_invalid_hhmm(value):
+    with pytest.raises(ValueError, match="EMBODIMENT_NIGHT_START"):
+        _clock_time(value, "EMBODIMENT_NIGHT_START")
+
+
+def test_clock_time_accepts_day_boundaries():
+    assert _clock_time("00:00", "EMBODIMENT_NIGHT_START") == "00:00"
+    assert _clock_time("23:59", "EMBODIMENT_NIGHT_END") == "23:59"

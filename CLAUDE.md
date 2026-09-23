@@ -16,11 +16,11 @@ another service directly.
 | --- | --- |
 | `bus` | Redis streams broker. The only shared dependency. |
 | `capture` | Motion-gates raw frames and publishes `Frame`. The only producer of `frames`. |
-| `perceive` | Person detection and pose classification on frames. |
+| `perceive` | Person detection and pose classification on frames; gaze point for the eyes. |
 | `listen` | Voice activity detection and speech to text, publishes `Utterance`. |
 | `agent` | Session state machine. Emits `Say`, `Show`, `Notify`, `GoalChanged`, `LightCommand`. |
 | `light` | Feature-flagged local Shelly smart-plug control for the restroom path. |
-| `embodiment` | Fullscreen HTTPS page: face, big text, photos, media bridge. |
+| `embodiment` | Fullscreen HTTPS page: glowing eyes, big text, photos, media bridge. |
 | `notify` | Caregiver alerts. ntfy by default. |
 | `store` | SQLite persistence and nightly summaries. |
 | `dashboard` | Caregiver UI for live status, history, profile, strategies, media, and zones. |
@@ -207,6 +207,29 @@ WebRTC VAD speech and confirms the window with bundled Silero before publishing
 the page speaks. `embodiment` forwards the signal to the page, which stops
 audio only when `Say.interruptible` is true. The page requests browser/OS echo
 cancellation from `getUserMedia`.
+
+The bedside page shows glowing red eyes (design and exact values in
+`docs/EYES_UPGRADE_PLAN.md` and `docs/EYES_UPGRADE_HANDOFF.md`). Embodiment
+picks the expression itself, as a reflex, in `embodiment/eyes.py`: `in_bed`
+is sleeping (with floating z's), `sitting_up` is sleepy, anything else is
+open; `SpeechStarted` means listening until the next `Utterance` or 15 s, and
+`Show.face` listening/speaking overrides posture for at most 15 s. The page
+switches to speaking while speech audio plays. The alert vignette comes on
+when the session enters `ESCALATED` and fades out when the caregiver
+acknowledges that escalation's `Notify` or the phase changes. For this,
+embodiment also reads `person`, `gaze`, `session`, `notify` and `ack`.
+`perceive` publishes `Gaze` (face point, bed centroid, or none) on the capped
+`gaze` stream, which store does not persist; the eyes follow it mirrored
+(`1 - x`), through a speed-capped spring. The voice pulse uses Web Audio,
+which starts only after the camera and microphone permission click; without
+it the eyes stay still but speech still plays. The top-bar clock uses
+`EMBODIMENT_NIGHT_START`, `EMBODIMENT_NIGHT_END` (moon between them, sun
+otherwise) and `EMBODIMENT_CLOCK_24H`. The pure page logic has a browser test,
+`services/embodiment/tests/js/eyes_logic_test.html`: open it in any browser
+(or headless Chromium with `--allow-file-access-from-files --dump-dom`) and
+the title reads `PASS <n>` or `FAIL: ...`. Adding `?demo=1` to the page URL
+exposes `window.__eyesDemo.receive(msg)` and `setAmp(x)` for driving it by
+hand.
 
 `frames_raw` is what the browser bridge writes. `capture` reads it, applies
 the motion gate, and republishes onto `frames`, so watch that one to see

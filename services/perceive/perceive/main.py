@@ -50,7 +50,7 @@ from dataclasses import dataclass
 
 import redis
 from nc_shared.bus import Bus
-from nc_shared.events import Health, PersonState, PoseDebug
+from nc_shared.events import Gaze, Health, PersonState, PoseDebug
 
 from perceive.backends import PoseBackend, build_backend
 from perceive.classify import (
@@ -65,6 +65,7 @@ from perceive.floor_check import (
     FloorCheckTrigger,
     OllamaFloorCheckClient,
 )
+from perceive.gaze import GazePublishState, gaze_for, should_publish_gaze
 from perceive.scene_notes import SceneNoteCache, SessionPhaseTracker, read_session_phase
 from perceive.vision import OllamaVisionClient, VisionClient
 from perceive.zones import ZoneMap, ZoneName, load_zones
@@ -87,6 +88,21 @@ def _log(message: str, level: int = logging.INFO, **fields: object) -> None:
     bytes.
     """
     logger.log(level, json.dumps({"service": SERVICE_NAME, "message": message, **fields}))
+
+
+def _publish_gaze(bus, gaze: Gaze, gaze_state: GazePublishState | None) -> None:
+    bus.publish(gaze, maxlen=50)
+    if gaze_state is not None:
+        gaze_state.last_published = gaze
+    # Up to one per frame while someone walks; PersonState carries what matters.
+    _log(
+        "published Gaze",
+        level=logging.DEBUG,
+        event_type="Gaze",
+        target=gaze.target,
+        x=gaze.x,
+        y=gaze.y,
+    )
 
 
 def _parse_ground_line(value: str) -> tuple[float, float] | None:
@@ -301,6 +317,7 @@ def run_once(
     engaged: bool = False,
     floor_scheduler: FloorCheckScheduler | None = None,
     floor_trigger: FloorCheckTrigger | None = None,
+    gaze_state: GazePublishState | None = None,
 ) -> PersonState | None:
     """Read one `Frame`, classify it, and publish `PersonState` if the tracker
     reports a change.
@@ -490,7 +507,21 @@ def run_once(
         maxlen=50,
     )
 
+    # Use the same confirmed state that PersonState carries, including a
+    # floor-check upgrade made above. The current pose supplies only the point.
+    gaze = (
+        gaze_for(tracked_state, pose, zones.polygons.get("bed"))
+        if tracked_state is not None
+        else None
+    )
+    if gaze_state is not None:
+        gaze_state.latest = gaze
+
     if result is None:
+        if gaze is not None and should_publish_gaze(
+            gaze, gaze_state.last_published if gaze_state is not None else None
+        ):
+            _publish_gaze(bus, gaze, gaze_state)
         return floor_check_event
 
     state, confidence = result
@@ -510,6 +541,10 @@ def run_once(
         confidence=round(confidence, 3),
         zone=zone,
     )
+    if gaze is not None and should_publish_gaze(
+        gaze, gaze_state.last_published if gaze_state is not None else None
+    ):
+        _publish_gaze(bus, gaze, gaze_state)
     return event
 
 
@@ -521,6 +556,7 @@ def maybe_emit_person_heartbeat(
     *,
     interval: float,
     scene_cache: SceneNoteCache | None = None,
+    gaze_state: GazePublishState | None = None,
 ) -> float | None:
     """Publish a heartbeat `PersonState` -- repeating the tracker's last known
     state, confidence, and zone -- if `interval` seconds have passed with
@@ -553,6 +589,8 @@ def maybe_emit_person_heartbeat(
         scene_note=scene_cache.current(now) if scene_cache is not None else None,
     )
     bus.publish(event)
+    if gaze_state is not None and gaze_state.latest is not None:
+        _publish_gaze(bus, gaze_state.latest, gaze_state)
     _log(
         "published PersonState heartbeat",
         event_type="PersonState",
@@ -646,6 +684,7 @@ def run() -> None:
 
     last_health_at: float | None = None
     last_heartbeat_at: float | None = None
+    gaze_state = GazePublishState()
     while True:
         read_session_phase(bus, session_tracker)
         published = run_once(
@@ -657,6 +696,7 @@ def run() -> None:
             engaged=session_tracker.engaged,
             floor_scheduler=floor_scheduler,
             floor_trigger=floor_trigger,
+            gaze_state=gaze_state,
         )
         now = time.time()
         if published is not None:
@@ -669,6 +709,7 @@ def run() -> None:
                 now,
                 interval=config.heartbeat_seconds,
                 scene_cache=scene_cache,
+                gaze_state=gaze_state,
             )
         last_health_at = maybe_emit_health(bus, last_health_at, now)
         if published is None:
