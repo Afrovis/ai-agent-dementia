@@ -231,28 +231,14 @@ def _speech_end(trace: Trace, utt: TraceEvent) -> float:
     return start.t if start else utt.t
 
 
-def _utterance_processing_times(trace: Trace) -> list[float]:
+def _utterance_times(trace: Trace) -> list[float]:
     """When the agent registered each utterance.
 
-    Session stamps `_last_utterance_at` when it processes the utterance, after the
-    interpret call, not when listen published it. The `interpreted` record for the same
-    text carries that time; without one, fall back to the Utterance time.
+    `run_once` calls `Session.on_utterance(now)` as soon as it reads the Utterance, before
+    the interpret call, so the Utterance time is the right estimate (plus any time the loop
+    was blocked, which the trace cannot always see).
     """
-    records = [
-        e for e in trace.events if e.kind == "decision" and e.data.get("decision") == "interpreted"
-    ]
-    times = []
-    for utt in trace.of_type("Utterance"):
-        record = next(
-            (
-                r
-                for r in records
-                if r.data.get("text") == utt.data.get("text") and utt.t <= r.t <= utt.t + 30
-            ),
-            None,
-        )
-        times.append(record.t if record else utt.t)
-    return sorted(times)
+    return sorted(u.t for u in trace.of_type("Utterance"))
 
 
 def _restroom_need_resolved(trace: Trace, t: float) -> bool:
@@ -516,7 +502,7 @@ def check_trace(
 
     # Settled, as in the agent's NICE-05 rule: in bed and silent since lying down. Speaking
     # from bed restarts the settle clock, so a reply to the person is not "after settling".
-    heard = _utterance_processing_times(trace)
+    heard = _utterance_times(trace)
     settled_windows = []
     for i, person in enumerate(people):
         if person.data.get("state") != "in_bed" or (
@@ -726,7 +712,7 @@ def check_trace(
             )
     _summary(trace, "SM-4", sum(e.data.get("state") == "on" for e in lights), out)
 
-    _check_veto(trace, out)
+    _check_veto(trace, out, thresholds)
 
     changed = [
         p
@@ -803,7 +789,7 @@ def check_trace(
     return out
 
 
-def _check_veto(trace: Trace, out: list[InvariantResult]) -> None:
+def _check_veto(trace: Trace, out: list[InvariantResult], thresholds: Thresholds) -> None:
     try:
         from agent.veto import Proposal, VetoContext, check
     except ImportError:
@@ -870,7 +856,7 @@ def _check_veto(trace: Trace, out: list[InvariantResult]) -> None:
         settled = (
             person.data.get("state") == "in_bed"
             and last_lie is not None
-            and not any(last_lie <= u <= action.t for u in _utterance_processing_times(trace))
+            and not any(last_lie <= u <= action.t for u in _utterance_times(trace))
         )
         ctx = VetoContext(
             phase=state["phase"],
@@ -912,8 +898,42 @@ def _check_veto(trace: Trace, out: list[InvariantResult]) -> None:
         elif action.type == "Notify":
             proposals = [Proposal("notify", action.data.get("level", ""))]
         checked += 1
+        # The person's latest reading may not have been read by the agent yet: the loop reads
+        # inputs only between LLM calls, and some calls (plan) publish no Activity, so a
+        # reading this recent may still be unseen when the action was decided.
+        latest_reading = readings[-1] if readings else None
+        recent_reading = (
+            latest_reading is not None and action.t - latest_reading.t < thresholds.loop_lag_s
+        )
         for proposal in proposals:
             verdict = check(proposal, ctx)
+            if not verdict.allowed and recent_reading and len(readings) > 1:
+                before = readings[-2]
+                unseen = dataclasses.replace(
+                    ctx,
+                    person_state=before.data.get("state"),
+                    settled=ctx.settled and before.data.get("state") == "in_bed",
+                )
+                if check(proposal, unseen).allowed:
+                    out.append(
+                        _result(
+                            trace,
+                            "SM-5",
+                            "minor",
+                            False,
+                            action.t,
+                            action.t,
+                            f"possibly unseen state: {verdict.rule} depends on the "
+                            f"{latest_reading.data.get('state')} reading "
+                            f"{action.t - latest_reading.t:.1f}s before the action",
+                            [
+                                f"{action.type}@{action.t}: {action.data.get('text') or ''}",
+                                f"PersonState@{latest_reading.t}: "
+                                f"{latest_reading.data.get('state')}",
+                            ],
+                        )
+                    )
+                    continue
             if not verdict.allowed and not ctx.restroom_need_resolved:
                 # restroom_need_resolved is derived; a wants_bed intent can also set it without
                 # a GoalChanged. A denial that disappears when it is True is only a suspicion.

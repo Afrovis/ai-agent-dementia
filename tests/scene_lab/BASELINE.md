@@ -232,6 +232,31 @@ correctly, but it measured the harness more than the agent. A batch now
 stops at the first usage-limit failure and records one harness entry with
 the reset time, rather than running scenes whose mind cannot start.
 
+A third `run --hours 1` (`2026-09-23T0552-live`, commit `580086d`, after the
+session limit reset) exercised the director fully: 05:52 to 06:42, 10
+scenes, every one chosen by Opus, no harness errors, no cap stops. One card
+failed validation (a beat with both `say` and `wait`) and the retry fixed
+it. The director followed the plan's confirm-and-isolate loop on its own:
+- Three fall scenes all failed in `ESCALATED/wait_for_caregiver`. It then
+  moved to a pain scene that reaches the same state without a fall.
+- Two restroom scenes with different personas both hit
+  `TT-1|ENGAGED|restroom|path_light` (finding 4). It then tried a third,
+  near-silent persona to find out whether the person has to speak at all.
+
+The run's live bug list had 25 criticals. Re-checked with
+`scene_lab rescore` after two check corrections, it has 18, all TT-1 "no
+reply": 15 on the restroom path and 3 in the `comfort` goal. The
+corrections:
+- SM-1 had flagged replies to a person talking from bed. Speaking from
+  bed now restarts the settle clock, as in the agent's NICE-05 rule.
+- An SM-5 critical turned out to be the blocked loop again. She lay down
+  at 14.5 s while an untracked `plan` LLM call held the loop, and the
+  greeting at 16.5 s was decided before the agent read that reading. A
+  denial that rests only on a reading under 3 s old is now a minor
+  "possibly unseen state". Replaying the captured window in session_replay
+  confirmed the order of events. `plan` calls publish no Activity, so
+  TM-1 cannot see these blocks yet.
+
 `scene_lab bugs 2026-09-22T2348-live 2026-09-23T0020-live` labels the
 600 s cap stop fixed in between as `gone`, the director failures as `new`
 and the unanswered utterance as `persisting`.

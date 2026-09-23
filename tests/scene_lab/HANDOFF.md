@@ -89,7 +89,14 @@ Precisions settled while building (2026-09-22), all in `invariants.py`:
   `things_to_avoid` from the profile, `restroom_need_resolved` from
   GoalChanged and interpretation records. A denial that depends only on
   an unobservable `restroom_need_resolved` is a minor "possible veto
-  bypass", not critical.
+  bypass", not critical. A denial that depends only on a person reading
+  less than `loop_lag_s` old is a minor "possibly unseen state": the loop
+  reads inputs only between LLM calls, and `plan` calls publish no
+  Activity.
+- SM-1 and SM-5 use the agent's own NICE-05 "settled" rule: in bed and
+  silent since lying down. An utterance counts from its Utterance time
+  (`run_once` registers it before interpreting), and speaking from bed
+  restarts SM-1's settle clock.
 - TM-1 is loop lag in the strict sense: an input that arrives while an LLM
   call chain blocks the loop waits until the chain ends. A slow reaction
   with no LLM call running is deliberate confirmation or dwell timing and

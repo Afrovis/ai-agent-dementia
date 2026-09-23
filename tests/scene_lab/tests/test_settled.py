@@ -41,19 +41,24 @@ def test_sm1_speaking_from_bed_restarts_the_settle_clock():
     assert hits and hits[0].severity == "critical"
 
 
-def test_sm5_settled_uses_the_agents_processing_time():
-    # Published at 12.8, interpreted (registered) at 14.5, lay down at 14.5: the agent
-    # does not count her as settled, so a greeting at 16.5 is allowed.
+def test_sm5_recent_reading_may_be_unseen_by_the_blocked_loop():
+    # Live scene 4: she lay down at 14.5 while the agent was blocked in an LLM call, and
+    # the greeting at 16.5 was decided before the loop read that reading. Only a suspicion.
     events = [
         ev(0, "PersonState", state="sitting_up", zone="bed"),
         ev(0, "SessionState", phase="ENGAGED", goal="comfort", strategy_index=0),
         ev(12.8, "Utterance", text="Oh my hip really hurts."),
-        interpreted(14.5, "Oh my hip really hurts."),
         ev(14.5, "PersonState", state="in_bed", zone="bed"),
         ev(16.5, "Say", text="Hello Jean, it's night-time.", strategy="soft_greeting"),
     ]
-    assert not failures(events, "SM-5")
-    # Without speech since lying down, the same greeting is a veto violation.
-    quiet = [e for e in events if e.type not in {"Utterance", "Activity"}]
-    hits = failures(quiet, "SM-5")
-    assert hits and "silence_when_settled" in hits[0].reason
+    hits = failures(events, "SM-5")
+    assert hits and hits[0].severity == "minor" and "possibly unseen state" in hits[0].reason
+    # Lying down well before the greeting, with no speech since: a real veto violation.
+    settled_long_ago = [
+        ev(0, "PersonState", state="sitting_up", zone="bed"),
+        ev(0, "SessionState", phase="ENGAGED", goal="comfort", strategy_index=0),
+        ev(2, "PersonState", state="in_bed", zone="bed"),
+        ev(22, "Say", text="Hello Jean, it's night-time.", strategy="soft_greeting"),
+    ]
+    hits = failures(settled_long_ago, "SM-5")
+    assert hits and hits[0].severity == "critical" and "silence_when_settled" in hits[0].reason
