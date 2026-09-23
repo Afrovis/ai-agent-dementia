@@ -65,6 +65,7 @@ CAPPED_MAXLEN: dict[str, int] = {
     "audio_in": 50,
     "frames_raw": 50,
     "pose_debug": 50,
+    "gaze": 50,
     "activity": 200,
 }
 """Approximate MAXLEN to apply when replaying onto capped streams, matching

@@ -36,6 +36,7 @@ flowchart LR
     q_cloud[("cloud<br/>CloudCall")]
     q_frames[("frames<br/>Frame")]
     q_frames_raw[("frames_raw<br/>RawFrame")]
+    q_gaze[("gaze<br/>Gaze")]
     q_light[("light<br/>LightCommand")]
     q_notify[("notify<br/>Notify")]
     q_person[("person<br/>PersonState")]
@@ -162,6 +163,7 @@ flowchart LR
 | `cloud` | `CloudCall` | agent | store (`store`) | no |
 | `frames` | `Frame` | capture | dashboard (`dashboard`), perceive (`perceive`), perceive (`perceive-calibrate`) | yes, 50 |
 | `frames_raw` | `RawFrame` | embodiment | capture (`capture`) | yes, 50 |
+| `gaze` | `Gaze` | nobody yet | nobody yet | yes, 50 |
 | `health` | `Health` | agent, capture, embodiment, light, listen, perceive | dashboard (`dashboard-live`), store (`store`) | no |
 | `light` | `LightCommand` | agent | light (`light`), store (`store`) | no |
 | `notify` | `Notify` | agent, embodiment, light, listen, store | dashboard (`dashboard-live`), notify (`notify`), store (`store`) | no |

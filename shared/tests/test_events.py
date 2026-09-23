@@ -11,6 +11,7 @@ from nc_shared.events import (
     AudioChunk,
     CloudCall,
     Frame,
+    Gaze,
     GoalChanged,
     Health,
     LightCommand,
@@ -143,6 +144,34 @@ def test_person_state_rejects_invalid_zone():
             confidence=0.5,
             zone="kitchen",
         )
+
+
+def test_gaze_roundtrip_and_registry():
+    event = Gaze(source="perceive", target="face", x=0.25, y=0.4)
+    copy = _roundtrip(event)
+    assert (copy.target, copy.x, copy.y) == ("face", 0.25, 0.4)
+    assert EVENT_STREAMS[Gaze] == "gaze"
+    assert EVENT_TYPES["Gaze"] is Gaze
+
+
+def test_gaze_none_needs_no_point():
+    event = Gaze(source="perceive", target="none")
+    assert event.x is None and event.y is None
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"target": "face", "x": 0.5},
+        {"target": "bed", "y": 0.5},
+        {"target": "face", "x": 1.2, "y": 0.5},
+        {"target": "face", "x": 0.5, "y": -0.1},
+        {"target": "ceiling", "x": 0.5, "y": 0.5},
+    ],
+)
+def test_gaze_rejects_invalid(kwargs):
+    with pytest.raises(ValidationError):
+        Gaze(source="perceive", **kwargs)
 
 
 def test_utterance_roundtrip():

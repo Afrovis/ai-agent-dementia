@@ -18,7 +18,14 @@ import base64
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, BeforeValidator, Field, JsonValue, PlainSerializer
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    Field,
+    JsonValue,
+    PlainSerializer,
+    model_validator,
+)
 
 
 def _utcnow() -> datetime:
@@ -115,6 +122,26 @@ class PersonState(BaseEvent):
     confidence: float
     zone: Literal["bed", "door", "bathroom_path", "other"]
     scene_note: str | None = None
+
+
+class Gaze(BaseEvent):
+    """Where the bedside eyes should look. Produced by `perceive`.
+
+    ``x``/``y`` are normalised image coordinates (origin top-left, not
+    mirrored): the person's face, or the bed zone's centroid while they are in
+    bed. Both are required unless ``target`` is ``none``. Never carries image
+    data.
+    """
+
+    target: Literal["face", "bed", "none"]
+    x: float | None = Field(default=None, ge=0.0, le=1.0)
+    y: float | None = Field(default=None, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def _point_required_for_target(self) -> Gaze:
+        if self.target != "none" and (self.x is None or self.y is None):
+            raise ValueError(f"target {self.target!r} needs both x and y")
+        return self
 
 
 class PoseDebug(BaseEvent):
@@ -258,6 +285,7 @@ EVENT_STREAMS: dict[type[BaseEvent], str] = {
     Frame: "frames",
     RawFrame: "frames_raw",
     PersonState: "person",
+    Gaze: "gaze",
     PoseDebug: "pose_debug",
     Activity: "activity",
     SpeechStarted: "speech_in",
