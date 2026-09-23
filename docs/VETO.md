@@ -22,7 +22,8 @@ device and this is not a general safety system.
 | --- | --- | --- | --- |
 | `no_redirect_from_toilet_need` | `guided_return` | the goal is `restroom`, or a recent utterance names a toilet need or an accident ("loo", "pee", "wet myself", ...) that has not been resolved by a return to bed | TOIL-01 |
 | `no_redirect_from_stated_need` | `guided_return` | a recent utterance states another need: cold, pain, feeling unwell, a call for help | NICE-01 |
-| `no_orienting_a_settling_person` | `orient_time_place` | the person is in bed, has settled, or the session is in `COOLDOWN` | NICE-05 |
+| `no_return_prompt_in_bed` | `guided_return`, `validate_and_redirect` | the latest person reading is `in_bed`; both strategies' fixed phrases direct the person toward bed | NICE-05 |
+| `no_orienting_a_settling_person` | `orient_time_place` | the person is in bed or has settled | NICE-05 |
 | `no_night_orientation_by_day` | `orient_time_place` | outside the configured night window (its sentence says it is night-time) | AA-03 |
 | `silence_when_settled` | any `Say` except the escalation sentence | the person is in bed and has not spoken since lying down | NICE-05 |
 | `no_memory_question` | a `Say` | the text asks the person to recall ("do you remember", "don't you know", ...) | VAL-01 |
@@ -61,9 +62,10 @@ The proposed sentence is never logged: it may paraphrase private speech.
 These are the prohibitions the MVP does **not** guarantee.
 
 - **Every other `guided_return` misuse.** Only a need stated in words, or a
-  `restroom` goal, blocks it. A silent person who needs the toilet and has
-  not reached the bathroom path yet is not protected, and the need regexes are
-  English keyword lists that will miss paraphrases ("I'm bursting").
+  `restroom` goal, or a current in-bed reading blocks it. A silent person
+  who needs the toilet and has not reached the bathroom path yet is not
+  protected, and the need regexes are English keyword lists that will miss
+  paraphrases ("I'm bursting").
 - **When a need is met.** Rule 1 keeps blocking `guided_return` for as long
   as the utterance stays among the last three. That is conservative, but it
   also means a toilet trip that ended is not recognised as having ended.

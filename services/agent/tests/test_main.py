@@ -10,6 +10,7 @@ from dataclasses import replace as dc_replace
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import pytest
 from nc_shared.bus import FakeBus
 from nc_shared.events import (
     Activity,
@@ -536,6 +537,96 @@ def test_time_question_answers_without_advancing_ladder():
     assert len(says) == 1
     assert says[0].strategy == "orient_time_place"
     assert "11 o'clock at night" in says[0].text
+
+
+def test_cooldown_up_answers_time_question_without_changing_session():
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    now_fn, advance = make_clock(NIGHT)
+    session.phase = Phase.COOLDOWN
+    session.session_id = "cooldown-session"
+    session.strategy_index = 4
+    session._cooldown_since = NIGHT
+    bus.publish(PersonState(source="perceive", state="sitting_up", confidence=0.9, zone="bed"))
+    run_once(bus, session, now_fn=now_fn)
+
+    llm = FakeLLM(interpretations=[Interpretation(intent=Intent.CONFUSED_TIME, distress=0)])
+    bus.publish(Utterance(source="listen", text="What time is it?", confidence=0.9, duration_s=1))
+    advance(1)
+    assert run_once(bus, session, now_fn=now_fn, llm=llm) == []
+
+    says = [event for _, event in bus.read("say", "test", "c1")]
+    assert [event.strategy for event in says] == ["orient_time_place"]
+    assert session.phase == Phase.COOLDOWN
+    assert session.strategy_index == 4
+    assert session._cooldown_since == NIGHT
+    assert session.recent_utterances == ("What time is it?",)
+    assert [name for name, _ in llm.calls] == ["interpret", "compose"]
+    assert llm.calls[0][1]["last_turns"] == []
+    assert bus.read("notify", "test", "c1") == []
+
+
+def test_cooldown_in_bed_ignores_speech():
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    session.phase = Phase.COOLDOWN
+    session.session_id = "cooldown-session"
+    bus.publish(PersonState(source="perceive", state="in_bed", confidence=0.9, zone="bed"))
+    run_once(bus, session, now_fn=lambda: NIGHT)
+    llm = FakeLLM(interpretations=[Interpretation(intent=Intent.CONFUSED_TIME, distress=0)])
+    bus.publish(Utterance(source="listen", text="What time is it?", confidence=0.9, duration_s=1))
+    run_once(bus, session, now_fn=lambda: NIGHT, llm=llm)
+
+    assert bus.read("say", "test", "c1") == []
+    assert session.recent_utterances == ()
+    assert llm.calls == []
+
+
+@pytest.mark.parametrize(
+    ("intent", "distress", "text", "strategy"),
+    [
+        (Intent.NEED_RESTROOM, 0, "I need the toilet", "path_light"),
+        (Intent.LOOKING_FOR_PERSON, 0, "Where is my daughter?", "reassure_waiting"),
+        (Intent.UNCLEAR, 2, "Help me", "reassure_waiting"),
+        (Intent.FINE, 0, "I'm fine", None),
+        (Intent.UNCLEAR, 0, "Hmm", None),
+    ],
+)
+def test_cooldown_direct_intents_only_reply(intent, distress, text, strategy):
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    session.phase = Phase.COOLDOWN
+    session.session_id = "cooldown-session"
+    session._cooldown_since = NIGHT
+    bus.publish(PersonState(source="perceive", state="sitting_up", confidence=0.9, zone="bed"))
+    run_once(bus, session, now_fn=lambda: NIGHT)
+    llm = FakeLLM(interpretations=[Interpretation(intent=intent, distress=distress)])
+    bus.publish(Utterance(source="listen", text=text, confidence=0.9, duration_s=1))
+    run_once(bus, session, now_fn=lambda: NIGHT + timedelta(seconds=1), llm=llm)
+
+    assert [event.strategy for _, event in bus.read("say", "test", "c1")] == (
+        [strategy] if strategy else []
+    )
+    assert session.phase == Phase.COOLDOWN
+    assert session.goal == "return_to_bed"
+    assert session._cooldown_since == NIGHT
+    assert "plan" not in [name for name, _ in llm.calls]
+    assert bus.read("notify", "test", "c1") == []
+    assert not any(isinstance(event, GoalChanged) for _, event in bus.read("session", "test", "c1"))
+
+
+def test_cooldown_up_without_llm_gives_one_reassuring_reply():
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    session.phase = Phase.COOLDOWN
+    session.session_id = "cooldown-session"
+    bus.publish(PersonState(source="perceive", state="sitting_up", confidence=0.9, zone="bed"))
+    run_once(bus, session, now_fn=lambda: NIGHT)
+    bus.publish(Utterance(source="listen", text="Hello", confidence=0.9, duration_s=1))
+    run_once(bus, session, now_fn=lambda: NIGHT + timedelta(seconds=1))
+
+    assert [event.strategy for _, event in bus.read("say", "test", "c1")] == ["reassure_waiting"]
+    assert session.phase == Phase.COOLDOWN
 
 
 def test_recent_utterance_counts_as_presence_after_camera_loses_person():

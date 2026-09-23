@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 import yaml
 from agent.config import AgentConfig
-from agent.llm import Intent, Interpretation, local_llm
+from agent.llm import Intent, Interpretation, Plan, local_llm
 from agent.main import run_once
 from agent.profile import load_profile
 from agent.session import Session
@@ -79,14 +79,17 @@ def extract(source: str | Path, target: str | Path, *, since=None, until=None) -
 
 
 class RecordedLLM:
-    """Interpret text from a scenario map; use fixed caregiver speech and no plan."""
+    """Replay interpretation and plan results keyed by exact utterance text."""
 
     model = "recorded"
 
-    def __init__(self, interpretations: dict) -> None:
+    def __init__(self, interpretations: dict, plans: dict | None = None) -> None:
         self.interpretations = interpretations
+        self.plans = plans or {}
+        self.latest_utterance: str | None = None
 
     def interpret(self, utterance, turns, profile):  # noqa: ARG002
+        self.latest_utterance = utterance
         value = self.interpretations.get(utterance, {"intent": "unclear", "distress": 0})
         return Interpretation(intent=Intent(value["intent"]), distress=value["distress"])
 
@@ -94,7 +97,8 @@ class RecordedLLM:
         return None
 
     def plan(self, *args, **kwargs):  # noqa: ARG002
-        return None
+        value = self.plans.get(self.latest_utterance)
+        return Plan.model_validate({"confidence": 1.0, **value}) if value is not None else None
 
 
 class TimelineBus(FakeBus):
@@ -189,7 +193,9 @@ def run_scenario(
     bus.ensure_group("speech_in", "agent")
     bus.ensure_group("debug", "agent")
     if llm_mode == "recorded":
-        llm = RecordedLLM((expect or {}).get("interpretations", {}))
+        llm = RecordedLLM(
+            (expect or {}).get("interpretations", {}), (expect or {}).get("plans", {})
+        )
     elif llm_mode == "live":
         url = base_url or (
             os.environ.get("OLLAMA_URL", "http://host.docker.internal:11434")

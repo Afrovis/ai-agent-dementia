@@ -35,8 +35,8 @@ python -m session_replay run tests/session_replay/scenarios/desk.jsonl \
 pytest tests/session_replay
 ```
 
-The expect file may contain `llm: recorded`, an `interpretations` map keyed
-by exact utterance text, an `expect` list, a `never` list, and an optional
+The expect file may contain `llm: recorded`, `interpretations` and `plans`
+maps keyed by exact utterance text, an `expect` list, a `never` list, and an optional
 `known_bug` reason. Each expectation anchors on `after: {heard: "..."}`,
 `after: {person: {state: standing, zone: bed}}`,
 `after: {debug: {force_in_bed: false}}`, or `after: {reset_session: true}`.
@@ -55,8 +55,12 @@ still exits 1 and prints the reason when its expectation fails.
 
 `--llm none` is the default without an expect file and exercises the agent's
 deterministic fallbacks. `--llm recorded` uses the interpretation map,
-defaults unknown speech to `unclear` with zero distress, and lets compose and
-plan fall back to the agent's own code. `--llm live` uses the same local
+defaults unknown speech to `unclear` with zero distress, and returns a plan
+for the latest interpreted utterance when `plans` contains one. Plan values
+use the agent's fields, for example `"Thank you.": {next_strategy: guided_return}`
+or `"I need the restroom": {goal_change: restroom}`; omitted confidence
+defaults to 1.0. Without a matching plan, and for composition, the agent's
+own fallbacks apply. `--llm live` uses the same local
 client constructor as the service; `--backend`, `--model`, and `--base-url`
 select its server. `--strategies` and `--person` override the agent's normal
 configuration path resolution. `--tail-s` changes the post-input simulation
