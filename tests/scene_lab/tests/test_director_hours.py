@@ -134,6 +134,7 @@ def test_hours_deadline_and_index(tmp_path):
             director=director,
             scene_runner=runner,
             stack_factory=FakeStack,
+            triage_after=False,
             clock=clock,
         )
     )
@@ -167,6 +168,7 @@ def test_hours_interrupt_finishes(tmp_path):
             director=director,
             scene_runner=runner,
             stack_factory=FakeStack,
+            triage_after=False,
             clock=clock,
         )
     )
@@ -193,6 +195,7 @@ def test_hours_rechecks_deadline_after_director(tmp_path):
             director=SlowDirector(),
             scene_runner=runner,
             stack_factory=FakeStack,
+            triage_after=False,
             clock=clock,
         )
     )
@@ -265,6 +268,7 @@ def test_hours_director_timeout_uses_fallback(tmp_path, monkeypatch):
             director=director,
             scene_runner=runner,
             stack_factory=FakeStack,
+            triage_after=False,
             clock=clock,
         )
     )
@@ -328,8 +332,67 @@ def test_hours_stops_on_director_usage_limit(tmp_path):
             director=LimitedDirector(),
             scene_runner=runner,
             stack_factory=FakeStack,
+            triage_after=False,
             clock=clock,
         )
     )
     assert "usage limit" in (path / "bugs.md").read_text()
     assert json.loads((tmp_path / "index.jsonl").read_text())["scene_count"] == 0
+
+
+def test_hours_writes_a_fix_list_at_the_end(tmp_path):
+    clock = FakeClock()
+    calls = []
+
+    async def runner(scene, source, run, stack, preflight, thresholds):
+        clock.t += 700
+        return []
+
+    def fake_triage(run_dir, repo_root, commit, *, quick_tests):
+        calls.append((run_dir, commit, quick_tests))
+        (run_dir / "fixes.md").write_text("# Fix list\n")
+        return run_dir / "fixes.md"
+
+    path = asyncio.run(
+        run_hours(
+            1200 / 3600,
+            runs_root=tmp_path,
+            director=FakeDirector(),
+            scene_runner=runner,
+            stack_factory=FakeStack,
+            clock=clock,
+            triage_quick_tests=False,
+            triage_fn=fake_triage,
+        )
+    )
+    assert calls == [(path, "abc", False)]
+    assert (path / "fixes.md").exists()
+
+
+def test_hours_skips_the_fix_list_after_the_usage_limit(tmp_path):
+    class LimitedDirector(FakeDirector):
+        def next_scene(self, state):
+            if self.calls:
+                self.last_error = '"api_error_status":429 You\'ve hit your session limit'
+            return super().next_scene(state)
+
+    clock = FakeClock()
+
+    async def runner(scene, source, run, stack, preflight, thresholds):
+        clock.t += 10
+        return []
+
+    def fake_triage(*args, **kwargs):
+        raise AssertionError("no triage once the usage limit is reached")
+
+    asyncio.run(
+        run_hours(
+            1,
+            runs_root=tmp_path,
+            director=LimitedDirector(),
+            scene_runner=runner,
+            stack_factory=FakeStack,
+            clock=clock,
+            triage_fn=fake_triage,
+        )
+    )

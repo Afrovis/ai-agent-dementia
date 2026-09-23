@@ -78,6 +78,21 @@ remain. `--max-scenes` is optional. `--keep-stack` leaves nightsim running at
 the end. Each generated card is saved under `scenes/`, while `director.jsonl`,
 `coverage.json`, `bugs.jsonl`, and `bugs.md` are updated in the run directory.
 `bugs.md` includes the first occurrence's evidence and links to every report.
+
+At the end of a batch, `triage` writes `fixes.md` in the run folder: a ranked
+fix list with evidence links, likely cause, a concrete proposal and any owner
+decision, from Opus on the subscription. Cheap proposals are checked first in
+a throwaway `git worktree` of the run's commit under the system temp
+directory. The triage agent may edit only that copy, run Python only through
+a wrapper pinned to it (pytest, `rescore`, `promote` plus `session_replay`
+with recorded interpretations) and read git. No Docker, Ollama or network,
+no commits. Its edits are saved as `fixes.patch`. It is skipped when the batch
+hit the usage limit. `--no-triage` turns it off, `--triage-no-tests` makes it
+analysis only, and `python -m scene_lab triage RUN_ID [--no-tests]` runs it on
+a finished run. The batch also unloads the Ollama model before it starts,
+resets it before each scene and unloads it at the end (see `CLAUDE.md`). The
+project skill `.claude/skills/scene-lab-director-run/` walks through a run
+end to end.
 Ctrl-C finishes the current scene's recording and then ends the batch.
 
 Each scene folder holds `scene.yaml`, a text-only bus `export.jsonl`,
