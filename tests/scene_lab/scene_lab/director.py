@@ -173,6 +173,14 @@ class Director:
             except Exception as exc:
                 error = f"\nValidation error: {type(exc).__name__}: {exc}. Correct the JSON."
                 self._log(run, {"attempt": attempt + 1, "error": str(exc)})
+        return self.fallback(state, error)
+
+    def fallback(self, state: dict, error: str) -> Scene:
+        """Least-covered existing card; used after invalid output or a timed-out call."""
+        run = state["run"]
+        scenes = state.get("scenes", [])
+        left = state["time_left_s"]
+        cards = existing_cards()
         counts = coverage(scenes)["counts"]
 
         def card_count(card: Scene) -> int:

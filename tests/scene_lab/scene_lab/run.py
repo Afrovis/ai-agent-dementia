@@ -44,6 +44,9 @@ class ScriptMind:
         return Plan()
 
 
+DIRECTOR_TIMEOUT_S = 180.0
+
+
 async def schedule(
     scene: Scene,
     body,
@@ -422,17 +425,23 @@ async def run_hours(
             from collections import Counter
 
             bug_counts = dict(Counter(item["fingerprint"] for item in bugs))
+            state = {
+                "run": run,
+                "scenes": scenes,
+                "bugs": bug_counts,
+                "previous": previous,
+                "time_left_s": remaining,
+            }
             try:
-                scene = chosen.next_scene(
-                    {
-                        "run": run,
-                        "scenes": scenes,
-                        "bugs": bug_counts,
-                        "previous": previous,
-                        "time_left_s": remaining,
-                    }
+                # The Claude call is synchronous; keep it off the event loop and bounded so a
+                # hung CLI cannot stall an unattended run.
+                scene = await asyncio.wait_for(
+                    asyncio.to_thread(chosen.next_scene, state), timeout=DIRECTOR_TIMEOUT_S
                 )
-            except KeyboardInterrupt:
+            except TimeoutError:
+                scene = chosen.fallback(state, f"director timed out after {DIRECTOR_TIMEOUT_S} s")
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                # Ctrl-C while the director thinks: no new scene; still finish the run.
                 break
             # Director latency is part of the deadline; do not start if its budget expired.
             remaining = deadline - clock()

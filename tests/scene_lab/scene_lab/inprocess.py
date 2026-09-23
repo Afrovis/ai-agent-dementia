@@ -12,7 +12,26 @@ from .scene import load_scene
 from .trace import from_decision_bench
 
 
-def run_card(path: Path, out: Path | None = None) -> Path:
+def _llm(backend: str, model: str | None, url: str, timeout_s: float):
+    if backend == "stub":
+        return StubLLM()
+    from agent.llm import local_llm
+
+    return local_llm(backend, url=url, model=model, timeout_seconds=timeout_s)
+
+
+def run_card(
+    path: Path,
+    out: Path | None = None,
+    *,
+    backend: str = "stub",
+    model: str | None = None,
+    url: str = "http://127.0.0.1:11434",
+    timeout_s: float = 30.0,
+    llm_latency: str = "none",
+) -> Path:
+    """Run the card's scripted beats in-process. Use the live run's model to isolate
+    timing differences from model differences; stub is deterministic."""
     card = load_scene(path)
     timeline = []
     for beat in card.opening:
@@ -39,9 +58,13 @@ def run_card(path: Path, out: Path | None = None) -> Path:
         ),
     )
     evidence = run_scenario(
-        scenario, llm=StubLLM(), tail_seconds=max(0, card.duration_s - timeline[-1].t)
+        scenario,
+        llm=_llm(backend, model, url, timeout_s),
+        tail_seconds=max(0, card.duration_s - timeline[-1].t),
+        llm_latency=llm_latency,
     )
     trace = from_decision_bench(evidence)
+    trace.meta.update({"backend": backend, "model": model, "llm_latency": llm_latency})
     target = out or path.with_name(f"{card.id}-inprocess-trace.jsonl")
     target.parent.mkdir(parents=True, exist_ok=True)
     trace.write_jsonl(target)

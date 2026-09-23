@@ -212,3 +212,43 @@ def test_bugs_context_and_three_run_merge(tmp_path):
     statuses = {row["fingerprint"].split("|")[0]: row["status"] for row in rows}
     assert statuses == {"TT-1": "persisting", "TT-2": "new", "TT-3": "gone"}
     assert "pending say dropped at 18s" in render_merge_md(rows)
+
+
+def test_hours_director_timeout_uses_fallback(tmp_path, monkeypatch):
+    import time
+
+    import scene_lab.run as run_module
+
+    monkeypatch.setattr(run_module, "DIRECTOR_TIMEOUT_S", 0.05)
+    clock = FakeClock()
+
+    class HungDirector(FakeDirector):
+        fallbacks = 0
+
+        def next_scene(self, state):
+            time.sleep(0.3)
+            return super().next_scene(state)
+
+        def fallback(self, state, error):
+            assert "timed out" in error
+            self.fallbacks += 1
+            return Scene.model_validate(card(100 + self.fallbacks))
+
+    director = HungDirector()
+
+    async def runner(scene, source, run, stack, preflight, thresholds):
+        clock.t += 700
+        return []
+
+    asyncio.run(
+        run_hours(
+            700 / 3600,
+            runs_root=tmp_path,
+            director=director,
+            scene_runner=runner,
+            stack_factory=FakeStack,
+            clock=clock,
+        )
+    )
+    assert director.fallbacks == 1
+    assert json.loads((tmp_path / "index.jsonl").read_text())["scene_count"] == 1

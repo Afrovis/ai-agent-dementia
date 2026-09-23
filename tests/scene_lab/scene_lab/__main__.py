@@ -40,6 +40,10 @@ def main(argv: list[str] | None = None) -> int:
     offline = sub.add_parser("inprocess")
     offline.add_argument("scene", type=Path)
     offline.add_argument("--out", type=Path)
+    offline.add_argument("--backend", choices=("stub", "ollama", "openai"), default="stub")
+    offline.add_argument("--model")
+    offline.add_argument("--url", default="http://127.0.0.1:11434")
+    offline.add_argument("--llm-latency", default="none")
     try:
         from .promote import register
 
@@ -103,7 +107,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "inprocess":
         from .inprocess import run_card
 
-        print(run_card(args.scene, args.out))
+        print(
+            run_card(
+                args.scene,
+                args.out,
+                backend=args.backend,
+                model=args.model,
+                url=args.url,
+                llm_latency=args.llm_latency,
+            )
+        )
         return 0
     if args.command == "promote":
         if not hasattr(args, "run_dir"):
