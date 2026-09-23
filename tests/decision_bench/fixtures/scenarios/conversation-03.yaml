@@ -1,0 +1,13 @@
+id: conversation-03
+category: conversation
+summary: Asks whether it is morning just before the greeting strategy's next dwell advance.
+start: "03:05"
+timeline:
+  - {t: 0, person: {state: sitting_up, zone: bed}}
+  # ambient_orient: 20-50 s (30 s dwell); soft_greeting: 50-70 s (20 s dwell).
+  - {t: 69, utterance: {text: "Is it morning already?", duration_s: 1.5}}
+checkpoints:
+  # stub label: awaiting answer-or-redirect policy
+  - id: question-at-advance
+    window: [69, 90]
+    question: How should the agent respond as the strategy ladder advances?

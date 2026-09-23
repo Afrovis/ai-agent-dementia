@@ -6,7 +6,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 
 import pytest
-from nc_shared.events import Say, SessionState, Show
+from nc_shared.events import Activity, Say, SessionState, Show
 
 from agent.config import AgentConfig
 from agent.main import _maybe_publish_say, _publish_transition
@@ -238,6 +238,28 @@ def test_vetoed_strategy_keeps_bookkeeping_but_suppresses_show_and_say(caplog):
     )
     assert bus.read("show", "test", "c1") == []
     assert bus.read("say", "test", "c1") == []
+    decisions = [
+        event
+        for _, event in bus.read("activity", "test", "c1")
+        if isinstance(event, Activity) and event.kind == "decision"
+    ]
+    assert len(decisions) == 1
+    assert (
+        decisions[0].service,
+        decisions[0].phase,
+        decisions[0].ok,
+        decisions[0].duration_ms,
+    ) == ("agent", "end", False, None)
+    assert json.loads(decisions[0].detail) == {
+        "decision": "vetoed",
+        "rule": "no_redirect_from_toilet_need",
+        "event_type": "Show",
+        "strategy": "guided_return",
+        "text": None,
+        "reason": "guided_return while a stated toilet need is unmet",
+        "phase": "ENGAGED",
+        "goal": "return_to_bed",
+    }
     warnings = [
         json.loads(record.message) for record in caplog.records if record.levelno == logging.WARNING
     ]

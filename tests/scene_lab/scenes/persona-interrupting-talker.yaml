@@ -1,0 +1,16 @@
+id: persona-interrupting-talker
+category: conversation
+start: '01:50'
+duration_s: 360
+profile: config/person.example.yaml
+persona:
+  summary: Jean is worried about whether the children are home and speaks again before long replies finish.
+  hidden_need: reassurance that the family is settled
+  hearing: poor
+  patience: low
+  interrupts: true
+opening:
+  - {at: 0, move: {state: standing, zone: bed, over_s: 0}}
+  - {at: 2, say: 'Where are the children?'}
+stressors: [question_during_speech, rapid_fire_questions]
+mind: claude

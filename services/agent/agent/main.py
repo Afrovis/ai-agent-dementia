@@ -153,7 +153,28 @@ def veto_context(session: Session, profile: PersonProfile, now: datetime) -> Vet
     )
 
 
-def _vetoed(proposal: Proposal, context: VetoContext) -> bool:
+def _decision_activity(bus, session_id: str | None, detail: dict[str, object]) -> None:
+    """Best-effort trace record; telemetry must not interrupt agent decisions."""
+    try:
+        event = Activity(
+            source=SERVICE_NAME,
+            session_id=session_id,
+            service=SERVICE_NAME,
+            kind="decision",
+            phase="end",
+            ok=False,
+            duration_ms=None,
+            detail=json.dumps(detail, sort_keys=True, separators=(",", ":")),
+        )
+        bus.publish(event, maxlen=200)
+        _log("published Activity", event_type="Activity", kind="decision", phase="end", ok=False)
+    except Exception as exc:
+        _log("failed to publish decision Activity", level=logging.WARNING, error=type(exc).__name__)
+
+
+def _vetoed(
+    bus, proposal: Proposal, context: VetoContext, *, session_id: str | None = None
+) -> bool:
     """Log a denial once without exposing candidate speech in operational logs."""
     verdict = veto.check(proposal, context)
     if verdict.allowed:
@@ -172,6 +193,20 @@ def _vetoed(proposal: Proposal, context: VetoContext) -> bool:
         clause=verdict.clause,
         action=f"{proposal.kind}:{proposal.value}",
         reason=verdict.reason,
+    )
+    _decision_activity(
+        bus,
+        session_id,
+        {
+            "decision": "vetoed",
+            "rule": verdict.rule,
+            "event_type": event_type,
+            "strategy": proposal.value if proposal.kind in ("strategy", "say") else None,
+            "text": proposal.text if proposal.kind in ("say", "notify") else None,
+            "reason": verdict.reason,
+            "phase": context.phase,
+            "goal": context.goal,
+        },
     )
     return True
 
@@ -318,7 +353,7 @@ def _maybe_publish_say(
     if strategy is None or strategy.say_template is None:
         return False
     if session._pending_say is not None:
-        _drop_pending_say(session, "superseded")
+        _drop_pending_say(bus, session, "superseded", now)
 
     # Occupancy suppresses only ordinary bedside speech. The Show still
     # updates, the ladder and its dwell timers continue unchanged, and the
@@ -431,7 +466,12 @@ def _maybe_publish_say(
 
     if context is None:
         context = veto_context(session, profile, now)
-    if _vetoed(Proposal("say", strategy.id, text=text, terminal=strategy.terminal), context):
+    if _vetoed(
+        bus,
+        Proposal("say", strategy.id, text=text, terminal=strategy.terminal),
+        context,
+        session_id=session.session_id,
+    ):
         return False
 
     say_event = Say(
@@ -447,7 +487,12 @@ def _maybe_publish_say(
     )
     if gap_only:
         session._pending_say = PendingSay(
-            say_event, transition.goal, transition.strategy_index, now, direct=direct
+            say_event,
+            transition.goal,
+            transition.strategy_index,
+            now,
+            direct=direct,
+            trigger=transition.reason,
         )
         _log(
             "deferred Say",
@@ -462,10 +507,43 @@ def _maybe_publish_say(
     bus.publish(say_event)
     session.record_say(now, strategy.id, say_event.text)
     _log("published Say", event_type="Say", strategy=strategy.id)
+    _said_decision(bus, session, say_event, trigger=transition.reason, direct=direct)
     return True
 
 
-def _drop_pending_say(session: Session, reason: str) -> None:
+# Transition reasons produced while handling the person's speech; any `interpreted_*`
+# reason is one too. A Say from any other transition (a dwell timer, a zone change) is a
+# scheduled step, even when it happens to follow an utterance.
+_SPEECH_TRIGGERS = frozenset(
+    {"utterance", "utterance_reply", "llm_plan_strategy", "distress_detected_twice"}
+)
+
+
+def _said_decision(
+    bus, session: Session, say: Say, *, trigger: str | None, direct: bool, age_s: float = 0.0
+) -> None:
+    """Why a Say went out: the transition that caused it (a dwell timer or the person's
+    speech), so a trace can tell a reply from a ladder step that happened to follow."""
+    reply = direct or (
+        trigger is not None and (trigger in _SPEECH_TRIGGERS or trigger.startswith("interpreted_"))
+    )
+    _decision_activity(
+        bus,
+        say.session_id,
+        {
+            "decision": "said",
+            "strategy": say.strategy,
+            "trigger": trigger,
+            "direct": direct,
+            "reply": reply,
+            "deferred_s": round(age_s, 3),
+            "phase": session.phase.value,
+            "goal": session.goal,
+        },
+    )
+
+
+def _drop_pending_say(bus, session: Session, reason: str, now: datetime) -> None:
     pending = session._pending_say
     if pending is None:
         return
@@ -477,6 +555,20 @@ def _drop_pending_say(session: Session, reason: str) -> None:
         session_id=pending.event.session_id,
         reason=reason,
     )
+    _decision_activity(
+        bus,
+        pending.event.session_id,
+        {
+            "decision": "pending_say_dropped",
+            "reason": reason,
+            "text": pending.event.text,
+            "strategy": pending.event.strategy,
+            "direct": pending.direct,
+            "age_s": (now - pending.queued_at).total_seconds(),
+            "phase": session.phase.value,
+            "goal": session.goal,
+        },
+    )
 
 
 def _flush_pending_say(bus, session: Session, now: datetime, profile: PersonProfile) -> None:
@@ -487,21 +579,21 @@ def _flush_pending_say(bus, session: Session, now: datetime, profile: PersonProf
     current = session._engine.current()
     seconds_since_last_say = session.seconds_since_last_say(now)
     if age > PENDING_SAY_MAX_AGE_S:
-        _drop_pending_say(session, "max_age")
+        _drop_pending_say(bus, session, "max_age", now)
     elif session.session_id != pending.event.session_id:
-        _drop_pending_say(session, "session_changed")
+        _drop_pending_say(bus, session, "session_changed", now)
     elif session.phase not in (Phase.OBSERVING, Phase.ENGAGED, Phase.ESCALATED):
-        _drop_pending_say(session, "session_inactive")
+        _drop_pending_say(bus, session, "session_inactive", now)
     elif session.goal != pending.goal:
-        _drop_pending_say(session, "goal_changed")
+        _drop_pending_say(bus, session, "goal_changed", now)
     elif not pending.direct and (
         current is None
         or current.id != pending.event.strategy
         or session.strategy_index != pending.strategy_index
     ):
-        _drop_pending_say(session, "strategy_changed")
+        _drop_pending_say(bus, session, "strategy_changed", now)
     elif not session.person_present(now) and pending.event.strategy != ESCALATE_PHONE_ID:
-        _drop_pending_say(session, "person_absent")
+        _drop_pending_say(bus, session, "person_absent", now)
     elif (
         seconds_since_last_say is not None
         and seconds_since_last_say < session.config.say_min_gap_seconds
@@ -511,16 +603,32 @@ def _flush_pending_say(bus, session: Session, now: datetime, profile: PersonProf
         context = veto_context(session, profile, now)
         strategy_id = pending.event.strategy
         terminal = strategy_id == ESCALATE_PHONE_ID
-        if _vetoed(Proposal("strategy", strategy_id, terminal=terminal), context) or _vetoed(
-            Proposal("say", strategy_id, text=pending.event.text, terminal=terminal), context
+        if _vetoed(
+            bus,
+            Proposal("strategy", strategy_id, terminal=terminal),
+            context,
+            session_id=session.session_id,
+        ) or _vetoed(
+            bus,
+            Proposal("say", strategy_id, text=pending.event.text, terminal=terminal),
+            context,
+            session_id=session.session_id,
         ):
-            _drop_pending_say(session, "vetoed")
+            _drop_pending_say(bus, session, "vetoed", now)
             return
         if pending.show is not None:
             bus.publish(pending.show.model_copy(update={"ts": datetime.now(UTC)}))
         bus.publish(pending.event.model_copy(update={"ts": datetime.now(UTC)}))
         session.record_say(now, pending.event.strategy, pending.event.text)
         session._pending_say = None
+        _said_decision(
+            bus,
+            session,
+            pending.event,
+            trigger=pending.trigger,
+            direct=pending.direct,
+            age_s=(now - pending.queued_at).total_seconds(),
+        )
         _log(
             "published deferred Say",
             event_type="Say",
@@ -595,7 +703,9 @@ def _publish_transition(
                 state="on",
                 reason="restroom_goal_started",
             )
-            if not _vetoed(Proposal("light", light_event.state), context):
+            if not _vetoed(
+                bus, Proposal("light", light_event.state), context, session_id=session.session_id
+            ):
                 bus.publish(light_event)
                 _log("published LightCommand", event_type="LightCommand", state="on")
         elif (
@@ -609,7 +719,9 @@ def _publish_transition(
                 state="off",
                 reason="restroom_goal_ended",
             )
-            if not _vetoed(Proposal("light", light_event.state), context):
+            if not _vetoed(
+                bus, Proposal("light", light_event.state), context, session_id=session.session_id
+            ):
                 bus.publish(light_event)
                 _log("published LightCommand", event_type="LightCommand", state="off")
 
@@ -623,7 +735,9 @@ def _publish_transition(
             state="off",
             reason=f"session_{transition.phase.value.lower()}",
         )
-        if not _vetoed(Proposal("light", light_event.state), context):
+        if not _vetoed(
+            bus, Proposal("light", light_event.state), context, session_id=session.session_id
+        ):
             bus.publish(light_event)
             _log("published LightCommand", event_type="LightCommand", state="off")
 
@@ -636,13 +750,21 @@ def _publish_transition(
             body=transition.notify.body,
             repeat_until_ack=True,
         )
-        if not _vetoed(Proposal("notify", notify_event.level), context):
+        if not _vetoed(
+            bus,
+            Proposal("notify", notify_event.level, text=notify_event.title),
+            context,
+            session_id=session.session_id,
+        ):
             bus.publish(notify_event)
             _log("published Notify", event_type="Notify", notify_level=notify_event.level)
 
     strategy = transition.strategy
     if strategy is None or not _vetoed(
-        Proposal("strategy", strategy.id, terminal=strategy.terminal), context
+        bus,
+        Proposal("strategy", strategy.id, terminal=strategy.terminal),
+        context,
+        session_id=session.session_id,
     ):
         show_event = _show_for_transition(transition, now, profile)
         spoke = _maybe_publish_say(bus, transition, session, now, profile, llm, context=context)
@@ -678,9 +800,9 @@ def _reply_to_utterance(
             state="on",
             reason="escalated_restroom_need",
         )
-        if not _vetoed(Proposal("light", "on"), context):
+        if not _vetoed(bus, Proposal("light", "on"), context, session_id=session.session_id):
             bus.publish(light)
-    if _vetoed(Proposal("strategy", strategy.id), context):
+    if _vetoed(bus, Proposal("strategy", strategy.id), context, session_id=session.session_id):
         return
     transition = Transition(
         phase=session.phase,
@@ -792,6 +914,18 @@ def run_once(
                     detail=f"{model} {outcome}",
                 )
             if interpretation is not None:
+                _decision_activity(
+                    bus,
+                    session.session_id,
+                    {
+                        "decision": "interpreted",
+                        "intent": interpretation.intent.value,
+                        "distress": interpretation.distress,
+                        "text": event.text,
+                        "phase": session.phase.value,
+                        "goal": session.goal,
+                    },
+                )
                 goal_before_interpretation = session.goal
                 interpreted = session.on_interpretation(
                     interpretation.intent.value, interpretation.distress, now

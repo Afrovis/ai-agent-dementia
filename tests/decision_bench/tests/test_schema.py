@@ -61,6 +61,13 @@ def test_scenarios_load_and_cover_every_category():
     assert {s.category for s in scenarios} == set(CATEGORIES)
 
 
+def test_conversation_timelines_remain_unlabelled_until_policy_review():
+    scenarios = [s for s in load_scenarios() if s.category == "conversation"]
+    assert {s.id for s in scenarios} == {f"conversation-{n:02d}" for n in range(1, 8)}
+    assert all(not s.labelled for s in scenarios)
+    assert all(not checkpoint.labelled for s in scenarios for checkpoint in s.checkpoints)
+
+
 def test_labels_come_from_the_annotation_workflow():
     # A labelled clean scenario needs an annotator draft and a reviewed human copy,
     # so labels are never hand-copied from what the agent does.

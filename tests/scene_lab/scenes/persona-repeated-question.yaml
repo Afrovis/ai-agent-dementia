@@ -1,0 +1,16 @@
+id: persona-repeated-question
+category: conversation
+start: '02:15'
+duration_s: 420
+profile: config/person.example.yaml
+persona:
+  summary: Jean keeps asking when Tom will arrive because she is uneasy about being alone tonight.
+  hidden_need: reassurance that Tom is nearby
+  hearing: normal
+  patience: medium
+  interrupts: false
+opening:
+  - {at: 0, move: {state: sitting_up, zone: bed, over_s: 0}}
+  - {at: 2, say: 'When is Tom coming?'}
+stressors: [repeated_question]
+mind: claude

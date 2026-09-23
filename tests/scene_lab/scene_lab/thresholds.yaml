@@ -1,0 +1,15 @@
+reply_deadline_s: 5.0
+talk_over_grace_s: 1.0
+barge_in_s: 0.5
+silence_gap_s: 8.0
+direct_reply_window_s: 30.0
+settle_s: 30.0
+silent_session_s: 60.0
+loop_lag_s: 3.0
+max_scene_s: 600
+active_phases: [OBSERVING, ENGAGED, ESCALATED]
+estimate_tts_s: 0.0
+estimate_min_s: 1.0
+estimate_words_per_s: 2.5
+tail_s: 60
+utterance_presence_s: 30.0

@@ -1,0 +1,75 @@
+# From the repository root:
+# docker compose -p nightsim -f docker-compose.yml -f tests/scene_lab/compose.sim.yml up --build
+# Compose resolves these bind paths relative to the first file (repository root).
+# Set NIGHTSIM_DATA, NIGHTSIM_PERSON, NIGHTSIM_STRATEGIES (default: the config/*.example.yaml files)
+# to isolate each scene, and NIGHTSIM_MODELS to a data/models dir that already holds faster-whisper weights.
+# AgentConfig.in_night_window treats equal endpoints as a 24-hour window.
+services:
+  bus:
+    ports: !override
+      - "16379:6379"
+  store:
+    volumes:
+      - ${NIGHTSIM_DATA:-./data/nightsim}:/app/data
+      - ./config:/app/config:ro
+  capture:
+    profiles: [disabled]
+    volumes:
+      - ${NIGHTSIM_DATA:-./data/nightsim}:/app/data
+      - ./config:/app/config:ro
+  perceive:
+    profiles: [disabled]
+    volumes:
+      - ${NIGHTSIM_DATA:-./data/nightsim}:/app/data
+      - ./config:/app/config:ro
+  listen:
+    environment:
+      LISTEN_MODEL_CACHE: /app/data/models/faster-whisper
+    volumes:
+      - ${NIGHTSIM_DATA:-./data/nightsim}:/app/data
+      - ${NIGHTSIM_MODELS:-./data/models}/faster-whisper:/app/data/models/faster-whisper
+      - ./config:/app/config:ro
+  agent:
+    environment:
+      AGENT_NIGHT_START: "00:00"
+      AGENT_NIGHT_END: "00:00"
+      PERSON_PATH: /app/scene/person.yaml
+      STRATEGIES_PATH: /app/scene/strategies.yaml
+    volumes:
+      - ${NIGHTSIM_DATA:-./data/nightsim}:/app/data
+      - ./config:/app/config:ro
+      - ${NIGHTSIM_PERSON:-./config/person.example.yaml}:/app/scene/person.yaml:ro
+      - ${NIGHTSIM_STRATEGIES:-./config/strategies.example.yaml}:/app/scene/strategies.yaml:ro
+  light:
+    environment:
+      LIGHT_ENABLED: "false"
+    volumes:
+      - ${NIGHTSIM_DATA:-./data/nightsim}:/app/data
+      - ./config:/app/config:ro
+  embodiment:
+    environment:
+      EMBODIMENT_PORT: "8443"
+      CERT_FILE: /app/data/nonexistent-scene-lab-cert.pem
+      CERT_KEY: /app/data/nonexistent-scene-lab-key.pem
+      PERSON_PATH: /app/scene/person.yaml
+      STRATEGIES_PATH: /app/scene/strategies.yaml
+    ports: !override
+      - "18443:8443"
+    volumes:
+      - ${NIGHTSIM_DATA:-./data/nightsim}:/app/data
+      - ./config:/app/config:ro
+      - ${NIGHTSIM_PERSON:-./config/person.example.yaml}:/app/scene/person.yaml:ro
+      - ${NIGHTSIM_STRATEGIES:-./config/strategies.example.yaml}:/app/scene/strategies.yaml:ro
+  notify:
+    environment:
+      DRY_RUN: "true"
+      NTFY_URL: ""
+    volumes:
+      - ${NIGHTSIM_DATA:-./data/nightsim}:/app/data
+      - ./config:/app/config:ro
+  dashboard:
+    profiles: [disabled]
+    ports: !reset []
+    volumes:
+      - ${NIGHTSIM_DATA:-./data/nightsim}:/app/data
+      - ./config:/app/config

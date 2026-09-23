@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import json
 import os
+import warnings
 from dataclasses import replace
 from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
+import agent.main as agent_main
 import yaml
 from agent.config import AgentConfig
 from agent.llm import Intent, Interpretation, local_llm
@@ -21,6 +25,7 @@ from nc_shared.events import EVENT_TYPES, BaseEvent
 
 INPUTS = {("person", "PersonState"), ("speech_in", "Utterance")}
 OUTPUTS = {"SessionState", "GoalChanged", "Say", "Show", "LightCommand", "Notify"}
+LLM_KINDS = {"interpret", "compose", "plan"}
 
 
 def parse_ts(value: str) -> datetime:
@@ -52,12 +57,28 @@ def extract(source: str | Path, target: str | Path, *, since=None, until=None) -
         observed = (
             row.get("event_type") in OUTPUTS and row.get("payload", {}).get("source") == "agent"
         )
-        if key not in INPUTS and not observed:
+        activity = (
+            row.get("event_type") == "Activity"
+            and row.get("payload", {}).get("source") == "agent"
+            and row.get("payload", {}).get("kind") in LLM_KINDS
+            and row.get("payload", {}).get("phase") == "end"
+            and row.get("payload", {}).get("duration_ms") is not None
+        )
+        if key not in INPUTS and not observed and not activity:
             continue
         when = parse_ts(row["ts"])
         if (since and when < since) or (until and when > until):
             continue
-        if observed:
+        if activity:
+            payload = row["payload"]
+            row = {
+                "stream": row["stream"],
+                "event_type": "Activity",
+                "ts": row["ts"],
+                "payload": {key: payload[key] for key in ("kind", "phase", "duration_ms")},
+                "observed": True,
+            }
+        elif observed:
             row = {**row, "observed": True}
         kept.append((when, row))
     kept.sort(key=lambda pair: pair[0])
@@ -86,6 +107,51 @@ class RecordedLLM:
         return None
 
 
+class _LatencyLLM:
+    """Advance the replay clock at each agent LLM entry point."""
+
+    def __init__(
+        self,
+        client,
+        bus,
+        durations: dict[str, list[float]],
+        fallback: float,
+        scenario: str | Path,
+        warned: bool,
+    ) -> None:
+        self.client = client
+        self.bus = bus
+        self.durations = durations
+        self.fallback = fallback
+        self.model = getattr(client, "model", type(client).__name__)
+        self.scenario = scenario
+        self.warned = warned
+
+    def _call(self, kind, *args, **kwargs):
+        try:
+            return getattr(self.client, kind)(*args, **kwargs)
+        finally:
+            values = self.durations[kind]
+            if not values and not self.warned:
+                warnings.warn(
+                    f"{self.scenario}: missing recorded {kind} duration; "
+                    f"using fixed:{self.fallback}",
+                    stacklevel=2,
+                )
+                self.warned = True
+            seconds = values.pop(0) if values else self.fallback
+            self.bus.now += timedelta(seconds=seconds)
+
+    def interpret(self, *args, **kwargs):
+        return self._call("interpret", *args, **kwargs)
+
+    def compose(self, *args, **kwargs):
+        return self._call("compose", *args, **kwargs)
+
+    def plan(self, *args, **kwargs):
+        return self._call("plan", *args, **kwargs)
+
+
 class TimelineBus(FakeBus):
     """Capture publications with the simulated clock, including deferred Say."""
 
@@ -99,7 +165,7 @@ class TimelineBus(FakeBus):
     def publish(self, event: BaseEvent, maxlen: int | None = None) -> str:
         if self.now is not None and event.source == "agent":
             event = event.model_copy(update={"ts": self.now.astimezone(UTC)})
-            if type(event).__name__ in OUTPUTS:
+            if type(event).__name__ in OUTPUTS or type(event).__name__ == "Activity":
                 self.timeline.append(_timeline_row(self.start, self.now, event))
         return super().publish(event, maxlen=maxlen)
 
@@ -123,9 +189,23 @@ def _timeline_row(start: datetime, when: datetime, event: BaseEvent) -> dict:
         "state",
         "to_goal",
         "from_goal",
+        "kind",
+        "detail",
+        "duration_ms",
+        "ok",
     ):
         if key in payload:
             row[key] = payload[key]
+    if payload.get("kind") == "decision" and payload.get("detail"):
+        # Agent decision records (scene_lab): expose why a Say went out or was dropped,
+        # so expectations can ask for a reply ({type: Activity, decision: said, reply: true}).
+        try:
+            detail = json.loads(payload["detail"])
+        except (TypeError, ValueError):
+            detail = {}
+        for key in ("decision", "reply", "trigger", "direct", "rule", "intent"):
+            if key in detail:
+                row[key] = detail[key]
     return row
 
 
@@ -141,13 +221,55 @@ def run_scenario(
     person: str | None = None,
     tz: str = "America/New_York",
     tail_s: float = 60,
+    llm_latency: str = "none",
+    llm_latency_fallback: float = 2.5,
 ) -> list[dict]:
     """Step run_once on an exact 0.5 second clock and at each input timestamp."""
     if tail_s < 0:
         raise ValueError("tail_s must be nonnegative")
+    if not 0 <= llm_latency_fallback < float("inf"):
+        raise ValueError("--llm-latency-fallback must be nonnegative")
+    if llm_latency == "none":
+        fixed_s = 0.0
+    elif llm_latency == "recorded":
+        fixed_s = llm_latency_fallback
+    elif llm_latency.startswith("fixed:"):
+        try:
+            fixed_s = float(llm_latency.removeprefix("fixed:"))
+        except ValueError as exc:
+            raise ValueError("--llm-latency requires fixed:<nonnegative seconds>") from exc
+        if not 0 <= fixed_s < float("inf"):
+            raise ValueError("--llm-latency requires fixed:<nonnegative seconds>")
+    else:
+        raise ValueError(f"invalid --llm-latency: {llm_latency}")
+    all_rows = read_jsonl(scenario)
+    scenario_interpretations = {}
+    for row in all_rows:
+        if row.get("event_type") == "InterpretationMap" and row.get("observed"):
+            scenario_interpretations.update(row.get("payload", {}).get("interpretations", {}))
+    durations = {kind: [] for kind in LLM_KINDS}
+    warned = False
+    if llm_latency == "recorded":
+        for row in all_rows:
+            payload = row.get("payload", {})
+            if (
+                row.get("event_type") == "Activity"
+                and row.get("observed")
+                and payload.get("kind") in LLM_KINDS
+                and payload.get("phase") == "end"
+            ):
+                value = payload.get("duration_ms")
+                if isinstance(value, (float, int)) and 0 <= value < float("inf"):
+                    durations[payload["kind"]].append(value / 1000)
+        if not any(durations.values()):
+            warnings.warn(
+                f"{scenario}: no recorded LLM durations; using fixed:{fixed_s}",
+                stacklevel=2,
+            )
+            warned = True
     rows = [
         row
-        for row in read_jsonl(scenario)
+        for row in all_rows
         if (row.get("stream"), row.get("event_type")) in INPUTS and not row.get("observed")
     ]
     if not rows:
@@ -179,7 +301,7 @@ def run_scenario(
     bus.ensure_group("person", "agent")
     bus.ensure_group("speech_in", "agent")
     if llm_mode == "recorded":
-        llm = RecordedLLM((expect or {}).get("interpretations", {}))
+        llm = RecordedLLM({**scenario_interpretations, **(expect or {}).get("interpretations", {})})
     elif llm_mode == "live":
         url = base_url or (
             os.environ.get("OLLAMA_URL", "http://host.docker.internal:11434")
@@ -196,40 +318,62 @@ def run_scenario(
         llm = None
     else:
         raise ValueError(f"invalid LLM mode: {llm_mode}")
+    latency_on = llm_latency != "none" and llm is not None
+    if latency_on:
+        llm = _LatencyLLM(
+            llm, bus, durations, fixed_s, scenario, warned or llm_latency != "recorded"
+        )
 
     def step(when: datetime, row: dict | None = None) -> None:
-        bus.now = when
+        bus.now = max(when, bus.now) if bus.now is not None else when
         if row is not None:
             event = EVENT_TYPES[row["event_type"]].model_validate(row["payload"])
             bus.publish(event)
-            item = _timeline_row(start, when, event)
+            item = _timeline_row(start, bus.now, event)
             item["type"] = "IN"
             if row["event_type"] == "Utterance":
                 item["heard"] = event.text
             else:
                 item["person"] = {"state": event.state, "zone": event.zone}
             bus.timeline.append(item)
-        run_once(
-            bus,
-            session,
-            block_ms=None,
-            now_fn=lambda: when.astimezone(zone),
-            profile=profile,
-            llm=llm,
-        )
+        if latency_on:
+            with patch.object(
+                agent_main,
+                "time",
+                SimpleNamespace(perf_counter=lambda: (bus.now - start).total_seconds()),
+            ):
+                run_once(
+                    bus,
+                    session,
+                    block_ms=None,
+                    now_fn=lambda: bus.now.astimezone(zone),
+                    profile=profile,
+                    llm=llm,
+                )
+        else:
+            run_once(
+                bus,
+                session,
+                block_ms=None,
+                now_fn=lambda: when.astimezone(zone),
+                profile=profile,
+                llm=llm,
+            )
 
     end = inputs[-1][0] + timedelta(seconds=tail_s)
     tick = start
     index = 0
     while tick <= end or index < len(inputs):
         next_input = inputs[index][0] if index < len(inputs) else None
-        if next_input is not None and (tick > end or next_input <= tick):
+        current = bus.now or tick
+        if next_input is not None and (tick > end or next_input <= max(tick, current)):
             when, row = inputs[index]
             step(when, row)
             index += 1
         elif tick <= end:
-            step(tick)
-            tick += timedelta(seconds=0.5)
+            when = max(tick, current)
+            step(when)
+            tick = when + timedelta(seconds=0.5)
     return bus.timeline
 
 
@@ -249,8 +393,10 @@ def check_expectations(timeline: list[dict], spec: dict) -> tuple[bool, list[str
             reports.append(f"FAIL expectation {number}: anchor {anchor!r} not found")
             continue
         start_i = anchors[0]
-        limit = timeline[start_i]["t"] + float(item.get("within_s", float("inf")))
-        excerpt = [row for row in timeline[start_i + 1 :] if row["t"] <= limit]
+        anchor_t = timeline[start_i]["t"]
+        limit = anchor_t + float(item.get("within_s", float("inf")))
+        lower = anchor_t + float(item.get("delay_s", 0))
+        excerpt = [row for row in timeline[start_i + 1 :] if lower <= row["t"] <= limit]
         cursor = 0
         missing = None
         for expected in item.get("events", []):
@@ -278,12 +424,27 @@ def check_expectations(timeline: list[dict], spec: dict) -> tuple[bool, list[str
             ),
             None,
         )
-        ok = missing is None and forbidden is None
+        spacing = item.get("min_spacing_s")
+        close_pair = None
+        if spacing is not None:
+            matching = [
+                row for row in excerpt if row.get("type") == item.get("spacing_type", "Say")
+            ]
+            close_pair = next(
+                (
+                    (a, b)
+                    for a, b in zip(matching, matching[1:])
+                    if b["t"] - a["t"] < float(spacing)
+                ),
+                None,
+            )
+        ok = missing is None and forbidden is None and close_pair is None
         passed &= ok
         reports.append(
             f"{'PASS' if ok else 'FAIL'} expectation {number}: after {anchor!r}"
             + (f" missing {missing!r}" if missing else "")
             + (f" forbidden {forbidden!r}" if forbidden else "")
+            + (f" spacing {close_pair!r}" if close_pair else "")
         )
         reports.extend("  " + format_row(row) for row in excerpt if row["type"] != "IN")
     for number, expected in enumerate(spec.get("never", []), 1):

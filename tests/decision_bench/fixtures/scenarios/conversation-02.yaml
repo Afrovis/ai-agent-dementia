@@ -1,0 +1,13 @@
+id: conversation-02
+category: conversation
+summary: Interrupts the agent's first greeting with a question about where they are.
+start: "02:35"
+timeline:
+  - {t: 0, person: {state: sitting_up, zone: bed}}
+  # soft_greeting is published at about 50 s; this question falls within estimated playback.
+  - {t: 51, utterance: {text: "Where am I?", duration_s: 0.8}}
+checkpoints:
+  # stub label: awaiting answer-or-redirect policy
+  - id: question-during-speech
+    window: [51, 75]
+    question: How should the agent handle a question that interrupts its greeting?

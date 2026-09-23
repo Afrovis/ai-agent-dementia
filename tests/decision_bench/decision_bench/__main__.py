@@ -58,6 +58,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--scenario", action="append", dest="scenario_ids")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--trace", action="store_true")
+    parser.add_argument("--llm-latency", default="none", help="none or fixed:<seconds>")
+    parser.add_argument(
+        "--invariants", action="store_true", help="write scene_lab invariant reports"
+    )
+    parser.add_argument("--thresholds", type=Path, help="scene_lab thresholds YAML")
+    parser.add_argument("--runs-root", type=Path, help="scene_lab runs directory")
+    parser.add_argument("--tt2-judge", action="store_true", help="rate questions with Claude")
     parser.add_argument("--out", type=Path, help="also write the JSON report to this path")
     parser.add_argument(
         "--verdicts",
@@ -138,8 +145,23 @@ def main(argv: list[str] | None = None) -> int:
 
         return review_main(argv[1:])
     args = build_arg_parser().parse_args(argv)
+    if not args.invariants and (args.thresholds or args.runs_root or args.tt2_judge):
+        raise SystemExit("--thresholds, --runs-root and --tt2-judge require --invariants")
+    invariant_run = None
+    from_decision_bench = None
+    if args.invariants:
+        try:
+            from scene_lab.offline import InvariantRun
+            from scene_lab.trace import from_decision_bench
+
+            if args.tt2_judge:
+                from scene_lab.judge import claude_judge
+        except ImportError as exc:
+            raise SystemExit("--invariants requires scene_lab; install tests/scene_lab") from exc
     if args.timeout <= 0:
         raise SystemExit("--timeout must be greater than zero")
+    if args.llm_latency == "recorded":
+        raise SystemExit("decision_bench has no captures for --llm-latency recorded")
     scenarios = load_scenarios(args.scenarios)
     if args.category:
         scenarios = [item for item in scenarios if item.category == args.category]
@@ -152,6 +174,14 @@ def main(argv: list[str] | None = None) -> int:
         scenarios = [item for item in scenarios if item.id in wanted]
     warnings = citation_problems(scenarios, guideline_clauses())
     models = args.models or (["stub"] if args.backend == "stub" else list(DEFAULT_MODELS))
+    if args.invariants:
+        invariant_run = InvariantRun(
+            "decision_bench",
+            ",".join(models),
+            args.thresholds,
+            args.runs_root,
+            claude_judge() if args.tt2_judge else None,
+        )
     runs: dict[str, list[tuple[Scenario, Trace, float, dict[str, object]]]] = {}
     wall_times: dict[str, float] = {}
     traces = []
@@ -171,11 +201,18 @@ def main(argv: list[str] | None = None) -> int:
                 llm=client,
                 profile_path=args.profile,
                 strategies_path=args.strategies,
+                llm_latency=args.llm_latency,
             )
             elapsed = perf_counter() - scenario_started
             profile = load_default_profile(args.profile) | scenario.profile
             runs[model].append((scenario, trace, elapsed, profile))
             traces.append((model, trace))
+            if invariant_run is not None:
+                scene_id = scenario.id if len(models) == 1 else f"{scenario.id}@{model}"
+                normalized = from_decision_bench(trace)
+                normalized.meta["profile"] = profile
+                normalized.meta["llm_latency"] = args.llm_latency
+                invariant_run.add(scene_id, normalized)
         wall_times[model] = perf_counter() - started
 
     if args.collect_verdicts or args.judge:
@@ -224,6 +261,9 @@ def main(argv: list[str] | None = None) -> int:
         for text, pattern, human, judged, evidence in disputed:
             print(f"  {pattern}: human {human}, judge {judged}: {text!r}", file=destination)
             print(f"    judge's evidence: {evidence}", file=destination)
+    if invariant_run is not None:
+        _, summary_text = invariant_run.close()
+        print(summary_text, file=sys.stderr if args.json else sys.stdout)
     return 0
 
 

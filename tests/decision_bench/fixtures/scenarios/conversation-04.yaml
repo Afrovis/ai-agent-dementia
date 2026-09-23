@@ -1,0 +1,13 @@
+id: conversation-04
+category: conversation
+summary: Asks a direct question while still sitting up in the observing period.
+start: "01:50"
+timeline:
+  - {t: 0, person: {state: sitting_up, zone: bed}}
+  # The default OBSERVING wait is 20 s; the question arrives before engagement.
+  - {t: 8, utterance: {text: "Can you tell me where I am?", duration_s: 2.0}}
+checkpoints:
+  # stub label: awaiting answer-or-redirect policy
+  - id: question-while-observing
+    window: [8, 35]
+    question: How should the agent respond to a question during OBSERVING?

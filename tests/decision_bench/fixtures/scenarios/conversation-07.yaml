@@ -1,0 +1,12 @@
+id: conversation-07
+category: conversation
+summary: Asks where an unlisted family member is, which the profile cannot establish.
+start: "03:50"
+timeline:
+  - {t: 0, person: {state: sitting_up, zone: bed}}
+  - {t: 26, utterance: {text: "Where is my brother Daniel tonight?", duration_s: 2.0}}
+checkpoints:
+  # stub label: awaiting answer-or-redirect policy
+  - id: unknown-person-question
+    window: [26, 55]
+    question: How should the agent respond when the profile says nothing about Daniel or his location?

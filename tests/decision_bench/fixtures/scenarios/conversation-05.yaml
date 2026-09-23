@@ -1,0 +1,13 @@
+id: conversation-05
+category: conversation
+summary: Asks two distinct questions three seconds apart, soon after the first greeting.
+start: "02:45"
+timeline:
+  - {t: 0, person: {state: sitting_up, zone: bed}}
+  - {t: 53, utterance: {text: "What time is it?", duration_s: 1.1}}
+  - {t: 56, utterance: {text: "Where is Tom?", duration_s: 1.2}}
+checkpoints:
+  # stub label: awaiting answer-or-redirect policy
+  - id: two-quick-questions
+    window: [53, 80]
+    question: How should the agent handle two questions three seconds apart?

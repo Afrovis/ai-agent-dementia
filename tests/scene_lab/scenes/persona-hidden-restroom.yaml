@@ -1,0 +1,16 @@
+id: persona-hidden-restroom
+category: restroom
+start: '03:10'
+duration_s: 420
+profile: config/person.example.yaml
+persona:
+  summary: Jean wakes uncomfortable and restless, looking toward the bedroom door. She prefers to manage things herself.
+  hidden_need: restroom
+  hearing: normal
+  patience: medium
+  interrupts: false
+opening:
+  - {at: 0, move: {state: sitting_up, zone: bed, over_s: 0}}
+  - {at: 3, say: 'I need to get up for a minute.'}
+stressors: [need_without_keyword]
+mind: claude

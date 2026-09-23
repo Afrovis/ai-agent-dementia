@@ -1,5 +1,5 @@
 from decision_bench.runner import run_scenario, scenario_end
-from decision_bench.schema import load_scenarios
+from decision_bench.schema import TimelineEvent, UtteranceInput, load_scenarios
 from decision_bench.stub_llm import StubLLM
 
 
@@ -29,3 +29,37 @@ def test_trace_is_monotonic_and_reaches_computed_end():
     assert [item.t for item in trace.entries] == sorted(item.t for item in trace.entries)
     assert trace.end_t == scenario_end(scenario)
     assert trace.entries[-1].t <= trace.end_t
+
+
+def test_fixed_latency_blocks_next_utterance_and_times_compose():
+    scenario = _scenario("conversation-01")
+    scenario = scenario.model_copy(
+        update={
+            "timeline": (
+                *scenario.timeline,
+                TimelineEvent(t=56, utterance=UtteranceInput(text="Hello again", duration_s=1)),
+            )
+        }
+    )
+    trace = run_scenario(scenario, llm=StubLLM(), llm_latency="fixed:2.5")
+    compose_end = next(
+        e
+        for e in trace.entries
+        if e.kind == "Activity" and e.data["kind"] == "compose" and e.data["phase"] == "end"
+    )
+    late_input = next(
+        e for e in trace.entries if e.kind == "Utterance" and e.data["text"] == "Hello again"
+    )
+    say = next(
+        e for e in trace.entries if e.kind == "Say" and e.data["strategy"] == "orient_time_place"
+    )
+    assert compose_end.t == late_input.t == say.t == 58
+    assert compose_end.data["duration_ms"] == 2500
+    assert say.data["ts"] == "2026-01-01T02:20:58Z"
+
+
+def test_recorded_latency_requires_capture():
+    import pytest
+
+    with pytest.raises(ValueError, match="no captures"):
+        run_scenario(_scenario("conversation-01"), llm=StubLLM(), llm_latency="recorded")

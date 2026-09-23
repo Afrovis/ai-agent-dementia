@@ -1,0 +1,13 @@
+id: conversation-01
+category: conversation
+summary: Asks a time question three seconds after the agent's first greeting, inside the eight-second silence gap.
+start: "02:20"
+timeline:
+  - {t: 0, person: {state: sitting_up, zone: bed}}
+  # OBSERVING ends at 20 s; ambient_orient dwells 30 s; soft_greeting speaks at about 50 s.
+  - {t: 53, utterance: {text: "What time is it?", duration_s: 1.3}}
+checkpoints:
+  # stub label: awaiting answer-or-redirect policy
+  - id: question-in-gap
+    window: [53, 75]
+    question: How should the agent respond to the direct time question inside its silence gap?

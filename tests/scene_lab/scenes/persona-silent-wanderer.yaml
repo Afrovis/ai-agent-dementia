@@ -1,0 +1,15 @@
+id: persona-silent-wanderer
+category: restroom
+start: '03:30'
+duration_s: 420
+profile: config/person.example.yaml
+persona:
+  summary: Jean wakes, takes her walker, and quietly heads toward the door and bathroom path. She answers briefly when spoken to.
+  hidden_need: restroom
+  hearing: normal
+  patience: high
+  interrupts: false
+opening:
+  - {at: 0, move: {state: walking, zone: door, over_s: 8}}
+stressors: [long_silence, moving_while_talking]
+mind: claude

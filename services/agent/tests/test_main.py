@@ -5,6 +5,7 @@ mic, or Ollama. `now_fn` is always an explicit, advancing fixed clock, so
 nothing here sleeps for a real duration.
 """
 
+import json
 import wave
 from dataclasses import replace as dc_replace
 from datetime import datetime, timedelta
@@ -57,6 +58,7 @@ def make_bus() -> FakeBus:
     bus.ensure_group("say", "test")
     bus.ensure_group("light", "test")
     bus.ensure_group("cloud", "test")
+    bus.ensure_group("activity", "test")
     return bus
 
 
@@ -600,6 +602,7 @@ def test_rejected_llm_composition_uses_the_rendered_caregiver_template(caplog):
     assert unsafe not in caplog.text
     activities = [event for _, event in bus.read("activity", "test", "c1")]
     assert all(isinstance(event, Activity) for event in activities)
+    activities = [event for event in activities if event.kind != "decision"]
     assert [(event.kind, event.phase, event.ok) for event in activities] == [
         ("compose", "start", True),
         ("compose", "end", False),
@@ -774,6 +777,129 @@ def test_pending_say_expires_after_max_age():
     run_once(bus, session, now_fn=lambda: NIGHT + timedelta(seconds=33))
     assert session._pending_say is None
     assert [event.strategy for _, event in bus.read("say", "test", "c1")] == ["s2"]
+
+
+def _decisions(bus, include_said: bool = False):
+    decisions = [
+        (event, json.loads(event.detail))
+        for _, event in bus.read("activity", "test", "decisions")
+        if isinstance(event, Activity) and event.kind == "decision"
+    ]
+    return [d for d in decisions if include_said or d[1]["decision"] != "said"]
+
+
+def test_said_decision_names_the_trigger_for_direct_and_deferred_says():
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    now_fn, advance = make_clock(NIGHT)
+    bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    llm = FakeLLM(interpretations=[Interpretation(intent=Intent.CONFUSED_TIME, distress=0)])
+    bus.publish(Utterance(source="listen", text="What time is it?", confidence=0.9, duration_s=1))
+    run_once(bus, session, now_fn=now_fn, llm=llm)
+
+    said = [d for _, d in _decisions(bus, include_said=True) if d["decision"] == "said"]
+    assert said and said[-1]["strategy"] == "orient_time_place"
+    assert said[-1]["trigger"] == "utterance_reply"
+    assert said[-1]["reply"] is True
+    assert said[-1]["deferred_s"] == 0
+
+
+def test_said_decision_marks_a_ladder_step_as_not_a_reply():
+    bus = make_bus()
+    session = Session(config=AgentConfig(observe_seconds=1.0), strategies=list(DEFAULT_STRATEGIES))
+    now_fn, advance = make_clock(NIGHT)
+    bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
+    for _ in range(120):
+        run_once(bus, session, now_fn=now_fn)
+        advance(1)
+    said = [d for _, d in _decisions(bus, include_said=True) if d["decision"] == "said"]
+    assert said, "the ladder should have spoken"
+    assert all(d["reply"] is False for d in said)
+
+
+def test_pending_say_drop_decisions_include_age_and_reason():
+    for reason in ("max_age", "strategy_changed"):
+        bus = make_bus()
+        session = _session_with_pending_say(bus, gap=60.0)
+        pending = session._pending_say
+        assert pending is not None
+        if reason == "strategy_changed":
+            session.strategy_index += 1
+            now = NIGHT + timedelta(seconds=9)
+        else:
+            now = NIGHT + timedelta(seconds=33)
+        run_once(bus, session, now_fn=lambda: now)
+
+        decisions = _decisions(bus)
+        assert len(decisions) == 1
+        event, detail = decisions[0]
+        assert (event.service, event.phase, event.ok, event.duration_ms) == (
+            "agent",
+            "end",
+            False,
+            None,
+        )
+        assert detail == {
+            "decision": "pending_say_dropped",
+            "reason": reason,
+            "text": pending.event.text,
+            "strategy": pending.event.strategy,
+            "direct": False,
+            "age_s": (now - pending.queued_at).total_seconds(),
+            "phase": session.phase.value,
+            "goal": session.goal,
+        }
+
+
+def test_pending_say_veto_records_veto_before_drop():
+    bus = make_bus()
+    session = _session_with_pending_say(bus)
+    run_once(
+        bus,
+        session,
+        now_fn=lambda: NIGHT + timedelta(seconds=9),
+        profile=PersonProfile(things_to_avoid=("Do not mention s3",)),
+    )
+
+    decisions = _decisions(bus)
+    assert [detail["decision"] for _, detail in decisions] == ["vetoed", "pending_say_dropped"]
+    assert decisions[0][1]["rule"] == "no_avoided_term"
+    assert decisions[0][1]["event_type"] == "Say"
+    assert decisions[1][1]["reason"] == "vetoed"
+    assert session._pending_say is None
+
+
+def test_decision_publish_failure_does_not_interrupt_pending_drop(monkeypatch):
+    bus = make_bus()
+    session = _session_with_pending_say(bus, gap=60.0)
+    publish = bus.publish
+
+    def fail_decision(event, **kwargs):
+        if isinstance(event, Activity) and event.kind == "decision":
+            raise OSError("activity stream unavailable")
+        return publish(event, **kwargs)
+
+    monkeypatch.setattr(bus, "publish", fail_decision)
+    run_once(bus, session, now_fn=lambda: NIGHT + timedelta(seconds=33))
+    assert session._pending_say is None
+
+
+def test_interpretation_publishes_decision_record():
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    now_fn, _advance = make_clock(NIGHT)
+    bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    llm = FakeLLM(interpretations=[Interpretation(intent=Intent.CONFUSED_TIME, distress=1)])
+    bus.publish(Utterance(source="listen", text="What time is it?", confidence=0.9, duration_s=1))
+    run_once(bus, session, now_fn=now_fn, llm=llm)
+
+    interpreted = [d for _, d in _decisions(bus) if d["decision"] == "interpreted"]
+    assert len(interpreted) == 1
+    assert interpreted[0]["intent"] == "confused_time"
+    assert interpreted[0]["distress"] == 1
+    assert interpreted[0]["text"] == "What time is it?"
 
 
 def test_escalation_show_reflects_escalate_phone_strategy():
