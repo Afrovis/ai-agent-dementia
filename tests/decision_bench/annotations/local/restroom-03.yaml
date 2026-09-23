@@ -1,0 +1,74 @@
+scenario: restroom-03
+annotator:
+  model: gemma4:e4b-mlx
+  backend: ollama
+  effort: high
+  date: '2026-09-22'
+  attempts: 1
+  runner_attempts: 1
+  attempt_temperatures:
+    - 0
+  session_id: null
+  list_price_usd: 0.0
+  runtime_seconds: 15.472194792004302
+  parse_validation_failures: []
+  normalization_changed: true
+  normalization_notes:
+    - 'back-in-bed: collapsed nested goal action'
+    - 'back-in-bed: collapsed nested phase action'
+    - 'back-in-bed: dropped trigger without escalate_by'
+    - 'first-response: collapsed nested say action'
+    - 'first-response: dropped trigger without escalate_by'
+    - 'long-bathroom-visit: collapsed nested notify action'
+    - 'long-bathroom-visit: collapsed nested phase action'
+  prompt_sha256: 751ed04a45dfacf07b4abd3521f4f9cf3f0e31ab27489dd6e1f5dde70e9603a9
+  guidelines_sha256: 6d40e2e8797e4a9924a806cc460dc1669759a48d06db21a2c22c4dd29161865e
+  scenario_sha256: 705a8479f318c502c914f3ea474a5a6c70bc50734b21f476863480e013683754
+scenario_notes: ''
+checkpoints:
+  - id: first-response
+    acceptable:
+      - {strategy: path_light}
+      - {goal: restroom}
+      - {strategy: soft_greeting}
+      - {strategy: validate_and_redirect}
+    must_not:
+      - {say: any}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      The person states a need ('I need to pee') and is standing up, indicating a need that requires investigation
+      (DICE-01). The initial response should be calm and seek the need (AA-01), supporting soft greeting
+      or validation. Lighting the path is also appropriate for toileting (TOIL-02).
+    cites: [AA-01, TOIL-02, DICE-01]
+    uncertain: ''
+    needs_review: false
+  - id: long-bathroom-visit
+    acceptable:
+      - {notify: attention}
+    must_not:
+      - {phase: IDLE}
+    escalate_by: 120.0
+    trigger: 70.0
+    rationale: >-
+      The person is absent from view for a significant time (6 minutes). FALL-01 states that 'on_floor'
+      needs a critical notification, and unexplained absence after leaving bed supports escalation after
+      a caregiver-set time. The companion should not remain idle (FALL-01).
+    cites: [FALL-01]
+    uncertain: The guideline does not specify the required notification level for 'absent' vs 'on_floor',
+      so 'attention' is a placeholder for a careful caregiver.
+    needs_review: true
+  - id: back-in-bed
+    acceptable:
+      - {phase: IDLE}
+    must_not:
+      - {goal: restroom}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      The person has returned to bed and is settled (in_bed). NICE-05 states that when the person settles
+      on their own, staying quiet (no speech, no notification) is the correct action. The goal of restroom
+      is complete.
+    cites: [NICE-05]
+    uncertain: ''
+    needs_review: false

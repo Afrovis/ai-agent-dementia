@@ -37,6 +37,9 @@ caregiver, fail quiet to the person"):
   to that `Transition`.
 - `Health`, matching `perceive`/`capture`.
 
+The veto checks proposed actions against session and profile facts before
+publication; a denied strategy suppresses its `Show` and `Say` together.
+
 Issue #25 wraps the local client with an opt-in Claude fallback. Only a
 second consecutive local `unclear` interpretation or a local planner result
 below 0.4 confidence may leave the device; composition is always local. Every
@@ -73,6 +76,7 @@ from nc_shared.events import (
     Utterance,
 )
 
+from agent import veto
 from agent.config import AgentConfig
 from agent.goals import GOALS
 from agent.llm import ClaudeLLM, FallbackLLM, LLMClient
@@ -88,6 +92,7 @@ from agent.strategies import (
     render_template,
     time_as_words,
 )
+from agent.veto import Proposal, VetoContext
 
 SERVICE_NAME = "agent"
 HEALTH_INTERVAL_S = 30.0
@@ -105,6 +110,42 @@ logger = logging.getLogger(SERVICE_NAME)
 def _log(message: str, level: int = logging.INFO, **fields: object) -> None:
     """Log one structured JSON line to stdout (HANDOFF.md section 4)."""
     logger.log(level, json.dumps({"service": SERVICE_NAME, "message": message, **fields}))
+
+
+def veto_context(session: Session, profile: PersonProfile, now: datetime) -> VetoContext:
+    """Snapshot the current person, session, and caregiver facts for one veto check."""
+    return VetoContext(
+        phase=session.phase.value,
+        goal=session.goal,
+        person_state=session.last_person_state,
+        recent_utterances=session.recent_utterances,
+        settled=session.settled,
+        in_night_window=session.config.in_night_window(now),
+        things_to_avoid=profile.things_to_avoid,
+    )
+
+
+def _vetoed(proposal: Proposal, context: VetoContext) -> bool:
+    """Log a denial once without exposing candidate speech in operational logs."""
+    verdict = veto.check(proposal, context)
+    if verdict.allowed:
+        return False
+    event_type = {
+        "strategy": "Show",
+        "say": "Say",
+        "notify": "Notify",
+        "light": "LightCommand",
+    }[proposal.kind]
+    _log(
+        f"vetoed {proposal.kind}",
+        level=logging.WARNING,
+        event_type=event_type,
+        rule=verdict.rule,
+        clause=verdict.clause,
+        action=f"{proposal.kind}:{proposal.value}",
+        reason=verdict.reason,
+    )
+    return True
 
 
 def _show_for_phase(phase: Phase, session_id: str | None) -> Show:
@@ -235,6 +276,8 @@ def _maybe_publish_say(
     now: datetime,
     profile: PersonProfile,
     llm: LLMClient | None = None,
+    *,
+    context: VetoContext | None = None,
 ) -> None:
     """Publish a `Say` for `transition.strategy`, if it has a
     `say_template`, after passing it through `agent.rules.validate_say`
@@ -315,6 +358,11 @@ def _maybe_publish_say(
         )
         return
 
+    if context is None:
+        context = veto_context(session, profile, now)
+    if _vetoed(Proposal("say", strategy.id, text=text, terminal=strategy.terminal), context):
+        return
+
     say_event = Say(
         source=SERVICE_NAME,
         session_id=transition.session_id,
@@ -352,6 +400,7 @@ def _publish_transition(
     `.strategy_index` -- shown on the dashboard timeline -- never lag
     behind. `profile` is the caregiver-authored profile loaded by `run`;
     direct callers default to a safe generic profile."""
+    context = veto_context(session, profile, now)
     event = SessionState(
         source=SERVICE_NAME,
         session_id=transition.session_id,
@@ -396,8 +445,9 @@ def _publish_transition(
                 state="on",
                 reason="restroom_goal_started",
             )
-            bus.publish(light_event)
-            _log("published LightCommand", event_type="LightCommand", state="on")
+            if not _vetoed(Proposal("light", light_event.state), context):
+                bus.publish(light_event)
+                _log("published LightCommand", event_type="LightCommand", state="on")
         elif (
             goal_changed_event.from_goal == "restroom"
             and goal_changed_event.to_goal == "return_to_bed"
@@ -409,8 +459,9 @@ def _publish_transition(
                 state="off",
                 reason="restroom_goal_ended",
             )
-            bus.publish(light_event)
-            _log("published LightCommand", event_type="LightCommand", state="off")
+            if not _vetoed(Proposal("light", light_event.state), context):
+                bus.publish(light_event)
+                _log("published LightCommand", event_type="LightCommand", state="off")
 
     # A phase resolution is a final idempotent backstop for a light that
     # remained on through an escalation or an unusual goal transition.
@@ -422,8 +473,9 @@ def _publish_transition(
             state="off",
             reason=f"session_{transition.phase.value.lower()}",
         )
-        bus.publish(light_event)
-        _log("published LightCommand", event_type="LightCommand", state="off")
+        if not _vetoed(Proposal("light", light_event.state), context):
+            bus.publish(light_event)
+            _log("published LightCommand", event_type="LightCommand", state="off")
 
     if transition.notify is not None:
         notify_event = Notify(
@@ -434,14 +486,18 @@ def _publish_transition(
             body=transition.notify.body,
             repeat_until_ack=True,
         )
-        bus.publish(notify_event)
-        _log("published Notify", event_type="Notify", notify_level=notify_event.level)
+        if not _vetoed(Proposal("notify", notify_event.level), context):
+            bus.publish(notify_event)
+            _log("published Notify", event_type="Notify", notify_level=notify_event.level)
 
-    show_event = _show_for_transition(transition, now, profile)
-    bus.publish(show_event)
-    _log("published Show", event_type="Show", face=show_event.face)
-
-    _maybe_publish_say(bus, transition, session, now, profile, llm)
+    strategy = transition.strategy
+    if strategy is None or not _vetoed(
+        Proposal("strategy", strategy.id, terminal=strategy.terminal), context
+    ):
+        show_event = _show_for_transition(transition, now, profile)
+        bus.publish(show_event)
+        _log("published Show", event_type="Show", face=show_event.face)
+        _maybe_publish_say(bus, transition, session, now, profile, llm, context=context)
 
     return event
 

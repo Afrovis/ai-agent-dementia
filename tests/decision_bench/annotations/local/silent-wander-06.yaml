@@ -1,0 +1,47 @@
+scenario: silent-wander-06
+annotator:
+  model: gemma4:e4b-mlx
+  backend: ollama
+  effort: high
+  date: '2026-09-22'
+  attempts: 1
+  runner_attempts: 1
+  session_id: null
+  list_price_usd: 0.0
+  runtime_seconds: 13.319844541023485
+  parse_validation_failures: []
+  normalization_changed: true
+  normalization_notes:
+    - 'back-in-bed: dropped trigger without escalate_by'
+  prompt_sha256: 751ed04a45dfacf07b4abd3521f4f9cf3f0e31ab27489dd6e1f5dde70e9603a9
+  guidelines_sha256: 6d40e2e8797e4a9924a806cc460dc1669759a48d06db21a2c22c4dd29161865e
+  scenario_sha256: e187584b6cafdff09904cefb1daa19daba1f9b584bacb386e992f73a3d8be5e4
+scenario_notes: ''
+checkpoints:
+  - id: leaves-view
+    acceptable:
+      - {phase: OBSERVING}
+    must_not:
+      - {phase: IDLE}
+    escalate_by: 120.0
+    trigger: 35.0
+    rationale: >-
+      The person is 'absent' (out of view) after walking out of the bed area, which, according to FALL-01,
+      requires a caregiver notification if the situation is prolonged. The companion should remain observing
+      until a threshold is met. A placeholder threshold of 120 seconds is used for the caregiver.
+    cites: [FALL-01]
+    uncertain: ''
+    needs_review: false
+  - id: back-in-bed
+    acceptable:
+      - {phase: COOLDOWN}
+    must_not: []
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      The person has returned to bed and is settled. NICE-05 states that when the person settles on their
+      own, the action that fits is staying quiet, which corresponds to the COOLDOWN phase. No further
+      action or escalation is required.
+    cites: [NICE-05]
+    uncertain: ''
+    needs_review: false

@@ -231,6 +231,10 @@ class Session:
     # latest reading, and an `absent` grace period must still suppress
     # ordinary speech immediately.
     _last_person_state: str | None = field(default=None, init=False, repr=False)
+    # Perception and speech facts for the veto, retained across session
+    # timer resets so settling remains observable after a phase change.
+    _lay_down_at: datetime | None = field(default=None, init=False, repr=False)
+    _last_utterance_at: datetime | None = field(default=None, init=False, repr=False)
 
     # Why the current ESCALATED phase began, plus the narrow observation
     # needed to resolve a strategies-exhausted escalation when the person
@@ -450,6 +454,15 @@ class Session:
         """
         return self._last_person_state
 
+    @property
+    def settled(self) -> bool:
+        """In bed and silent since lying down, i.e. settled on their own (NICE-05)."""
+        return (
+            self._last_person_state == "in_bed"
+            and self._lay_down_at is not None
+            and (self._last_utterance_at is None or self._last_utterance_at < self._lay_down_at)
+        )
+
     def _update_rule5_timers(self, state: str, now: datetime) -> None:
         if state == "on_floor":
             if self._on_floor_since is None:
@@ -541,6 +554,11 @@ class Session:
         Returns the `Transition` to publish, or `None` if this update did
         not change anything.
         """
+        if state == "in_bed":
+            if self._last_person_state != "in_bed":
+                self._lay_down_at = now
+        else:
+            self._lay_down_at = None
         self._last_person_state = state
         self._update_rule5_timers(state, now)
 
@@ -770,6 +788,7 @@ class Session:
         other phase: `IDLE` never starts a session on speech alone (only
         `PersonState` does), and `ENGAGED`/`ESCALATED`/`COOLDOWN` are not
         eligible for this particular entry."""
+        self._last_utterance_at = now
         if self.phase == Phase.OBSERVING:
             return self._enter_engaged("utterance", now)
         return None

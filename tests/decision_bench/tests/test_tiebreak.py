@@ -134,9 +134,7 @@ def test_disagreeing_scenario_runs_a_third_opinion_and_votes(tmp_path, capsys):
     assert "3rd run, voted -> applied (model)" in printed
     loaded = load_scenario(fixture)
     assert loaded.checkpoints[0].acceptable[0].value == "path_light"
-    model_doc = yaml.safe_load(
-        (annotations / "model" / f"{scenario.id}.yaml").read_text()
-    )
+    model_doc = yaml.safe_load((annotations / "model" / f"{scenario.id}.yaml").read_text())
     assert model_doc["third_opinion"]["checkpoints"][0]["acceptable"] == [
         {"strategy": "path_light"}
     ]

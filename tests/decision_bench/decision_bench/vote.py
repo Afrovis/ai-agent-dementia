@@ -92,7 +92,9 @@ def vote_checkpoint(runs: Sequence[Mapping[str, object] | None]) -> Vote:
         # emptiness and no single action reached two votes either.
         no_majority.append("no majority on acceptable")
 
-    escalate_values = [run.get("escalate_by") for run in present if run.get("escalate_by") is not None]
+    escalate_values = [
+        run.get("escalate_by") for run in present if run.get("escalate_by") is not None
+    ]
     escalate_by = _lower_median(escalate_values) if len(escalate_values) >= 2 else None
 
     trigger = None
@@ -107,10 +109,16 @@ def vote_checkpoint(runs: Sequence[Mapping[str, object] | None]) -> Vote:
 
     first = present[0]
     record = {
-        "acceptable_votes": {f"{k}: {v}": a_count[(k, v)] for k, v in sorted(actions) if a_count[(k, v)]},
-        "must_not_votes": {f"{k}: {v}": m_count[(k, v)] for k, v in sorted(actions) if m_count[(k, v)]},
+        "acceptable_votes": {
+            f"{k}: {v}": a_count[(k, v)] for k, v in sorted(actions) if a_count[(k, v)]
+        },
+        "must_not_votes": {
+            f"{k}: {v}": m_count[(k, v)] for k, v in sorted(actions) if m_count[(k, v)]
+        },
         "escalate_by_set_by": [
-            RUN_NAMES[i] for i, run in enumerate(runs) if run is not None and run.get("escalate_by") is not None
+            RUN_NAMES[i]
+            for i, run in enumerate(runs)
+            if run is not None and run.get("escalate_by") is not None
         ],
     }
 

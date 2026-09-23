@@ -1,0 +1,73 @@
+scenario: restroom-04
+annotator:
+  model: gemma4:e4b-mlx
+  backend: ollama
+  effort: high
+  date: '2026-09-22'
+  attempts: 1
+  runner_attempts: 1
+  attempt_temperatures:
+    - 0
+  session_id: null
+  list_price_usd: 0.0
+  runtime_seconds: 14.925357084022835
+  parse_validation_failures: []
+  normalization_changed: true
+  normalization_notes:
+    - 'back-in-bed: dropped trigger without escalate_by'
+    - 'stated-need: collapsed nested strategy action'
+    - 'stated-need: dropped trigger without escalate_by'
+    - 'wrong-way: collapsed nested say action'
+    - 'wrong-way: dropped trigger without escalate_by'
+  prompt_sha256: 751ed04a45dfacf07b4abd3521f4f9cf3f0e31ab27489dd6e1f5dde70e9603a9
+  guidelines_sha256: 6d40e2e8797e4a9924a806cc460dc1669759a48d06db21a2c22c4dd29161865e
+  scenario_sha256: 6c1028c62e1bcea48e8b1383a4243d4ef5940484221452212a946e5bb1a0dc52
+scenario_notes: ''
+checkpoints:
+  - id: stated-need
+    acceptable:
+      - {goal: restroom}
+      - {strategy: path_light}
+      - {strategy: soft_greeting}
+      - {strategy: validate_and_redirect}
+    must_not:
+      - {strategy: guided_return}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      The person stated a need for the toilet, which requires addressing the need before returning to
+      bed (NICE-01). Initial responses should be calm and seek the need (AA-01). Lighting the path and
+      validating the need are appropriate first steps (TOIL-02, AA-04).
+    cites: [AA-01, AA-04, TOIL-02, NICE-01]
+    uncertain: ''
+    needs_review: false
+  - id: wrong-way
+    acceptable:
+      - {strategy: path_light}
+      - {strategy: soft_greeting}
+      - {strategy: validate_and_redirect}
+    must_not:
+      - {say: correction_of_reality}
+      - {say: conjunction_but}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      The person is confused about the location, which requires gentle guidance (AA-02). The companion
+      must not argue or correct the person's perception (AA-03, VAL-01). Lighting the path is appropriate
+      given the fall risk (TOIL-04).
+    cites: [AA-02, AA-03, TOIL-04, VAL-01]
+    uncertain: ''
+    needs_review: false
+  - id: back-in-bed
+    acceptable:
+      - {phase: IDLE}
+    must_not: []
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      The person has successfully completed the restroom trip and returned to bed. The goal is to support
+      rest, and if the person settles, the companion should remain quiet (NICE-05). No further action
+      is required unless the person becomes distressed again.
+    cites: [NICE-05]
+    uncertain: ''
+    needs_review: false

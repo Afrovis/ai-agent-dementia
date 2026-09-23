@@ -1,0 +1,75 @@
+scenario: disorientation-05
+annotator:
+  model: gemma4:e4b-mlx
+  backend: ollama
+  effort: high
+  date: '2026-09-22'
+  attempts: 1
+  runner_attempts: 1
+  attempt_temperatures:
+    - 0
+  session_id: null
+  list_price_usd: 0.0
+  runtime_seconds: 16.15748125000391
+  parse_validation_failures: []
+  normalization_changed: true
+  normalization_notes:
+    - 'breakfast: collapsed nested say action'
+    - 'breakfast: dropped trigger without escalate_by'
+    - 'returns: collapsed nested phase action'
+    - 'returns: dropped trigger without escalate_by'
+    - 'settled: collapsed nested say action'
+    - 'settled: dropped trigger without escalate_by'
+  prompt_sha256: 751ed04a45dfacf07b4abd3521f4f9cf3f0e31ab27489dd6e1f5dde70e9603a9
+  guidelines_sha256: 6d40e2e8797e4a9924a806cc460dc1669759a48d06db21a2c22c4dd29161865e
+  scenario_sha256: 7d55dfeb47511d2bcdadb43b90c56490925efbceac2cdcc1979e7740a7b34a6d
+scenario_notes: ''
+checkpoints:
+  - id: breakfast
+    acceptable:
+      - {strategy: soft_greeting}
+      - {strategy: validate_and_redirect}
+      - {goal: restroom}
+      - {goal: comfort}
+      - {strategy: orient_time_place}
+      - {strategy: path_light}
+    must_not:
+      - {say: correction_of_reality}
+      - {say: conjunction_but}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      The person is distressed by believing it is morning and needing to make breakfast (NICE-01). The
+      response must be calm and seek the underlying need (AA-01). The belief that children are young is
+      a known theme, so correcting this reality is forbidden (AA-03, VAL-01, PCC-02).
+    cites: [AA-01, AA-03, AA-04, DICE-01, NICE-01, NICE-02, VAL-01, PCC-02]
+    uncertain: ''
+    needs_review: false
+  - id: returns
+    acceptable:
+      - {phase: OBSERVING}
+      - {strategy: ambient_orient}
+    must_not:
+      - {phase: IDLE}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      The person has returned to the bed after an episode of confusion (DICE-03). The companion should
+      observe and provide ambient cues, as the immediate crisis seems to have passed, but the person is
+      not yet settled (NICE-05).
+    cites: [NICE-05]
+    uncertain: ''
+    needs_review: false
+  - id: settled
+    acceptable:
+      - {phase: IDLE}
+    must_not:
+      - {say: any}
+    escalate_by: null
+    trigger: null
+    rationale: >-
+      The person is in bed and appears settled (NICE-05). The guideline states that when the person settles
+      on their own, the correct action is to stay quiet (no speech, no notification).
+    cites: [NICE-05]
+    uncertain: ''
+    needs_review: false

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import json
 import os
@@ -10,11 +11,14 @@ import shutil
 import subprocess
 import tempfile
 import textwrap
+import urllib.error
+import urllib.request
 from collections import Counter
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from time import perf_counter
 
 import yaml
 from pydantic import ValidationError
@@ -310,6 +314,311 @@ def run_claude(
     }
 
 
+def _json_schema_problems(value: object, schema: dict[str, object], path: str = "$") -> list[str]:
+    """Validate the small JSON Schema subset used by :func:`output_schema`."""
+    if "enum" in schema and value not in schema["enum"]:
+        return [f"{path}: value is not in enum"]
+    if "anyOf" in schema:
+        choices = schema["anyOf"]
+        if not any(not _json_schema_problems(value, choice, path) for choice in choices):
+            return [f"{path}: value does not match any allowed schema"]
+        return []
+    if "oneOf" in schema:
+        matches = sum(not _json_schema_problems(value, choice, path) for choice in schema["oneOf"])
+        return [] if matches == 1 else [f"{path}: value does not match exactly one schema"]
+
+    expected = schema.get("type")
+    matches_type = {
+        "object": lambda item: isinstance(item, dict),
+        "array": lambda item: isinstance(item, list),
+        "string": lambda item: isinstance(item, str),
+        "number": lambda item: isinstance(item, int | float) and not isinstance(item, bool),
+        "boolean": lambda item: isinstance(item, bool),
+        "null": lambda item: item is None,
+    }
+    if isinstance(expected, str) and not matches_type[expected](value):
+        return [f"{path}: expected {expected}"]
+
+    problems: list[str] = []
+    if expected == "object":
+        assert isinstance(value, dict)
+        properties = schema.get("properties", {})
+        assert isinstance(properties, dict)
+        for name in schema.get("required", []):
+            if name not in value:
+                problems.append(f"{path}: missing required property {name}")
+        if schema.get("additionalProperties") is False:
+            for name in value.keys() - properties.keys():
+                problems.append(f"{path}: unexpected property {name}")
+        for name, item in value.items():
+            child_schema = properties.get(name)
+            if isinstance(child_schema, dict):
+                problems.extend(_json_schema_problems(item, child_schema, f"{path}.{name}"))
+    elif expected == "array":
+        assert isinstance(value, list)
+        item_schema = schema.get("items")
+        if isinstance(item_schema, dict):
+            for index, item in enumerate(value):
+                problems.extend(_json_schema_problems(item, item_schema, f"{path}[{index}]"))
+    elif expected == "number":
+        assert isinstance(value, int | float) and not isinstance(value, bool)
+        if "minimum" in schema and value < schema["minimum"]:
+            problems.append(f"{path}: value is below minimum")
+        if "exclusiveMinimum" in schema and value <= schema["exclusiveMinimum"]:
+            problems.append(f"{path}: value is not above exclusive minimum")
+    return problems
+
+
+def ollama_prompt_with_schema(user_prompt: str, schema: dict[str, object]) -> str:
+    """Append the JSON Schema as instructions instead of an Ollama grammar."""
+    return (
+        user_prompt.rstrip() + "\n\n## Required output format\n\n"
+        "Return a single JSON object only, with no Markdown fence and no commentary. "
+        "It must conform exactly to this JSON Schema:\n\n"
+        "```json\n" + json.dumps(schema, indent=2, sort_keys=True) + "\n```"
+    )
+
+
+def _normalize_action(action: object) -> object:
+    if isinstance(action, dict) and len(action) == 1:
+        key, value = next(iter(action.items()))
+        if isinstance(value, dict) and len(value) == 1:
+            nested_key, nested_value = next(iter(value.items()))
+            if key in ACTION_VALUES:
+                if nested_key in ACTION_VALUES[key]:
+                    return {key: nested_key}
+                if isinstance(nested_value, str) and nested_value in ACTION_VALUES[key]:
+                    return {key: nested_value}
+        if isinstance(value, list) and len(value) == 1 and isinstance(value[0], str):
+            return {key: value[0]}
+        return dict(action)
+
+    if isinstance(action, str):
+        for key in ACTION_VALUES:
+            for separator in (" ", ":"):
+                prefix = key + separator
+                if action.startswith(prefix) and action[len(prefix) :].strip():
+                    return {key: action[len(prefix) :].strip()}
+        matching_keys = [key for key, values in ACTION_VALUES.items() if action in values]
+        if len(matching_keys) == 1:
+            return {matching_keys[0]: action}
+    return action
+
+
+def normalize_ollama_output(
+    value: dict[str, object],
+    *,
+    notes: set[str] | None = None,
+    citable: list[str] | None = None,
+) -> dict[str, object]:
+    """Return a copy with known Ollama output-shape mistakes repaired."""
+    normalized = dict(value)
+    checkpoints = value.get("checkpoints")
+    if not isinstance(checkpoints, list):
+        return normalized
+    normalized_checkpoints = []
+    for checkpoint in checkpoints:
+        if not isinstance(checkpoint, dict):
+            normalized_checkpoints.append(checkpoint)
+            continue
+        normalized_checkpoint = dict(checkpoint)
+        if not {"id", "acceptable", "must_not"} <= checkpoint.keys():
+            normalized_checkpoints.append(normalized_checkpoint)
+            continue
+        checkpoint_id = str(checkpoint["id"])
+        for field in ("acceptable", "must_not"):
+            actions = checkpoint.get(field)
+            if isinstance(actions, list):
+                normalized_actions = []
+                for action in actions:
+                    normalized_action = _normalize_action(action)
+                    normalized_actions.append(normalized_action)
+                    if notes is not None and normalized_action != action:
+                        kind = next(iter(normalized_action))
+                        if (
+                            isinstance(action, dict)
+                            and len(action) == 1
+                            and isinstance(next(iter(action.values())), dict)
+                        ):
+                            repair = f"collapsed nested {kind} action"
+                        elif isinstance(action, dict):
+                            repair = f"collapsed list {kind} action"
+                        else:
+                            repair = f"normalized string {kind} action"
+                        notes.add(f"{checkpoint_id}: {repair}")
+                normalized_checkpoint[field] = normalized_actions
+        defaults: dict[str, object] = {
+            "escalate_by": None,
+            "trigger": None,
+            "uncertain": "",
+            "needs_review": False,
+            "cites": [],
+        }
+        for field, default in defaults.items():
+            if field not in checkpoint:
+                normalized_checkpoint[field] = default
+                if notes is not None:
+                    notes.add(f"{checkpoint_id}: filled missing {field}")
+        cites = normalized_checkpoint.get("cites")
+        if citable is not None and isinstance(cites, list):
+            allowed_cites = set(citable)
+            valid_cites = [cite for cite in cites if cite in allowed_cites]
+            dropped_cites = [str(cite) for cite in cites if cite not in allowed_cites]
+            normalized_checkpoint["cites"] = valid_cites
+            if notes is not None and dropped_cites:
+                noun = "citation" if len(dropped_cites) == 1 else "citations"
+                notes.add(
+                    f"{checkpoint_id}: dropped {len(dropped_cites)} invalid {noun} "
+                    f"({', '.join(dropped_cites)})"
+                )
+        if normalized_checkpoint.get("escalate_by") is None:
+            for field in ("trigger", "threshold_source"):
+                if normalized_checkpoint.get(field) is not None:
+                    normalized_checkpoint[field] = None
+                    if notes is not None:
+                        notes.add(f"{checkpoint_id}: dropped {field} without escalate_by")
+        normalized_checkpoints.append(normalized_checkpoint)
+    normalized["checkpoints"] = normalized_checkpoints
+    return normalized
+
+
+def _parse_ollama_content(content: str) -> dict[str, object]:
+    text = content.strip()
+    if text.startswith("```"):
+        first_line, separator, remainder = text.partition("\n")
+        if separator and first_line.removeprefix("```").strip().lower() in ("", "json"):
+            text = remainder.rstrip()
+            if text.endswith("```"):
+                text = text[:-3].rstrip()
+    start = text.find("{")
+    if start < 0:
+        raise ValueError("structured output does not contain a JSON object")
+    depth = 0
+    in_string = False
+    escaped = False
+    end = -1
+    for index, character in enumerate(text[start:], start=start):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+        elif character == '"':
+            in_string = True
+        elif character == "{":
+            depth += 1
+        elif character == "}":
+            depth -= 1
+            if depth == 0:
+                end = index
+                break
+    if end < 0:
+        raise ValueError("structured output contains an incomplete JSON object")
+    structured = json.loads(text[start : end + 1])
+    if not isinstance(structured, dict):
+        raise ValueError("structured output is not an object")
+    return structured
+
+
+def run_ollama(
+    system_prompt_path: Path,
+    user_prompt: str,
+    schema: dict[str, object],
+    model: str,
+    effort: str,
+    *,
+    base_url: str = "http://127.0.0.1:11434",
+    think: bool = True,
+) -> dict[str, object]:
+    """Run an annotator through Ollama's JSON-mode chat endpoint."""
+    del effort
+    prompt = ollama_prompt_with_schema(user_prompt, schema)
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt_path.read_text(encoding="utf-8")},
+            {"role": "user", "content": prompt},
+        ],
+        "format": "json",
+        "stream": False,
+        "think": think,
+        "options": {"temperature": 0, "num_ctx": 32768, "num_predict": 4096},
+    }
+    failures: list[str] = []
+    attempt_temperatures: list[float] = []
+    normalization_changed = False
+    normalization_notes: set[str] = set()
+    checkpoint_schema = schema.get("properties", {}).get("checkpoints", {})
+    cites_schema = checkpoint_schema.get("items", {}).get("properties", {}).get("cites", {})
+    citable = cites_schema.get("items", {}).get("enum")
+    if not isinstance(citable, list) or not all(isinstance(item, str) for item in citable):
+        citable = None
+    started = perf_counter()
+    for attempt in (1, 2):
+        temperature = 0 if attempt == 1 else 0.3
+        payload["options"]["temperature"] = temperature
+        attempt_temperatures.append(temperature)
+        request = urllib.request.Request(
+            f"{base_url.rstrip('/')}/api/chat",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=300) as response:
+                raw_response = response.read()
+        except (urllib.error.URLError, TimeoutError) as exc:
+            raise AnnotatorError(f"ollama request failed: {exc}") from exc
+        previous_response = raw_response.decode(errors="replace")
+        try:
+            response_payload = json.loads(raw_response)
+            if not isinstance(response_payload, dict):
+                raise ValueError("response is not an object")
+            message = response_payload.get("message")
+            if not isinstance(message, dict):
+                raise ValueError("response is missing message")
+            content = message.get("content")
+            if not isinstance(content, str):
+                raise ValueError("response message content is not a string")
+            previous_response = content
+            parsed = _parse_ollama_content(content)
+            structured = normalize_ollama_output(parsed, notes=normalization_notes, citable=citable)
+            normalization_changed = normalization_changed or structured != parsed
+            schema_problems = _json_schema_problems(structured, schema)
+            if schema_problems:
+                raise ValueError("; ".join(schema_problems))
+        except (json.JSONDecodeError, ValueError) as exc:
+            failures.append(str(exc))
+            if attempt == 2:
+                raise AnnotatorError(
+                    "ollama returned invalid structured output after retry: " + str(exc)
+                ) from exc
+            payload["messages"][1]["content"] = (
+                prompt
+                + "\n\n## Your previous answer was rejected\n\n"
+                + f"- {exc}\n\n"
+                + "Previous response:\n\n"
+                + previous_response
+            )
+            continue
+        return {
+            "structured_output": structured,
+            "model": model,
+            "backend": "ollama",
+            "session_id": None,
+            "total_cost_usd": 0.0,
+            "runner_attempts": attempt,
+            "attempt_temperatures": attempt_temperatures,
+            "runtime_seconds": perf_counter() - started,
+            "parse_validation_failures": failures,
+            "normalization_changed": normalization_changed,
+            "normalization_notes": sorted(normalization_notes),
+        }
+    raise AssertionError("unreachable")
+
+
 _API_KEY_VARIABLES = (
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
@@ -347,6 +656,13 @@ def annotate_scenario(
     schema = output_schema(scenario, citable)
     previous: dict[str, object] | None = None
     total_cost = 0.0
+    total_runtime = 0.0
+    runner_attempts = 0
+    attempt_temperatures: list[float] = []
+    parse_validation_failures: list[str] = []
+    normalization_changed = False
+    has_normalization_metadata = False
+    normalization_notes: set[str] = set()
     for attempts in (1, 2):
         current = prompt
         if previous is not None:
@@ -358,16 +674,34 @@ def annotate_scenario(
             )
         result = runner(system_prompt_path, current, schema, model, effort)
         total_cost += float(result.get("total_cost_usd", 0))
+        total_runtime += float(result.get("runtime_seconds", 0))
+        runner_attempts += int(result.get("runner_attempts", 1))
+        attempt_temperatures.extend(result.get("attempt_temperatures", []))
+        parse_validation_failures.extend(result.get("parse_validation_failures", []))
+        if "normalization_changed" in result:
+            has_normalization_metadata = True
+            normalization_changed = normalization_changed or bool(result["normalization_changed"])
+        if "normalization_notes" in result:
+            normalization_notes.update(map(str, result["normalization_notes"]))
         output = result.get("structured_output")
         if not isinstance(output, dict):
             raise AnnotatorError("annotator runner returned no structured_output mapping")
         checkpoints, problems = validate_annotation(scenario, output, citable)
         if not problems:
-            return result | {
+            completed = result | {
                 "attempts": attempts,
                 "checkpoints": checkpoints,
                 "total_cost_usd": total_cost,
+                "runner_attempts": runner_attempts,
+                "attempt_temperatures": attempt_temperatures,
+                "runtime_seconds": total_runtime,
+                "parse_validation_failures": parse_validation_failures,
             }
+            if has_normalization_metadata:
+                completed["normalization_changed"] = normalization_changed
+                completed["normalization_notes"] = sorted(normalization_notes)
+            return completed
+        parse_validation_failures.extend(problems)
         previous = {"problems": problems, "output": output}
     raise AnnotatorError("annotation remained invalid after retry: " + "; ".join(problems))
 
@@ -473,7 +807,9 @@ def status_flags(
         if votes is None:
             votes = vote_scenario(model_doc)
         return {
-            checkpoint_id: vote.no_majority for checkpoint_id, vote in votes.items() if vote.no_majority
+            checkpoint_id: vote.no_majority
+            for checkpoint_id, vote in votes.items()
+            if vote.no_majority
         }
     return scenario_flags(model_doc)
 
@@ -532,6 +868,46 @@ def write_annotation_files(
         return model_path, review_path
     review_path.write_text(review_text(scenario, model_doc), encoding="utf-8")
     return model_path, review_path
+
+
+def write_local_annotation(
+    scenario: Scenario,
+    result: dict[str, object],
+    *,
+    out_dir: Path,
+    effort: str,
+    guidelines_text: str,
+) -> Path:
+    """Write one local run in model-annotation format, without a review file."""
+    output = result["structured_output"]
+    assert isinstance(output, dict)
+    model_doc = {
+        "scenario": scenario.id,
+        "annotator": {
+            "model": result["model"],
+            "backend": "ollama",
+            "effort": effort,
+            "date": date.today().isoformat(),
+            "attempts": result["attempts"],
+            "runner_attempts": result.get("runner_attempts", result["attempts"]),
+            "attempt_temperatures": result.get("attempt_temperatures", []),
+            "session_id": None,
+            "list_price_usd": 0.0,
+            "runtime_seconds": result.get("runtime_seconds", 0.0),
+            "parse_validation_failures": result.get("parse_validation_failures", []),
+            "normalization_changed": result.get("normalization_changed", False),
+            "normalization_notes": result.get("normalization_notes", []),
+            "prompt_sha256": hashlib.sha256(ANNOTATOR_PROMPT_PATH.read_bytes()).hexdigest(),
+            "guidelines_sha256": hashlib.sha256(guidelines_text.encode()).hexdigest(),
+            "scenario_sha256": hashlib.sha256(scenario_section(scenario).encode()).hexdigest(),
+        },
+        "scenario_notes": output.get("scenario_notes", ""),
+        "checkpoints": _checkpoints_list(result),
+    }
+    path = out_dir / f"{scenario.id}.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(dump_yaml(model_doc), encoding="utf-8")
+    return path
 
 
 def _clock(scenario: Scenario, seconds: float) -> str:
@@ -674,9 +1050,7 @@ def review_text(scenario: Scenario, model_doc: dict[str, object]) -> str:
     }
 
     def fmt_actions(actions: object) -> str:
-        return (
-            ", ".join(f"{k}: {v}" for a in actions or () for k, v in dict(a).items()) or "none"
-        )
+        return ", ".join(f"{k}: {v}" for a in actions or () for k, v in dict(a).items()) or "none"
 
     def fmt_run(label: str, run: dict[str, object] | None) -> str:
         if run is None:
@@ -748,7 +1122,9 @@ def review_text(scenario: Scenario, model_doc: dict[str, object]) -> str:
             )
             lines.append("  # " + "-" * 76)
             review_item = {
-                key: value for key, value in item.items() if key not in {"uncertain", "needs_review"}
+                key: value
+                for key, value in item.items()
+                if key not in {"uncertain", "needs_review"}
             }
         review_item["acceptable"] = _action_list(review_item.get("acceptable"))
         review_item["must_not"] = _action_list(review_item.get("must_not"))
@@ -769,6 +1145,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--scenarios", type=Path, default=SCENARIOS_DIR)
     parser.add_argument("--profile", type=Path, default=DEFAULT_PROFILE_PATH)
     parser.add_argument("--model", default="opus")
+    parser.add_argument("--backend", choices=("claude", "ollama"), default="claude")
+    parser.add_argument("--out-dir", type=Path)
+    parser.add_argument("--ollama-url", default="http://127.0.0.1:11434")
+    parser.add_argument(
+        "--think",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="enable Ollama thinking (thinking text is not stored)",
+    )
     parser.add_argument("--effort", default="high")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
@@ -850,6 +1235,8 @@ def _annotate_with_tiebreak(
 
 def main(argv: list[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
+    if args.backend == "ollama":
+        return _ollama_main(args)
     if args.tiebreak:
         from decision_bench.tiebreak import tiebreak_main
 
@@ -955,4 +1342,91 @@ def main(argv: list[str] | None = None) -> int:
         f"subscription usage, list-price equivalent ${total:.2f} (not billed: claude.ai login, "
         "no API key)"
     )
+    return 0
+
+
+def _inside(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def _ollama_main(args: argparse.Namespace) -> int:
+    """Run one local first-pass annotation per scenario, with no review side effects."""
+    if args.out_dir is None:
+        raise SystemExit("--out-dir is required with --backend ollama")
+    protected = (
+        ANNOTATIONS_DIR / "model",
+        ANNOTATIONS_DIR / "review",
+        args.annotations / "model",
+        args.annotations / "review",
+    )
+    if any(_inside(args.out_dir, path) for path in protected):
+        raise SystemExit("--out-dir for Ollama must not be annotations/model or annotations/review")
+    if args.review_only or args.tiebreak:
+        raise SystemExit("--review-only and --tiebreak are not available with --backend ollama")
+
+    scenarios = load_scenarios(args.scenarios)
+    by_id = {scenario.id: scenario for scenario in scenarios}
+    if args.scenario_ids:
+        wanted = list(dict.fromkeys(args.scenario_ids))
+    else:
+        model_dir = args.annotations / "model"
+        wanted = sorted(path.stem for path in model_dir.glob("*.yaml"))
+    missing = sorted(set(wanted) - set(by_id))
+    if missing:
+        raise SystemExit(f"unknown scenario(s): {', '.join(missing)}")
+    selected = [by_id[scenario_id] for scenario_id in wanted]
+    if not args.force:
+        for scenario in selected:
+            path = args.out_dir / f"{scenario.id}.yaml"
+            if path.exists():
+                print(f"{scenario.id}: already present, skipped")
+        selected = [
+            scenario for scenario in selected if not (args.out_dir / f"{scenario.id}.yaml").exists()
+        ]
+
+    profile = load_default_profile(args.profile)
+    guidelines_text = GUIDELINES_PATH.read_text(encoding="utf-8")
+    citable = citable_clauses()
+    if args.dry_run:
+        for scenario in selected:
+            print(f"SYSTEM PROMPT: {ANNOTATOR_PROMPT_PATH}")
+            print(annotator_input(scenario, profile | scenario.profile, guidelines_text, citable))
+        return 0
+
+    runner: Runner = functools.partial(run_ollama, base_url=args.ollama_url, think=args.think)
+    jobs = max(1, args.jobs)
+    with ThreadPoolExecutor(max_workers=jobs) as executor:
+        futures = {
+            scenario.id: executor.submit(
+                annotate_scenario,
+                scenario,
+                profile=profile | scenario.profile,
+                guidelines_text=guidelines_text,
+                citable=citable,
+                model=args.model,
+                effort=args.effort,
+                runner=runner,
+            )
+            for scenario in selected
+        }
+        for scenario in selected:
+            try:
+                result = futures[scenario.id].result()
+            except AnnotatorError as exc:
+                raise SystemExit(f"{scenario.id}: {exc}") from exc
+            path = write_local_annotation(
+                scenario,
+                result,
+                out_dir=args.out_dir,
+                effort=args.effort,
+                guidelines_text=guidelines_text,
+            )
+            print(
+                f"{scenario.id}: {path} ({float(result.get('runtime_seconds', 0)):.1f}s, "
+                f"{len(result.get('parse_validation_failures', []))} parse/validation failures)"
+            )
     return 0
