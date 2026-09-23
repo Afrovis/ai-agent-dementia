@@ -269,3 +269,58 @@ def test_mind_plan_runs_while_clock_advances():
     )
     assert audio.queued and audio.queued[0][1] == "Later"
     assert audio.queued[0][0] >= 3
+
+
+def test_stream_tap_keeps_capped_history_and_skips_media(tmp_path):
+    from nc_shared.events import Activity, AudioChunk
+
+    from scene_lab.recorder import StreamTap
+
+    def fields(event):
+        return {
+            b"event_type": type(event).__name__.encode(),
+            b"data": event.model_dump_json().encode(),
+        }
+
+    class FakeRedis:
+        def __init__(self):
+            self.streams = {"activity": [], "audio_in": []}
+            self.reads = []
+            self.next_id = 0
+
+        def add(self, stream, event):
+            entries = self.streams[stream]
+            self.next_id += 1
+            entries.append((f"{self.next_id}-0", fields(event)))
+            del entries[:-2]  # capped like the real activity stream
+
+        def xrange(self, stream, min="-", max="+"):
+            self.reads.append(stream)
+            entries = self.streams.get(stream, [])
+            if min == "-":
+                return list(entries)
+            low = int(min.lstrip("(").split("-")[0])
+            return [(i, f) for i, f in entries if int(i.split("-")[0]) > low]
+
+    client = FakeRedis()
+    tap = StreamTap(client, streams=["activity", "audio_in"])
+    for n in range(5):
+        client.add(
+            "activity",
+            Activity(
+                source="embodiment",
+                service="embodiment",
+                kind="playback",
+                phase="start",
+                detail=f"p{n}",
+            ),
+        )
+        client.add(
+            "audio_in", AudioChunk(source="embodiment", pcm16=b"\x00\x00", sample_rate=16000)
+        )
+        tap.poll()
+    path = tap.write(tmp_path / "tap.jsonl")
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    # All five survive although the stream only ever held two at a time.
+    assert [r["payload"]["detail"] for r in rows] == [f"p{n}" for n in range(5)]
+    assert "audio_in" not in client.reads

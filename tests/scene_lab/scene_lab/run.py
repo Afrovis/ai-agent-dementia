@@ -19,7 +19,7 @@ from .bugs import RunDir, harness_error
 from .director import Director, coverage, noise_level
 from .mind import ClaudeMind
 from .page import VirtualPage
-from .recorder import agent_model, record_scene
+from .recorder import StreamTap, agent_model, record_scene
 from .scene import Beat, Scene, load_scene
 from .stack import Stack, main_models
 from .thresholds import load
@@ -308,6 +308,8 @@ async def _execute_scene(scene, source, run, stack, preflight, thresholds):
         stack.wait_ready()
         stack.reset()
         stack.wait_ready()
+        tap = StreamTap(redis.Redis(host="localhost", port=16379))
+        tap.start()
         bus = Bus(redis.Redis(host="localhost", port=16379))
         body = Body(bus.publish, time.monotonic, noise=scene.noise.model_dump())
         audio = AudioStream(RoomNoise())
@@ -361,6 +363,10 @@ async def _execute_scene(scene, source, run, stack, preflight, thresholds):
                 pass
         if state["interrupted"]:
             errors.append("KeyboardInterrupt: scene interrupted")
+        export_file = None
+        if "tap" in locals():
+            tap.stop()
+            export_file = tap.write(run.path / f".{scene.id}.tap.jsonl", since=start)
         return record_scene(
             run,
             scene.id,
@@ -372,6 +378,7 @@ async def _execute_scene(scene, source, run, stack, preflight, thresholds):
             mind_calls=mind.calls if isinstance(mind, ClaudeMind) else [],
             capped=state["capped"],
             errors=errors + (mind.failures if isinstance(mind, ClaudeMind) else []),
+            export_file=export_file,
         )
 
 

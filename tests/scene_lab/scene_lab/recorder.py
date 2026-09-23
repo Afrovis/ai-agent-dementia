@@ -28,6 +28,90 @@ def agent_model(repo_root: Path, env: dict | None = None) -> str:
     return "-"
 
 
+class StreamTap:
+    """Follow every non-media stream during a scene with XRANGE from the last seen id.
+
+    Capped streams (activity keeps about 200 entries) lose early playback reports and
+    decision records in a busy scene, so an end-of-scene export is not enough. No consumer
+    groups are created and nothing is acked, so services are unaffected. Media streams are
+    never read: synthesised audio must not reach disk (HANDOFF rule 2).
+    """
+
+    def __init__(self, client, streams=None, poll_s: float = 0.5, now_fn=None) -> None:
+        from nc_shared.replay import ALL_STREAMS, MEDIA_STREAMS
+
+        self.client = client
+        self.streams = [s for s in (streams or ALL_STREAMS) if s not in MEDIA_STREAMS]
+        self.poll_s = poll_s
+        self.now_fn = now_fn or __import__("time").time
+        self.last: dict[str, str] = {}
+        self.rows: list[tuple[str, dict]] = []
+        self._stop = None
+        self._thread = None
+
+    def poll(self) -> int:
+        from nc_shared.replay import _event_from_fields
+
+        added = 0
+        for stream in self.streams:
+            low = f"({self.last[stream]}" if stream in self.last else "-"
+            for msg_id, fields in self.client.xrange(stream, min=low, max="+") or []:
+                msg_id = msg_id.decode() if isinstance(msg_id, bytes) else msg_id
+                self.last[stream] = msg_id
+                try:
+                    event = _event_from_fields(fields)
+                except Exception:
+                    continue
+                self.rows.append(
+                    (
+                        event.ts.isoformat(),
+                        {
+                            "stream": stream,
+                            "event_type": type(event).__name__,
+                            "ts": event.ts.isoformat(),
+                            "recorded_at": self.now_fn(),
+                            "payload": event.model_dump(mode="json"),
+                        },
+                    )
+                )
+                added += 1
+        return added
+
+    def start(self) -> None:
+        import threading
+
+        self._stop = threading.Event()
+
+        def loop():
+            while not self._stop.is_set():
+                try:
+                    self.poll()
+                except Exception:
+                    pass
+                self._stop.wait(self.poll_s)
+
+        self._thread = threading.Thread(target=loop, name="scene-lab-tap", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        if self._stop is not None:
+            self._stop.set()
+            self._thread.join(timeout=5)
+        try:
+            self.poll()
+        except Exception:
+            pass
+
+    def write(self, path: Path, since: datetime | None = None) -> Path:
+        rows = sorted(self.rows, key=lambda item: item[0])
+        with path.open("w") as out:
+            for ts, row in rows:
+                if since is not None and datetime.fromisoformat(ts) < since:
+                    continue
+                out.write(json.dumps(row) + "\n")
+        return path
+
+
 def record_scene(
     run: RunDir,
     scene_id: str,
@@ -62,6 +146,8 @@ def record_scene(
     target = folder / "export.jsonl"
     if export_file:
         target.write_bytes(export_file.read_bytes())
+        if export_file.name.endswith(".tap.jsonl"):
+            export_file.unlink(missing_ok=True)
     else:
         try:
             with target.open("w") as out:
