@@ -99,18 +99,20 @@ def _result(
 
 
 def _said_record(trace: Trace, say: TraceEvent) -> TraceEvent | None:
-    """The agent's `said` decision record for this Say (same strategy, same loop tick)."""
-    return next(
-        (
-            e
-            for e in trace.events
-            if e.kind == "decision"
-            and e.data.get("decision") == "said"
-            and e.data.get("strategy") == say.data.get("strategy")
-            and abs(e.t - say.t) <= 0.5
-        ),
-        None,
-    )
+    """The agent's `said` decision record for this Say (same strategy, same loop tick).
+
+    The closest record in time wins, so two Says of one strategy in quick succession (a
+    deferred flush followed by a fresh Say) cannot swap records.
+    """
+    candidates = [
+        e
+        for e in trace.events
+        if e.kind == "decision"
+        and e.data.get("decision") == "said"
+        and e.data.get("strategy") == say.data.get("strategy")
+        and abs(e.t - say.t) <= 0.5
+    ]
+    return min(candidates, key=lambda e: abs(e.t - say.t), default=None)
 
 
 def _first_reply(trace: Trace, utt: TraceEvent) -> TraceEvent | None:

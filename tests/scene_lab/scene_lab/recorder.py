@@ -97,6 +97,8 @@ class StreamTap:
         if self._stop is not None:
             self._stop.set()
             self._thread.join(timeout=5)
+            if self._thread.is_alive():
+                print("scene_lab: bus tap thread still running after 5 s; export may be partial")
         try:
             self.poll()
         except Exception:
