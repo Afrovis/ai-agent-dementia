@@ -7,7 +7,128 @@
 (function () {
   "use strict";
 
+  const logic = window.EyesLogic;
   const faceEl = document.getElementById("face");
+  const eyeMotionEl = document.getElementById("eye-motion");
+  const eyePulseEl = document.getElementById("eye-pulse");
+  const eyeLeftEl = document.querySelector(".eye-left");
+  const eyeRightEl = document.querySelector(".eye-right");
+  const vignetteEl = document.getElementById("alert-vignette");
+  const statusDotEl = document.getElementById("status-dot");
+  const statusLabelEl = document.getElementById("status-label");
+  const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+  const eyes = { serverExpression: "sleeping", currentExpression: "sleeping", alert: false,
+    gaze: { target: "none", x: null, y: null }, targetPos: 0, lastPos: 0,
+    noneAt: performance.now(), spring: { pos: 0, velocity: 0 }, amp: 0,
+    cameraOff: true, microphoneOff: true, config: { night_start: "20:00", night_end: "07:00", clock_24h: false } };
+  let micAnalyser = null;
+  let speechAnalyser = null;
+  let demoAmp = null;
+  let blinkHoldTimer = null;
+  let statusTimer = null;
+  let alertTimer = null;
+
+  function renderClock() {
+    const now = new Date();
+    document.getElementById("clock-time").textContent = logic.formatClock(now, eyes.config.clock_24h);
+    document.getElementById("clock-icon").classList.toggle("day", !logic.isNight(now, eyes.config));
+  }
+  renderClock();
+  setInterval(renderClock, 10000);
+
+  function renderStatus() {
+    const result = logic.status({ alert: eyes.alert, cameraOff: eyes.cameraOff,
+      microphoneOff: eyes.microphoneOff, reconnecting: !debugState.ws,
+      speaking: debugState.speaking, expression: eyes.currentExpression });
+    if (statusLabelEl.textContent !== result.label) {
+      statusLabelEl.style.opacity = "0";
+      clearTimeout(statusTimer);
+      statusTimer = setTimeout(() => {
+        statusLabelEl.textContent = result.label;
+        statusLabelEl.style.opacity = result.label ? "1" : "0";
+      }, 300);
+    }
+    statusDotEl.style.opacity = String(result.dot);
+    statusDotEl.classList.toggle("reconnecting", result.blink);
+  }
+
+  function renderExpression() {
+    const next = logic.expression(eyes.serverExpression, debugState.speaking);
+    if (next !== eyes.currentExpression) {
+      eyes.currentExpression = next;
+      faceEl.className = `face ${next} blink-hold`;
+      faceEl.setAttribute("aria-label", `companion ${next}`);
+      clearTimeout(blinkHoldTimer);
+      blinkHoldTimer = setTimeout(() => faceEl.classList.remove("blink-hold"), 2000);
+    }
+    renderStatus();
+  }
+
+  function applyEyes(msg) {
+    if (["open", "sleeping", "sleepy", "listening", "speaking"].includes(msg.expression)) eyes.serverExpression = msg.expression;
+    if (typeof msg.alert === "boolean" && msg.alert !== eyes.alert) {
+      eyes.alert = msg.alert;
+      // Pin the glow where the pulse left it, with transitions off and a style
+      // flush, so the 3 s fade starts from there instead of snapping to zero.
+      const currentOpacity = getComputedStyle(vignetteEl).opacity;
+      vignetteEl.style.transition = "none";
+      vignetteEl.classList.remove("pulsing", "on");
+      vignetteEl.style.opacity = currentOpacity;
+      void getComputedStyle(vignetteEl).opacity;
+      vignetteEl.style.transition = "";
+      clearTimeout(alertTimer);
+      requestAnimationFrame(() => {
+        vignetteEl.style.opacity = eyes.alert ? (reducedMotion.matches ? ".30" : ".15") : "0";
+        if (eyes.alert) alertTimer = setTimeout(() => {
+          vignetteEl.style.opacity = "";
+          vignetteEl.classList.add("pulsing");
+        }, 3000);
+      });
+    }
+    if (msg.gaze && ["face", "bed", "none"].includes(msg.gaze.target)) {
+      const gaze = msg.gaze;
+      if (gaze.target === "none") {
+        if (eyes.gaze.target !== "none") { eyes.noneAt = performance.now(); eyes.lastPos = eyes.spring.pos; }
+      } else if (Number.isFinite(gaze.x) && Number.isFinite(gaze.y)) {
+        eyes.targetPos = logic.gazeTarget(eyes.targetPos, logic.gazePoint(gaze.x, gaze.y).pos);
+      }
+      eyes.gaze = gaze;
+    }
+    renderExpression();
+  }
+
+  function readLoudness(analyser) {
+    if (!analyser || !micAudioContext || micAudioContext.state !== "running") return 0;
+    const data = new Float32Array(analyser.fftSize);
+    analyser.getFloatTimeDomainData(data);
+    return logic.rms(data);
+  }
+
+  let lastFrameTime = performance.now();
+  function animateEyes(now) {
+    const dt = Math.min(.05, Math.max(0, (now - lastFrameTime) / 1000));
+    lastFrameTime = now;
+    const none = eyes.gaze.target === "none" ? logic.noneTarget(eyes.lastPos, (now - eyes.noneAt) / 1000) : null;
+    const target = none ? none.pos : eyes.targetPos;
+    eyes.spring = reducedMotion.matches ? { pos: 0, velocity: 0 } :
+      logic.springStep(eyes.spring, target, dt, innerWidth);
+    const point = logic.gazeTransform(eyes.spring.pos);
+    const scale = Math.min(innerWidth / 1440, innerHeight / 900);
+    eyeMotionEl.style.transform = `translate(${point.x * scale}px, ${point.y * scale}px)`;
+    eyeMotionEl.style.opacity = String(none ? none.brightness : 1);
+    eyeLeftEl.style.transform = `scale(${point.leftScale})`;
+    eyeRightEl.style.transform = `scale(${point.rightScale})`;
+    const active = eyes.currentExpression === "listening" || eyes.currentExpression === "speaking";
+    const analyser = eyes.currentExpression === "listening" ? micAnalyser : speechAnalyser;
+    const raw = demoAmp === null ? active ? readLoudness(analyser) : 0 : demoAmp;
+    eyes.amp = reducedMotion.matches ? 0 : logic.smoothAmp(eyes.amp, raw, dt);
+    const glow = eyes.currentExpression === "sleeping" ? 6 : eyes.currentExpression === "listening" ?
+      26 + 22 * eyes.amp : eyes.currentExpression === "speaking" ? 14 + 16 * eyes.amp : 14;
+    eyePulseEl.style.filter = `drop-shadow(0 0 ${glow * scale}px #B8322A)`;
+    eyePulseEl.style.transform = active && !reducedMotion.matches ? `scale(${1 + .03 * eyes.amp})` : "scale(1)";
+    requestAnimationFrame(animateEyes);
+  }
+  requestAnimationFrame(animateEyes);
   const headlineEl = document.getElementById("headline");
   const bodyEl = document.getElementById("body-text");
   const photoEl = document.getElementById("photo");
@@ -177,7 +298,6 @@
   }
   setInterval(renderDebugStatus, 500);
 
-  const FACE_STATES = ["asleep", "awake", "speaking", "listening"];
   let currentSpeech = null;
   let currentSpeechInterruptible = false;
   let currentSpeechSessionId = null;
@@ -185,7 +305,6 @@
   let pendingSpeech = null;
   let playbackSocket = null;
   let micAudioContext = null;
-  let unlockContext = null;
 
   function reportPlayback(record, phase, detail = "", error = null) {
     const payload = {
@@ -223,9 +342,8 @@
     currentSpeechInterruptible = false;
     currentSpeechSessionId = null;
     debugState.speaking = false;
-    if (faceEl.classList.contains("speaking")) {
-      faceEl.classList.replace("speaking", "awake");
-    }
+    speechAnalyser = null;
+    renderExpression();
   }
 
   function interruptSpeech(why) {
@@ -244,6 +362,7 @@
     record.speech.play().catch((error) => {
       if (currentSpeechRecord !== record) return;
       debugState.speaking = false;
+      renderExpression();
       reportPlayback(record, "failed", "", error);
       if (error.name === "NotAllowedError") {
         debugState.audioBlocked = true;
@@ -269,31 +388,21 @@
     } else {
       pendingSpeech = null;
     }
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextClass) return;
-    try {
-      unlockContext = unlockContext || new AudioContextClass();
-      for (const context of [unlockContext, micAudioContext]) {
-        if (!context) continue;
-        context.resume().then(() => {
-          if (context === unlockContext && context.state === "running") {
-            const source = context.createBufferSource();
-            source.buffer = context.createBuffer(1, 1, context.sampleRate);
-            source.connect(context.destination);
-            source.start();
-            if (debugState.audioBlocked || !debugState.audioUnlocked) {
-              debugState.audioUnlocked = true;
-              debugState.audioBlocked = false;
-              sendIdentity("heartbeat");
-              audioUnlockEl.classList.add("hidden");
-              reportPlayback(record || { strategy: null, sessionId: null, audioId: null, receivedAt: performance.now() }, "unlocked");
-            }
-          }
-        }).catch(() => { /* the next gesture can retry */ });
+    if (!micAudioContext) return;
+    micAudioContext.resume().then(() => {
+      if (micAudioContext.state !== "running") return;
+      const source = micAudioContext.createBufferSource();
+      source.buffer = micAudioContext.createBuffer(1, 1, micAudioContext.sampleRate);
+      source.connect(micAudioContext.destination);
+      source.start();
+      if (debugState.audioBlocked || !debugState.audioUnlocked) {
+        debugState.audioUnlocked = true;
+        debugState.audioBlocked = false;
+        sendIdentity("heartbeat");
+        audioUnlockEl.classList.add("hidden");
+        reportPlayback(record || { strategy: null, sessionId: null, audioId: null, receivedAt: performance.now() }, "unlocked");
       }
-    } catch (error) {
-      console.error("audio unlock failed", error);
-    }
+    }).catch(() => { /* the next gesture can retry */ });
   }
 
   document.addEventListener("pointerdown", unlockAudioFromGesture);
@@ -310,10 +419,6 @@
 
   function applyShow(msg) {
     addDebugEvent(`show: ${msg.face}`);
-    if (msg.face && FACE_STATES.includes(msg.face)) {
-      FACE_STATES.forEach((state) => faceEl.classList.remove(state));
-      faceEl.classList.add(msg.face);
-    }
     if (typeof msg.headline === "string") {
       headlineEl.textContent = msg.headline;
     }
@@ -352,11 +457,25 @@
       return;
     }
     const speech = new Audio(msg.audio_url);
+    // A media element may be attached to a source once. Each Say gets a new Audio.
+    if (micAudioContext && micAudioContext.state === "running") {
+      try {
+        const source = micAudioContext.createMediaElementSource(speech);
+        const analyser = micAudioContext.createAnalyser();
+        analyser.fftSize = 1024;
+        source.connect(analyser);
+        analyser.connect(micAudioContext.destination);
+        speechAnalyser = analyser;
+      } catch (error) { console.error("speech analyser unavailable", error); }
+    } else speechAnalyser = null;
     record.speech = speech;
     currentSpeech = speech;
     currentSpeechRecord = record;
     currentSpeechInterruptible = msg.interruptible === true;
     currentSpeechSessionId = msg.session_id || null;
+    speech.addEventListener("play", () => {
+      if (currentSpeechRecord === record) { debugState.speaking = true; renderExpression(); }
+    });
     speech.addEventListener("playing", () => {
       if (currentSpeechRecord !== record) return;
       const wasBlocked = debugState.audioBlocked;
@@ -367,12 +486,13 @@
       pendingSpeech = null;
       audioUnlockEl.classList.add("hidden");
       record.playingAt = performance.now();
-      faceEl.classList.remove(...FACE_STATES);
-      faceEl.classList.add("speaking");
+      renderExpression();
       if (wasBlocked) reportPlayback(record, "unlocked");
       reportPlayback(record, "playing");
     });
-    speech.addEventListener("pause", () => { if (currentSpeechRecord === record) debugState.speaking = false; });
+    speech.addEventListener("pause", () => {
+      if (currentSpeechRecord === record) { debugState.speaking = false; renderExpression(); }
+    });
     speech.addEventListener("ended", () => {
       if (currentSpeechRecord !== record) return;
       if (record.playingAt !== null) record.playedMs += performance.now() - record.playingAt;
@@ -398,8 +518,7 @@
       return;
     }
     interruptSpeech("barge-in");
-    faceEl.classList.remove(...FACE_STATES);
-    faceEl.classList.add("listening");
+
   }
 
   function handleMessage(event) {
@@ -410,7 +529,12 @@
       console.error("could not parse websocket message", err);
       return;
     }
-    if (msg.type === "show") {
+    if (msg.type === "eyes") {
+      applyEyes(msg);
+    } else if (msg.type === "config") {
+      eyes.config = { ...eyes.config, ...msg };
+      renderClock();
+    } else if (msg.type === "show") {
       applyShow(msg);
     } else if (msg.type === "say") {
       applySay(msg);
@@ -455,6 +579,7 @@
 
     socket.addEventListener("open", () => {
       debugState.ws = true;
+      renderStatus();
       identitySockets.add(socket);
       socket.send(JSON.stringify(identityMessage("hello")));
       console.log("embodiment websocket connected");
@@ -466,6 +591,7 @@
       identitySockets.delete(socket);
       if (playbackSocket === socket) playbackSocket = null;
       debugState.ws = false;
+      renderStatus();
       const nextBackoff = Math.min(currentBackoff * 2, 30000);
       setTimeout(() => connect(nextBackoff), currentBackoff);
     });
@@ -476,6 +602,13 @@
   }
 
   connect(1000);
+  renderStatus();
+  if (new URLSearchParams(location.search).get("demo") === "1") {
+    window.__eyesDemo = {
+      receive: (msg) => handleMessage({ data: JSON.stringify(msg) }),
+      setAmp: (value) => { demoAmp = value === null ? null : Math.min(1, Math.max(0, Number(value) || 0)); },
+    };
+  }
 
   // --- Browser media bridge (issue #28) ---------------------------------
   //
@@ -676,7 +809,11 @@
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     const audioContext = new AudioContextClass();
     micAudioContext = audioContext;
+    audioContext.resume().catch(() => { /* first pointer gesture retries */ });
     const source = audioContext.createMediaStreamSource(stream);
+    micAnalyser = audioContext.createAnalyser();
+    micAnalyser.fftSize = 1024;
+    source.connect(micAnalyser);
     // ScriptProcessorNode is deprecated in favour of AudioWorklet, but is
     // used here deliberately: this is a dev/MVP bridge and the extra
     // AudioWorklet module-loading plumbing is not worth it yet. Revisit if
@@ -709,6 +846,7 @@
   async function startMediaBridge() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       setMediaStatus("getUserMedia unavailable (needs HTTPS or localhost)");
+      renderStatus();
       return;
     }
     let stream;
@@ -721,9 +859,19 @@
       });
     } catch (err) {
       setMediaStatus(`camera/mic permission denied: ${err.message}`);
+      renderStatus();
       return;
     }
 
+    eyes.cameraOff = stream.getVideoTracks().length === 0;
+    eyes.microphoneOff = stream.getAudioTracks().length === 0;
+    for (const track of stream.getVideoTracks()) track.addEventListener("ended", () => {
+      eyes.cameraOff = true; renderStatus();
+    });
+    for (const track of stream.getAudioTracks()) track.addEventListener("ended", () => {
+      eyes.microphoneOff = true; renderStatus();
+    });
+    renderStatus();
     const media = createMediaLink();
     startWebcamCapture(stream, media);
     startMicCapture(stream, media);

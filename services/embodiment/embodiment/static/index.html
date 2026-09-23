@@ -8,6 +8,14 @@
 </head>
 <body>
   <div id="brightness-overlay"></div>
+  <div id="alert-vignette" aria-hidden="true"></div>
+  <header id="top-bar">
+    <div id="clock"><span id="clock-icon" aria-hidden="true">
+      <svg class="moon-icon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      <svg class="sun-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2 M12 20v2 M4.93 4.93l1.42 1.42 M17.65 17.65l1.42 1.42 M2 12h2 M20 12h2 M4.93 19.07l1.42-1.42 M17.65 6.35l1.42-1.42"/></svg>
+    </span><time id="clock-time"></time></div>
+    <div id="status"><span id="status-dot"></span><span id="status-label"></span></div>
+  </header>
   <div id="media-status"></div>
   <div id="clients-warning" class="hidden" role="alert"></div>
 
@@ -17,10 +25,16 @@
     </div>
 
     <section id="face-area">
-      <div id="face" class="face asleep" role="img" aria-label="companion face">
-        <div class="eye eye-left"></div>
-        <div class="eye eye-right"></div>
-        <div class="mouth"></div>
+      <div id="face" class="face sleeping" role="img" aria-label="companion resting">
+        <div id="eye-motion" class="eye-motion">
+          <div id="eye-pulse" class="eye-pulse">
+            <div class="eye-pair">
+              <div class="eye-slot eye-left"><div class="eye-fill"></div><div class="eye-arc"></div></div>
+              <div class="eye-slot eye-right"><div class="eye-fill"></div><div class="eye-arc"></div></div>
+            </div>
+          </div>
+          <div class="zzz" aria-hidden="true"><span>z</span><span>z</span><span>z</span></div>
+        </div>
       </div>
     </section>
 
@@ -47,6 +61,7 @@
     <div id="debug-events"></div>
   </aside>
 
+  <script src="/static/eyes_logic.js"></script>
   <script src="/static/script.js"></script>
 </body>
 </html>

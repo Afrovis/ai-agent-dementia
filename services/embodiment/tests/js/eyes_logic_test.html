@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>RUNNING</title><pre id="result"></pre>
+<script src="../../embodiment/static/eyes_logic.js"></script>
+<script>
+(function () {
+  const L = window.EyesLogic;
+  let count = 0;
+  function check(value, details) { count++; if (!value) throw Error(details); }
+  function near(actual, wanted, tolerance, details) { check(Math.abs(actual - wanted) <= tolerance, `${details}: ${actual} != ${wanted}`); }
+  try {
+    const cases = [
+      [{ alert: true, cameraOff: true }, "Needs attention", 1],
+      [{ cameraOff: true, reconnecting: true }, "Camera off", 1],
+      [{ microphoneOff: true, reconnecting: true }, "Microphone off", 1],
+      [{ reconnecting: true, speaking: true }, "Reconnecting", 1],
+      [{ speaking: true, expression: "listening" }, "Speaking", .8],
+      [{ expression: "listening" }, "Listening", .8],
+      [{ expression: "sleepy" }, "Winding down", .5],
+      [{ expression: "sleeping" }, "Resting · monitoring", .35],
+      [{ expression: "open" }, "", 0],
+    ];
+    for (const [input, label, dot] of cases) {
+      const result = L.status(input);
+      check(result.label === label && result.dot === dot, `status ${label}`);
+    }
+    check(L.status({ reconnecting: true }).blink, "reconnect blink");
+    check(L.expression("sleeping", true) === "speaking", "speaking wins");
+    check(L.expression("sleepy", false) === "sleepy", "server expression");
+    check(L.expression("invalid", false) === "open", "unknown expression");
+    const left = L.gazePoint(.2, .6);
+    near(left.pos, .6, 1e-9, "mirroring 1-x");
+    near(left.x, 132, 1e-9, "gaze x");
+    near(left.y, 6, 1e-9, "gaze y");
+    near(left.leftScale, 1.084, 1e-9, "near eye");
+    near(left.rightScale, .916, 1e-9, "far eye");
+    near(L.gazeTransform(.6).x, left.x, 1e-9, "gaze transform");
+    check(L.gazeTarget(.4, .429) === .4, "dead zone below .03");
+    check(L.gazeTarget(.4, .431) === .431, "dead zone above .03");
+    let spring = { pos: 0, velocity: 0 };
+    let previous = 0;
+    for (let i = 0; i < 90; i++) {
+      spring = L.springStep(spring, 1, 1 / 60);
+      check(spring.pos >= previous && spring.pos <= 1, "spring overshoot");
+      check(Math.abs(spring.velocity * 220 / 1440) <= .15 + 1e-9, "velocity cap");
+      previous = spring.pos;
+    }
+    check(Math.abs(spring.pos - 1) < .08, "spring settles near 1.5 seconds");
+    near(L.noneTarget(.8, 5).pos, .8, 1e-9, "five second hold");
+    near(L.noneTarget(.8, 8).pos, 0, 1e-9, "centre by eight seconds");
+    near(L.noneTarget(.8, 8).brightness, .75, 1e-9, "dim to 75 percent");
+    near(L.rms(new Float32Array(32)), 0, 1e-9, "noise floor");
+    check(L.rms(new Float32Array(32).fill(.1)) > 0, "RMS loudness");
+    check(L.smoothAmp(0, 1, .08) > 1 - L.smoothAmp(1, 0, .08), "attack faster than release");
+    const at = (h, m) => new Date(2026, 0, 1, h, m);
+    check(L.isNight(at(23, 0), { night_start: "20:00", night_end: "07:00" }), "night before midnight");
+    check(L.isNight(at(2, 14), { night_start: "20:00", night_end: "07:00" }), "night after midnight");
+    check(!L.isNight(at(12, 0), { night_start: "20:00", night_end: "07:00" }), "daytime");
+    check(L.formatClock(at(2, 14)) === "2:14 AM", "12h clock");
+    check(L.formatClock(at(2, 14), true) === "02:14", "24h clock");
+    document.title = `PASS ${count}`;
+  } catch (error) { document.title = `FAIL: ${error.message}`; }
+  document.getElementById("result").textContent = document.title;
+})();
+</script></html>
