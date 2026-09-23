@@ -34,6 +34,7 @@ DEFAULT_PROFILE_PATH = FIXTURES_DIR / "profile.yaml"
 GUIDELINES_PATH = PACKAGE_ROOT / "guidelines.md"
 
 Category = Literal[
+    "conversation",
     "restroom",
     "disorientation",
     "distress_pain",

@@ -23,6 +23,12 @@ an in-memory bus and injected clock. There is no Redis, camera or microphone,
 and the real LLM backend interprets speech and writes the replies. Each labelled
 checkpoint is scored on:
 
+Use `--llm-latency fixed:2.5` to advance simulated time by 2.5 seconds for
+each interpret, compose, or plan call. Inputs during a call arrive on the next
+loop step, and `Activity` durations and output timestamps follow that clock.
+The default `--llm-latency none` preserves the zero-time replay. `recorded` is
+unavailable here because decision scenarios have no captures.
+
 | Measure | Meaning |
 | --- | --- |
 | Checkpoint pass | The agent's action inside the checkpoint window is in the `acceptable` set. |
@@ -35,7 +41,9 @@ models side by side.
 
 ## Scenario categories
 
-About 30 scenarios, roughly five per category, plus about 8 noisy variants:
+Six decision categories contain about 30 labelled scenarios, plus about 8 noisy variants.
+The `conversation` category adds seven timing and turn-taking timelines whose
+answer-or-redirect labels await the owner's policy:
 
 | Category | Example |
 | --- | --- |
@@ -45,6 +53,7 @@ About 30 scenarios, roughly five per category, plus about 8 noisy variants:
 | `fall` | `on_floor`, or `absent` for too long after leaving the bed. |
 | `false_alarm` | Rolls over, sits up for 20 s, lies back down. The agent should stay quiet. |
 | `silent_wander` | Gets up and walks with no speech at all. |
+| `conversation` | Asks a direct question during a silence gap, agent speech, or another hard moment. |
 
 A noisy variant has `noise_of: <parent id>` and the same labels as its
 parent. It adds flickering states, low confidence, speech-to-text typos or a
@@ -93,6 +102,9 @@ A checkpoint starts **unlabelled**: just its `id`, `window` and the
 `escalate_by`) come from the annotation workflow below. A labelled
 checkpoint needs a `rationale`, and action labels need `cites`. The
 `familiar_voice` strategy is only a valid label when `voice_clip` is true.
+The `conversation` fixtures currently use unlabelled checkpoints marked with
+`# stub label: awaiting answer-or-redirect policy`; they appear in traces but
+do not contribute to pass rates or calibration.
 
 The set of actions a label can name is exactly what the agent can do:
 
@@ -240,7 +252,16 @@ python -m decision_bench --backend openai --base-url http://127.0.0.1:11435 --mo
 python -m decision_bench --category fall --scenario fall-01   # narrow the run
 python -m decision_bench --backend stub --json --out decision-report.json
 python -m decision_bench --model gemma4:e4b-mlx --judge   # evidence-check new sentences (subscription)
+python -m decision_bench --backend stub --invariants --runs-root /tmp/scene-lab-runs
 ```
+
+`--invariants` runs scene_lab's label-free checks after each scenario and writes
+one run directory with per-scene `trace.jsonl` and `report.json`, plus a shared
+`bugs.jsonl` and `bugs.md`. Install `tests/scene_lab` to use it. Optional
+`--thresholds PATH` loads a threshold YAML, and `--tt2-judge` asks the
+subscription Claude judge to rate question replies. With several `--model`
+values, each scene directory includes `@<model>` in its name. The usual
+scoring, JSON report, verdicts and trace output still run.
 
 ## Caveats
 

@@ -1,0 +1,16 @@
+id: conversation-06
+category: conversation
+summary: Asks for the bathroom location while walking there with the restroom goal active.
+start: "03:20"
+timeline:
+  - {t: 0, person: {state: sitting_up, zone: bed}}
+  - {t: 5, utterance: {text: "I need the toilet.", duration_s: 1.6}}
+  - {t: 12, person: {state: standing, zone: bed}}
+  - {t: 20, person: {state: walking, zone: bathroom_path}}
+  # The stated need has already selected the restroom goal before this question.
+  - {t: 24, utterance: {text: "Which way is the bathroom?", duration_s: 1.8}}
+checkpoints:
+  # stub label: awaiting answer-or-redirect policy
+  - id: bathroom-path-question
+    window: [24, 55]
+    question: How should the agent answer a location question while the person is walking to the bathroom?

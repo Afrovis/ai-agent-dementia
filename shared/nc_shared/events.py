@@ -135,7 +135,7 @@ class Activity(BaseEvent):
     """Capped, transient service work indicator for the bedside overlay."""
 
     service: str
-    kind: Literal["transcribe", "interpret", "compose", "tts", "playback", "client"]
+    kind: Literal["transcribe", "interpret", "compose", "tts", "playback", "client", "decision"]
     phase: Literal["start", "end"]
     ok: bool = True
     duration_ms: float | None = None

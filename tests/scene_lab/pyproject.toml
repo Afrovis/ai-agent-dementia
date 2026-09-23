@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scene-lab"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["pydantic>=2.7", "pyyaml>=6.0", "numpy", "websockets", "redis"]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff"]
+live = ["piper-tts"]
+
+[tool.setuptools.packages.find]
+include = ["scene_lab*"]
+
+[tool.setuptools.package-data]
+scene_lab = ["thresholds.yaml"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]

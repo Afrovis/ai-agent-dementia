@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
+import agent.main as agent_main
 from agent.config import AgentConfig
 from agent.llm import LLMClient
 from agent.main import (
@@ -58,8 +61,15 @@ class _TraceBus(FakeBus):
         self.trace = trace
         self.now_t = 0.0
         self.record_outputs = True
+        self.latency_on = False
 
     def publish(self, event: BaseEvent, maxlen: int | None = None) -> str:
+        if self.latency_on and self.record_outputs and event.source == "agent":
+            event = event.model_copy(
+                update={
+                    "ts": (self.trace.start + timedelta(seconds=self.now_t)).replace(tzinfo=UTC)
+                }
+            )
         message_id = super().publish(event, maxlen=maxlen)
         if self.record_outputs:
             self.trace.entries.append(
@@ -88,18 +98,21 @@ class _TraceBus(FakeBus):
 class _TracingLLM:
     """Record failures at the LLM seam while preserving fail-quiet ``None`` semantics."""
 
-    def __init__(self, client: LLMClient, bus: _TraceBus) -> None:
+    def __init__(self, client: LLMClient, bus: _TraceBus, latency_s: float = 0) -> None:
         self.client = client
         self.bus = bus
+        self.latency_s = latency_s
 
     def _call(self, task: str, *args: object) -> object | None:
         try:
             result = getattr(self.client, task)(*args)
         except Exception as exc:  # noqa: BLE001 - the real clients fail quiet too
+            self.bus.now_t += self.latency_s
             self.bus.trace.entries.append(
                 TraceEntry(self.bus.now_t, "LLMError", {"task": task, "error": type(exc).__name__})
             )
             return None
+        self.bus.now_t += self.latency_s
         if result is None:
             self.bus.trace.entries.append(TraceEntry(self.bus.now_t, "LLMNone", {"task": task}))
         return result
@@ -176,16 +189,31 @@ def run_scenario(
     strategies_path: Path | None = None,
     tick_seconds: float = 1.0,
     tail_seconds: float = 30.0,
+    llm_latency: str = "none",
 ) -> Trace:
     """Replay ``scenario`` through ``agent.main.run_once`` and return its trace."""
     if tick_seconds <= 0:
         raise ValueError("tick_seconds must be greater than zero")
     if tail_seconds < 0:
         raise ValueError("tail_seconds must not be negative")
+    if llm_latency == "recorded":
+        raise ValueError("decision_bench has no captures for --llm-latency recorded")
+    if llm_latency == "none":
+        latency_s = 0.0
+    elif llm_latency.startswith("fixed:"):
+        try:
+            latency_s = float(llm_latency.removeprefix("fixed:"))
+        except ValueError as exc:
+            raise ValueError("--llm-latency requires fixed:<nonnegative seconds>") from exc
+        if not 0 <= latency_s < float("inf"):
+            raise ValueError("--llm-latency requires fixed:<nonnegative seconds>")
+    else:
+        raise ValueError(f"invalid --llm-latency: {llm_latency}")
 
     start = datetime.combine(date(2026, 1, 1), scenario.start)
     trace = Trace(scenario_id=scenario.id, start=start)
     bus = _TraceBus(trace)
+    bus.latency_on = llm_latency != "none"
     bus.ensure_group(PERSON_STREAM, PERSON_GROUP)
     bus.ensure_group(UTTERANCE_STREAM, UTTERANCE_GROUP)
     profile = _profile(scenario, profile_path)
@@ -194,7 +222,7 @@ def run_scenario(
         id_fn=lambda: f"bench-{scenario.id}",
         strategies=_strategies(scenario, strategies_path),
     )
-    client = _TracingLLM(llm, bus)
+    client = _TracingLLM(llm, bus, latency_s)
     end_t = scenario_end(scenario, tail_seconds=tail_seconds)
     trace.end_t = end_t
     event_index = 0
@@ -202,9 +230,8 @@ def run_scenario(
     last_person_publish: float | None = None
     prior_state: dict[str, object] | None = None
 
-    step = 0
+    t = 0.0
     while True:
-        t = min(step * tick_seconds, end_t)
         bus.now_t = t
         published_person_now = False
         while event_index < len(scenario.timeline) and scenario.timeline[event_index].t <= t:
@@ -234,21 +261,33 @@ def run_scenario(
             last_person_publish = t
 
         now = start + timedelta(seconds=t)
-        run_once(
-            bus,
-            session,
-            block_ms=0,
-            now_fn=lambda current=now: current,
-            profile=profile,
-            llm=client,
-        )
+        if latency_s:
+            with patch.object(agent_main, "time", SimpleNamespace(perf_counter=lambda: bus.now_t)):
+                run_once(
+                    bus,
+                    session,
+                    block_ms=0,
+                    now_fn=lambda: start + timedelta(seconds=bus.now_t),
+                    profile=profile,
+                    llm=client,
+                )
+        else:
+            run_once(
+                bus,
+                session,
+                block_ms=0,
+                now_fn=lambda current=now: current,
+                profile=profile,
+                llm=client,
+            )
         state = _state_data(session)
         if state != prior_state:
-            trace.entries.append(TraceEntry(t, "State", state))
+            trace.entries.append(TraceEntry(bus.now_t, "State", state))
             prior_state = state
         if t >= end_t:
             break
-        step += 1
+        t = min(max(t + tick_seconds, bus.now_t), end_t)
 
+    trace.end_t = max(trace.end_t, bus.now_t)
     trace.entries.sort(key=lambda entry: entry.t)
     return trace

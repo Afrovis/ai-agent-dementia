@@ -19,9 +19,11 @@ python -m session_replay extract data/sessions/desk-export.jsonl \
 
 `extract` keeps `PersonState` from `person` and `Utterance` from `speech_in`.
 It also retains `SessionState`, `GoalChanged`, `Say`, `Show`, `LightCommand`,
-and `Notify` as `observed: true` reference rows. It drops speech starts,
-health, activity, pose debug, frames, and audio. The runner ignores observed
-rows. Review the extracted text before committing; raw exports stay in
+and `Notify` as `observed: true` reference rows. Agent LLM `Activity` end
+rows keep only kind, phase, duration_ms, and timestamp for latency replay;
+their detail is removed. It drops speech starts, health, other activity,
+pose debug, frames, and audio. The runner ignores observed rows as inputs.
+Review the extracted text before committing; raw exports stay in
 gitignored `data/`, and only extracted, text-only scenarios belong in git.
 
 Write a sibling `desk.expect.yaml` with recorded interpretations and ordered
@@ -32,6 +34,21 @@ python -m session_replay run tests/session_replay/scenarios/desk.jsonl \
   --expect tests/session_replay/scenarios/desk.expect.yaml --out /tmp/desk-timeline.jsonl
 pytest tests/session_replay
 ```
+
+For label-free scene_lab checks, install `tests/scene_lab` and add
+`--invariants`. One command can replay several scenarios into one run:
+
+```sh
+python -m session_replay run tests/session_replay/scenarios/*.jsonl \
+  --invariants --runs-root /tmp/scene-lab-runs
+```
+
+Each scenario uses its sibling `*.expect.yaml` and its recorded `llm` mode
+when present; `--llm` overrides that mode. `--expect` is allowed with one
+scenario. Expectation failures still set the exit status independently of
+invariant findings. The run contains `bugs.jsonl`, `bugs.md`, and a trace and
+report per scenario. `--thresholds PATH` selects a threshold YAML;
+`--tt2-judge` opts into Claude question ratings.
 
 The expect file may contain `llm: recorded`, an `interpretations` map keyed
 by exact utterance text, an `expect` list, and a `never` list. Each expectation
@@ -52,3 +69,12 @@ client constructor as the service; `--backend`, `--model`, and `--base-url`
 select its server. `--strategies` and `--person` override the agent's normal
 configuration path resolution. `--tail-s` changes the post-input simulation
 duration.
+
+`--llm-latency none` (default) gives calls zero simulated time. Use
+`--llm-latency recorded` for per-call durations from extracted agent LLM
+Activity, matched in order by kind. Missing durations use
+`--llm-latency-fallback 2.5` seconds by default and warn with the scenario
+name; the checked-in desk scenarios have no duration rows. Alternatively,
+`--llm-latency fixed:2.5` advances every interpret, compose, and plan call by
+2.5 seconds. Inputs during a call arrive after it ends, and the trace records
+the advanced output time and Activity duration.
