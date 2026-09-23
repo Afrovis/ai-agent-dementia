@@ -53,6 +53,7 @@ from nc_shared.bus import Bus
 from nc_shared.events import Health, PersonState, PoseDebug
 
 from perceive.backends import PoseBackend, build_backend
+from perceive.bed_debug import BedCalibration, read_live_frames
 from perceive.classify import (
     ClassifyThresholds,
     StateTracker,
@@ -67,7 +68,7 @@ from perceive.floor_check import (
 )
 from perceive.scene_notes import SceneNoteCache, SessionPhaseTracker, read_session_phase
 from perceive.vision import OllamaVisionClient, VisionClient
-from perceive.zones import ZoneMap, ZoneName, load_zones
+from perceive.zones import ZoneMap, ZoneName, load_zones, zones_path
 
 SERVICE_NAME = "perceive"
 HEALTH_INTERVAL_S = 30.0
@@ -621,6 +622,13 @@ def run() -> None:
         phantom_max_confidence=config.phantom_max_confidence,
     )
     zones = load_zones(config.zones_path)
+    bed_calibration = BedCalibration(
+        bus,
+        zones,
+        zones_path(config.zones_path),
+        frame_source=lambda: read_live_frames(redis_url),
+    )
+    bed_calibration.publish_status()
     tracker = build_tracker(config)
 
     vision_client = build_vision_client(config)
@@ -648,6 +656,8 @@ def run() -> None:
     last_heartbeat_at: float | None = None
     while True:
         read_session_phase(bus, session_tracker)
+        bed_calibration.poll_requests()
+        zones = bed_calibration.take_result()
         published = run_once(
             bus,
             backend,
@@ -671,6 +681,7 @@ def run() -> None:
                 scene_cache=scene_cache,
             )
         last_health_at = maybe_emit_health(bus, last_health_at, now)
+        bed_calibration.maybe_publish_status()
         if published is None:
             time.sleep(0.05)
 

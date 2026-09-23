@@ -124,6 +124,16 @@ def _log_fallback(reason: str, path: str) -> None:
     )
 
 
+def zones_path(path: str | Path | None = None, *, env: dict[str, str] | None = None) -> Path:
+    """Resolve the writable zones file using the same precedence as `load_zones`."""
+    env = os.environ if env is None else env
+    return (
+        Path(path)
+        if path is not None
+        else Path(env.get("ZONES_PATH", DEFAULT_ZONES_DIR / DEFAULT_ZONES_FILENAME))
+    )
+
+
 def load_zones(path: str | Path | None = None, *, env: dict[str, str] | None = None) -> ZoneMap:
     """Load a `ZoneMap` from `config/zones.yaml`, falling back sensibly.
 
@@ -137,12 +147,7 @@ def load_zones(path: str | Path | None = None, *, env: dict[str, str] | None = N
     4: fail loud to the caregiver via the log, fail quiet -- i.e. keep
     running -- for the person being watched).
     """
-    env = os.environ if env is None else env
-    primary = (
-        Path(path)
-        if path is not None
-        else Path(env.get("ZONES_PATH", DEFAULT_ZONES_DIR / DEFAULT_ZONES_FILENAME))
-    )
+    primary = zones_path(path, env=env)
     candidate = primary if primary.exists() else primary.parent / DEFAULT_ZONES_EXAMPLE_FILENAME
 
     if not candidate.exists():
