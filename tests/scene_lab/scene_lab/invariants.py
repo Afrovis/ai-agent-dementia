@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import math
 import re
 from collections.abc import Callable
@@ -58,7 +59,6 @@ def _state(trace: Trace, t: float) -> dict:
     session = _latest(trace, "SessionState", t)
     goal = _latest(trace, "GoalChanged", t)
     say = _latest(trace, "Say", t)
-    decision = next((e for e in reversed(trace.events) if e.kind == "decision" and e.t <= t), None)
     return {
         "phase": session.data.get("phase") if session else None,
         "goal": (
@@ -68,14 +68,10 @@ def _state(trace: Trace, t: float) -> dict:
             if session
             else None
         ),
-        "strategy": (
-            say.data.get("strategy")
-            if say
-            else session.data.get("strategy_index")
-            if session
-            else None
-        ),
-        "drop_reason": decision.data.get("reason") if decision else None,
+        # Only a Say names the strategy id; an index alone would split fingerprints.
+        "strategy": say.data.get("strategy") if say else None,
+        # Set explicitly by checks that attribute a drop (TT-1); never inherited.
+        "drop_reason": None,
     }
 
 
@@ -157,6 +153,65 @@ def _llm_busy_intervals(trace: Trace) -> list[tuple[float, float, list[str]]]:
     return merged
 
 
+def _spoke_after_toilet_need(trace: Trace, t: float) -> bool:
+    """True when the person said anything after their latest toilet request (up to t).
+
+    Only then could an unobserved wants_bed interpretation have resolved the need.
+    """
+    from agent.veto import _TOILET_RE
+
+    said = [u for u in trace.of_type("Utterance") if u.t <= t]
+    last_need = max(
+        (u.t for u in said if _TOILET_RE.search(str(u.data.get("text", "")))), default=None
+    )
+    return last_need is not None and any(u.t > last_need for u in said)
+
+
+def _speech_end(trace: Trace, utt: TraceEvent) -> float:
+    """When the person stopped speaking: listen starts transcribing at end of speech.
+
+    Live traces carry listen's transcribe Activity; offline traces fall back to the
+    Utterance publish time.
+    """
+    start = next(
+        (
+            e
+            for e in reversed(trace.events)
+            if e.type == "Activity"
+            and e.data.get("kind") == "transcribe"
+            and e.data.get("phase") == "start"
+            and utt.t - 30 <= e.t <= utt.t
+        ),
+        None,
+    )
+    return start.t if start else utt.t
+
+
+def _restroom_need_resolved(trace: Trace, t: float) -> bool:
+    """Mirror Session._restroom_need_resolved from GoalChanged events up to t."""
+    resolved = False
+    for event in trace.events:
+        if event.t > t:
+            break
+        if event.type == "SessionState" and event.data.get("phase") == "IDLE":
+            resolved = False
+        elif (
+            event.kind == "decision"
+            and event.data.get("decision") == "interpreted"
+            and event.data.get("intent") == "wants_bed"
+            and event.data.get("goal") == "return_to_bed"
+        ):
+            resolved = True
+        elif event.type == "GoalChanged":
+            if event.data.get("to_goal") == "restroom":
+                resolved = False
+            elif event.data.get("from_goal") == "restroom" and (
+                event.data.get("reason") == "returned_from_bathroom"
+            ):
+                resolved = True
+    return resolved
+
+
 def check_trace(
     trace: Trace, thresholds: Thresholds, judge: Callable[[str, str | None], str] | None = None
 ) -> list[InvariantResult]:
@@ -181,8 +236,9 @@ def check_trace(
         count += 1
         say = _first_reply(trace, utt)
         pb = next((p for p in pbs if p.say_t == say.t), None) if say else None
+        spoke_end = _speech_end(trace, utt)
         if pb and pb.start - utt.t <= thresholds.direct_reply_window_s:
-            lag = pb.start - utt.t
+            lag = pb.start - spoke_end
             replies.append(lag)
             if lag > thresholds.reply_deadline_s:
                 out.append(
@@ -196,6 +252,8 @@ def check_trace(
                         "late reply",
                         [
                             f"Utterance@{utt.t}: {utt.data.get('text')}",
+                            f"speech ended@{spoke_end:.2f} (transcription "
+                            f"{utt.t - spoke_end:.2f}s)",
                             f"Say playback@{pb.start}: {lag:.2f}s",
                         ],
                     )
@@ -208,7 +266,9 @@ def check_trace(
                 (
                     e
                     for e in trace.events
-                    if e.kind == "decision" and e.data.get("decision") and utt.t <= e.t <= limit
+                    if e.kind == "decision"
+                    and e.data.get("decision") in {"pending_say_dropped", "vetoed"}
+                    and utt.t <= e.t <= limit
                 ),
                 None,
             )
@@ -696,25 +756,15 @@ def _check_veto(trace: Trace, out: list[InvariantResult]) -> None:
                 )
             )
             continue
-        # These facts are not on bus events; callers may supply them as trace metadata.
-        meta_missing = [
-            key
-            for key in ("in_night_window", "things_to_avoid", "restroom_need_resolved")
-            if key not in trace.meta
-        ]
-        if meta_missing:
-            out.append(
-                _result(
-                    trace,
-                    "SM-5",
-                    "info",
-                    True,
-                    action.t,
-                    action.t,
-                    f"not applicable: missing {', '.join(meta_missing)}",
-                )
-            )
-            continue
+        # Facts not on bus events. in_night_window defaults to True: decision_bench scenarios
+        # and the nightsim stack are always night; session_replay sets it from its capture.
+        # things_to_avoid comes from explicit meta or the profile. restroom_need_resolved is
+        # session state, derived from GoalChanged below.
+        profile_meta = trace.meta.get("profile") or {}
+        things_to_avoid = trace.meta.get("things_to_avoid")
+        if things_to_avoid is None and isinstance(profile_meta, dict):
+            things_to_avoid = profile_meta.get("things_to_avoid") or ()
+        in_night_window = bool(trace.meta.get("in_night_window", True))
         recent_texts: list[str] = []
         for event in trace.events:
             if event.t > action.t:
@@ -746,9 +796,9 @@ def _check_veto(trace: Trace, out: list[InvariantResult]) -> None:
             person_state=person.data.get("state"),
             recent_utterances=recent,
             settled=settled,
-            in_night_window=trace.meta["in_night_window"],
-            things_to_avoid=tuple(trace.meta["things_to_avoid"]),
-            restroom_need_resolved=trace.meta["restroom_need_resolved"],
+            in_night_window=in_night_window,
+            things_to_avoid=tuple(things_to_avoid or ()),
+            restroom_need_resolved=_restroom_need_resolved(trace, action.t),
         )
         proposals = []
         if action.type == "Say":
@@ -782,6 +832,33 @@ def _check_veto(trace: Trace, out: list[InvariantResult]) -> None:
         checked += 1
         for proposal in proposals:
             verdict = check(proposal, ctx)
+            if not verdict.allowed and not ctx.restroom_need_resolved:
+                # restroom_need_resolved is derived; a wants_bed intent can also set it without
+                # a GoalChanged. A denial that disappears when it is True is only a suspicion.
+                resolved = check(proposal, dataclasses.replace(ctx, restroom_need_resolved=True))
+                interpretations_recorded = any(
+                    e.kind == "decision" and e.data.get("decision") == "interpreted"
+                    for e in trace.events
+                )
+                if (
+                    resolved.allowed
+                    and not interpretations_recorded
+                    and _spoke_after_toilet_need(trace, action.t)
+                ):
+                    out.append(
+                        _result(
+                            trace,
+                            "SM-5",
+                            "minor",
+                            False,
+                            action.t,
+                            action.t,
+                            f"possible veto bypass: {verdict.rule} "
+                            "(depends on restroom_need_resolved, not observable in the trace)",
+                            [f"{action.type}@{action.t}: {action.data.get('text') or ''}"],
+                        )
+                    )
+                    continue
             if not verdict.allowed:
                 out.append(
                     _result(

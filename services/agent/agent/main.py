@@ -868,6 +868,18 @@ def run_once(
                     detail=f"{model} {outcome}",
                 )
             if interpretation is not None:
+                _decision_activity(
+                    bus,
+                    session.session_id,
+                    {
+                        "decision": "interpreted",
+                        "intent": interpretation.intent.value,
+                        "distress": interpretation.distress,
+                        "text": event.text,
+                        "phase": session.phase.value,
+                        "goal": session.goal,
+                    },
+                )
                 goal_before_interpretation = session.goal
                 interpreted = session.on_interpretation(
                     interpretation.intent.value, interpretation.distress, now

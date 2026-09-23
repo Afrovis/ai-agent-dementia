@@ -277,18 +277,40 @@ def test_sm3_sm4():
 
 
 def test_sm5_skip_and_veto():
-    missing = baseline(ev(2, "Say", text="Do you remember?", strategy="greet"))
-    assert any("missing" in r.reason for r in score(missing, "SM-5"))
+    # Night window defaults to True and things_to_avoid comes from the profile, so no meta
+    # is needed for a plain veto rule.
     good = baseline(ev(2, "Say", text="Hello", strategy="greet"))
-    good.meta = {
-        "in_night_window": True,
-        "things_to_avoid": [],
-        "restroom_need_resolved": False,
-    }
     passes(good, "SM-5")
     bad = baseline(ev(2, "Say", text="Do you remember?", strategy="greet"))
-    bad.meta = good.meta
     fail(bad, "SM-5", "critical", "no_memory_question")
+    # guided_return after a stated toilet need is denied until the need is resolved.
+    toilet = baseline(
+        ev(2, "Utterance", text="I need the toilet"),
+        ev(4, "Say", text="Let's go back to bed.", strategy="guided_return"),
+    )
+    hits = [r for r in score(toilet, "SM-5") if not r.passed]
+    assert hits and hits[0].severity == "critical"
+    # Something said after the request might have been an unseen wants_bed: only a suspicion.
+    maybe = baseline(
+        ev(2, "Utterance", text="I need the toilet"),
+        ev(3, "Utterance", text="Actually I just want to sleep"),
+        ev(4, "Say", text="Let's go back to bed.", strategy="guided_return"),
+    )
+    hits = [r for r in score(maybe, "SM-5") if not r.passed]
+    assert hits and hits[0].severity == "minor" and "possible veto bypass" in hits[0].reason
+    resolved = baseline(
+        ev(2, "Utterance", text="I need the toilet"),
+        ev(3, "GoalChanged", from_goal="return_to_bed", to_goal="restroom", reason="x"),
+        ev(
+            5,
+            "GoalChanged",
+            from_goal="restroom",
+            to_goal="return_to_bed",
+            reason="returned_from_bathroom",
+        ),
+        ev(6, "Say", text="Let's go back to bed.", strategy="guided_return"),
+    )
+    assert not [r for r in score(resolved, "SM-5") if not r.passed]
 
 
 def test_tm1_tm3():

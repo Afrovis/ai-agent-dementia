@@ -853,6 +853,23 @@ def test_decision_publish_failure_does_not_interrupt_pending_drop(monkeypatch):
     assert session._pending_say is None
 
 
+def test_interpretation_publishes_decision_record():
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    now_fn, _advance = make_clock(NIGHT)
+    bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    llm = FakeLLM(interpretations=[Interpretation(intent=Intent.CONFUSED_TIME, distress=1)])
+    bus.publish(Utterance(source="listen", text="What time is it?", confidence=0.9, duration_s=1))
+    run_once(bus, session, now_fn=now_fn, llm=llm)
+
+    interpreted = [d for _, d in _decisions(bus) if d["decision"] == "interpreted"]
+    assert len(interpreted) == 1
+    assert interpreted[0]["intent"] == "confused_time"
+    assert interpreted[0]["distress"] == 1
+    assert interpreted[0]["text"] == "What time is it?"
+
+
 def test_escalation_show_reflects_escalate_phone_strategy():
     bus = make_bus()
     session = Session(config=AgentConfig(floor_limit_seconds=0.0))
