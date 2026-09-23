@@ -364,7 +364,14 @@ def check_trace(
                 _result(
                     trace,
                     "TT-1",
-                    "info" if designed_silence and not designed_answer_to_question else "critical",
+                    # Deliberate silence to a question is a judgement call
+                    # (the agent paces its answers while escalated), so it
+                    # goes to review rather than counting as a missed reply.
+                    "review"
+                    if designed_answer_to_question
+                    else "info"
+                    if designed_silence
+                    else "critical",
                     designed_silence and not designed_answer_to_question,
                     utt.t,
                     limit,

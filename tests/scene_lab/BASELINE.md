@@ -299,10 +299,20 @@ Fixed on branch `scene-lab-fixes`:
 
 | finding | change |
 | --- | --- |
-| 5, repeats | While escalated, at most two reassurances per escalation; after that only a direct question or distress 3 is answered. A repeated sentence is swapped for an approved alternative. Deliberate silence publishes a `no_reply` decision, which TT-1 reports as info unless the utterance was a question. |
+| 5, repeats | While escalated, two reassurances per escalation; after that only a direct question or distress 3 is answered, at most once a minute. A repeated sentence is swapped for the approved phrasing said longest ago. Deliberate silence publishes a `no_reply` decision; TT-1 reports it as info, or as review when the utterance was a question. |
 | 4, restroom path | The first plain progress remark on a restroom trip gets "Good, take your time."; later ones stay quiet; a question about the way gets the directions again, without a second sentence in the same tick. Distress on the path no longer gets `validate_and_redirect` ("let's rest now"), which contradicted TOIL-01. |
 | pain (new) | "Oh my hip really hurts. I need someone, please." got "Hello Jean, it's night-time." (a `plan` pick), and "Is someone coming? It really does hurt." got nothing. One clear pain statement (intent `pain`, distress ≥ 2) now escalates at once (`pain_reported`, one attention Notify) and says "I'm sorry it hurts, Jean; I'm letting someone know now." Milder pain gets one comfort line with no promise of help. |
 | 8, floor | Veto `no_directions_from_floor` (FALL-01) denies `path_light` while the person is `on_floor`; while escalated the reply is a reassurance instead, and a `need_restroom` reading on the floor no longer moves the goal to `restroom`. |
+
+Replayed offline with recorded interpretations and latencies
+(`scene_lab promote` then `session_replay run --invariants`), windows from
+`0552-live`:
+
+| scene | main | this branch |
+| --- | --- | --- |
+| `fall-poor-hearing-1`, 45 to 425 s | 33 Says, 32 of them "Someone is on their way, Jean, and you're safe here." | 7 Says, six phrasings rotated; TT-1: 7 review (paced answers to repeated questions), no critical |
+| `distress_pain-teacher-silence-4`, 0 to 193 s | "Hello Jean, it's night-time." to the first pain statement, escalation on the second, then the same reassurance to every remark | pain acknowledged and escalated on the first statement, two reassurances, then quiet; TT-1 clean |
+| `restroom-wanderer-silentpath-isolate-10`, 35 to 240 s | no reply to any progress remark | one "Good, Jean, take your time.", then `no_reply`; the 2 TT-1 criticals left are remarks made before the restroom goal started (open item 1) |
 
 Still open, in suggested order:
 

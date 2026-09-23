@@ -97,7 +97,7 @@ def test_tt1_deliberate_silence_passes_unless_it_answers_a_question():
         ("I am waiting", "info", True, "no reply by design: reassured_enough"),
         (
             "Is anyone there",
-            "critical",
+            "review",
             False,
             "no reply by design to a question: reassured_enough",
         ),

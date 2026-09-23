@@ -109,6 +109,11 @@ HEALTH_INTERVAL_S = 30.0
 HEARTBEAT_INTERVAL_S = 60.0
 PENDING_SAY_MAX_AGE_S = 30.0
 MAX_REASSURANCES = 2
+# After the cap, a direct question or distress 3 is answered at most once
+# per this many seconds: a frightened person on the floor may ask "can you
+# hear me?" every 15 s, and a sentence each time is the repetition the cap
+# exists to stop.
+REASSURE_AFTER_CAP_INTERVAL_S = 60.0
 REASSURANCE_FALLBACKS = (
     "Help is on the way{name_vocative}; you can rest where you are.",
     "I've let someone know{name_vocative}, and they're coming to you.",
@@ -197,12 +202,16 @@ def _reassure_or_stay_silent(
     distress: int | None = None,
 ) -> None:
     """Reserve silence after two replies while still answering questions or maximum distress."""
-    if session.reassurance_count < MAX_REASSURANCES or is_direct_question(text) or distress == 3:
+    urgent = is_direct_question(text) or distress == 3
+    since_last_say = session.seconds_since_last_say(now)
+    if session.reassurance_count < MAX_REASSURANCES or (
+        urgent and (since_last_say is None or since_last_say >= REASSURE_AFTER_CAP_INTERVAL_S)
+    ):
         _reply_to_utterance(bus, session, REASSURE_WAITING_ID, now, profile, llm)
         return
     detail = {
         "decision": "no_reply",
-        "reason": "reassured_enough",
+        "reason": "reassured_recently" if urgent else "reassured_enough",
         "text": text,
         "phase": session.phase.value,
         "goal": session.goal,
@@ -491,13 +500,22 @@ def _maybe_publish_say(
     if strategy.id == REASSURE_WAITING_ID and session.phase == Phase.ESCALATED:
         # Prefer the caregiver's template, then approved alternatives when
         # composition or a fixed fallback repeats something already spoken.
-        used = {" ".join(s.lower().split()) for s in session.reassurance_texts}
-        if " ".join(text.lower().split()) in used:
-            for fallback in (strategy.say_template, *REASSURANCE_FALLBACKS):
-                candidate = render_template(fallback, profile, time_words=time_words)
-                if " ".join(candidate.lower().split()) not in used:
-                    text = candidate
-                    break
+        # Once every phrasing has been used, the one said longest ago wins.
+        def _norm(value: str) -> str:
+            return " ".join(value.lower().split())
+
+        said = [_norm(s) for s in session.reassurance_texts]
+        if _norm(text) in said:
+            candidates = [
+                render_template(fallback, profile, time_words=time_words)
+                for fallback in (strategy.say_template, *REASSURANCE_FALLBACKS)
+            ]
+
+            def _last_said(candidate: str) -> int:
+                norm = _norm(candidate)
+                return max((i for i, s in enumerate(said) if s == norm), default=-1)
+
+            text = min(candidates, key=_last_said)
     # The minimum-silence gap paces ordinary strategy speech, one sentence
     # then quiet. A terminal strategy (`escalate_phone`) is not ordinary
     # speech: it is the single sentence telling a person who may be on the
@@ -1141,7 +1159,12 @@ def run_once(
                             _intentional_silence(bus, session, event.text, "pain_acknowledged")
                             intentional_silence = True
                     elif session.phase == Phase.ENGAGED and session.goal == "restroom":
-                        if intent in {"fine", "unclear"} and interpretation.distress < 2:
+                        # "Nearly there." is often read as need_restroom; with the
+                        # goal already restroom it is progress, not a new need.
+                        progress = intent in {"fine", "unclear"} or (
+                            intent == "need_restroom" and goal_before_interpretation == "restroom"
+                        )
+                        if progress and interpretation.distress < 2:
                             if not session._progress_acknowledged:
                                 reply_id = ACKNOWLEDGE_PROGRESS_ID
                             else:

@@ -625,6 +625,34 @@ def test_restroom_progress_once_question_and_new_trip():
     ] == "acknowledge_progress"
 
 
+def test_restroom_progress_read_as_need_restroom_is_acknowledged_once():
+    """Live, "Nearly there." on the path came back as need_restroom."""
+    bus = make_bus()
+    session = Session(config=AgentConfig(observe_seconds=1.0, zone_confirm_readings=1))
+    now_fn, advance = make_clock(NIGHT)
+    bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    advance(2)
+    run_once(bus, session, now_fn=now_fn)
+    bus.publish(PersonState(source="perceive", state="walking", confidence=0.9, zone="door"))
+    run_once(bus, session, now_fn=now_fn)
+    assert session.goal == "restroom"
+    llm = FakeLLM(interpretations=[Interpretation(intent=Intent.NEED_RESTROOM, distress=0)] * 2)
+    for utterance in ("Nearly there.", "Nearly there now."):
+        advance(17)
+        bus.publish(Utterance(source="listen", text=utterance, confidence=0.9, duration_s=1))
+        run_once(bus, session, now_fn=now_fn, llm=llm)
+    assert [event.strategy for _, event in bus.read("say", "test", "c1")] == [
+        "path_light",
+        "acknowledge_progress",
+    ]
+    assert [
+        json.loads(event.detail)["reason"]
+        for _, event in bus.read("activity", "test", "c1", count=100)
+        if event.kind == "decision" and json.loads(event.detail)["decision"] == "no_reply"
+    ] == ["progress_acknowledged"]
+
+
 def test_escalated_reassurance_cap_questions_distress_and_varied_composition():
     bus = make_bus()
     session = Session(config=AgentConfig())
@@ -637,14 +665,15 @@ def test_escalated_reassurance_cap_questions_distress_and_varied_composition():
         ],
         compositions=[Composition(text="Help is on the way.") for _ in range(4)],
     )
-    for utterance in (
-        "I am here",
-        "I am still here",
-        "I am waiting",
-        "Is anyone there?",
-        "Help me",
+    # After the cap, a question or distress 3 is answered at most once a minute.
+    for delay, utterance in (
+        (9, "I am here"),
+        (9, "I am still here"),
+        (9, "I am waiting"),
+        (61, "Is anyone there?"),
+        (61, "Help me"),
     ):
-        advance(9)
+        advance(delay)
         bus.publish(Utterance(source="listen", text=utterance, confidence=0.9, duration_s=1))
         run_once(bus, session, now_fn=now_fn, llm=llm)
 
@@ -681,8 +710,13 @@ def test_escalated_no_llm_fallback_obeys_cap_and_resets_on_new_escalation():
     now_fn, advance = make_clock(NIGHT)
     bus.publish(PersonState(source="perceive", state="on_floor", confidence=0.9, zone="other"))
     run_once(bus, session, now_fn=now_fn)
-    for utterance in ("I am here", "Still here", "Waiting", "When will help come"):
-        advance(9)
+    for delay, utterance in (
+        (9, "I am here"),
+        (9, "Still here"),
+        (9, "Waiting"),
+        (61, "When will help come"),
+    ):
+        advance(delay)
         bus.publish(Utterance(source="listen", text=utterance, confidence=0.9, duration_s=1))
         run_once(bus, session, now_fn=now_fn)
     reassurances = [
@@ -704,6 +738,39 @@ def test_escalated_no_llm_fallback_obeys_cap_and_resets_on_new_escalation():
     assert session.reassurance_count == 1
 
 
+def test_escalated_questions_after_cap_are_answered_at_most_once_a_minute():
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    now_fn, advance = make_clock(NIGHT)
+    bus.publish(PersonState(source="perceive", state="on_floor", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    for delay, utterance in (
+        (9, "I am here"),
+        (9, "Still here"),
+        (15, "Can you hear me?"),
+        (15, "Is anyone coming?"),
+        (15, "Hello, can anyone hear me?"),
+        (15, "Is somebody there?"),
+    ):
+        advance(delay)
+        bus.publish(Utterance(source="listen", text=utterance, confidence=0.9, duration_s=1))
+        run_once(bus, session, now_fn=now_fn)
+    reassurances = [
+        event.text
+        for _, event in bus.read("say", "test", "c1", count=20)
+        if event.strategy == "reassure_waiting"
+    ]
+    # Two under the cap, then one question 60 s after the last sentence.
+    assert len(reassurances) == 3
+    assert len(set(reassurances)) == 3
+    reasons = [
+        json.loads(event.detail)["reason"]
+        for _, event in bus.read("activity", "test", "c1", count=100)
+        if event.kind == "decision" and json.loads(event.detail)["decision"] == "no_reply"
+    ]
+    assert reasons == ["reassured_recently"] * 3
+
+
 def test_escalated_unavailable_interpretation_obeys_cap():
     bus = make_bus()
     session = Session(config=AgentConfig())
@@ -711,8 +778,13 @@ def test_escalated_unavailable_interpretation_obeys_cap():
     bus.publish(PersonState(source="perceive", state="on_floor", confidence=0.9, zone="other"))
     run_once(bus, session, now_fn=now_fn)
     llm = FakeLLM(interpretations=[None, None, None, None])
-    for utterance in ("I am here", "Still here", "Waiting", "When will my daughter arrive"):
-        advance(9)
+    for delay, utterance in (
+        (9, "I am here"),
+        (9, "Still here"),
+        (9, "Waiting"),
+        (61, "When will my daughter arrive"),
+    ):
+        advance(delay)
         bus.publish(Utterance(source="listen", text=utterance, confidence=0.9, duration_s=1))
         run_once(bus, session, now_fn=now_fn, llm=llm)
     assert session.reassurance_count == 3
