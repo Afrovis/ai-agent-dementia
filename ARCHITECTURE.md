@@ -68,6 +68,7 @@ flowchart LR
 
   s_dashboard --> q_ack
   q_ack --> s_dashboard
+  q_ack --> s_embodiment
   q_ack --> s_notify
   s_agent --> q_activity
   s_embodiment --> q_activity
@@ -83,6 +84,8 @@ flowchart LR
   q_frames --> s_perceive
   s_embodiment --> q_frames_raw
   q_frames_raw --> s_capture
+  s_perceive --> q_gaze
+  q_gaze --> s_embodiment
   s_agent --> q_light
   q_light --> s_light
   s_agent --> q_notify
@@ -91,6 +94,7 @@ flowchart LR
   s_listen --> q_notify
   s_store --> q_notify
   q_notify --> s_dashboard
+  q_notify --> s_embodiment
   q_notify --> s_notify
   s_perceive --> q_person
   q_person --> s_agent
@@ -157,16 +161,16 @@ flowchart LR
 
 | Stream | Events | Published by | Read by (consumer group) | Capped |
 | --- | --- | --- | --- | --- |
-| `ack` | `Ack` | dashboard | dashboard (`dashboard-live`), notify (`notify`), store (`store`) | no |
+| `ack` | `Ack` | dashboard | dashboard (`dashboard-live`), embodiment (`embodiment`), notify (`notify`), store (`store`) | no |
 | `activity` | `Activity` | agent, embodiment, listen | embodiment (`embodiment`), listen (`listen-activity`) | yes, 200 |
 | `audio_in` | `AudioChunk` | embodiment | listen (`listen`) | yes, 50 |
 | `cloud` | `CloudCall` | agent | store (`store`) | no |
 | `frames` | `Frame` | capture | dashboard (`dashboard`), perceive (`perceive`), perceive (`perceive-calibrate`) | yes, 50 |
 | `frames_raw` | `RawFrame` | embodiment | capture (`capture`) | yes, 50 |
-| `gaze` | `Gaze` | nobody yet | nobody yet | yes, 50 |
+| `gaze` | `Gaze` | perceive | embodiment (`embodiment`) | yes, 50 |
 | `health` | `Health` | agent, capture, embodiment, light, listen, perceive | dashboard (`dashboard-live`), store (`store`) | no |
 | `light` | `LightCommand` | agent | light (`light`), store (`store`) | no |
-| `notify` | `Notify` | agent, embodiment, light, listen, store | dashboard (`dashboard-live`), notify (`notify`), store (`store`) | no |
+| `notify` | `Notify` | agent, embodiment, light, listen, store | dashboard (`dashboard-live`), embodiment (`embodiment`), notify (`notify`), store (`store`) | no |
 | `person` | `PersonState` | perceive | agent (`agent`), dashboard (`dashboard-live`), embodiment (`embodiment`), store (`store`) | no |
 | `pose_debug` | `PoseDebug` | perceive | embodiment (`embodiment`) | yes, 50 |
 | `say` | `Say` | agent | dashboard (`dashboard-live`), embodiment (`embodiment`), store (`store`) | no |
