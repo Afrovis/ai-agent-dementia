@@ -12,3 +12,4 @@ estimate_tts_s: 0.0
 estimate_min_s: 1.0
 estimate_words_per_s: 2.5
 tail_s: 60
+utterance_presence_s: 30.0

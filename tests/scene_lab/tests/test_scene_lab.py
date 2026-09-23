@@ -176,6 +176,15 @@ def test_tt5_tt6_tt7():
         "major",
         "absent",
     )
+    # Recent speech counts as presence, as in the agent.
+    passes(
+        scene(
+            ev(0, "PersonState", state="absent", zone="other"),
+            ev(10, "Utterance", text="Can I go back to bed?"),
+            ev(11, "Say", text="Let's go back to bed.", strategy="guided_return"),
+        ),
+        "TT-6",
+    )
     passes(
         scene(
             ev(0, "Utterance", text="hi"),
@@ -311,6 +320,20 @@ def test_sm5_skip_and_veto():
         ev(6, "Say", text="Let's go back to bed.", strategy="guided_return"),
     )
     assert not [r for r in score(resolved, "SM-5") if not r.passed]
+    # "Can I go back to bed?" while the restroom goal is active also resolves the need.
+    wants_bed = baseline(
+        ev(2, "Utterance", text="Okay, I'm back from the restroom."),
+        ev(3, "GoalChanged", from_goal="return_to_bed", to_goal="restroom", reason="x"),
+        ev(
+            6,
+            "GoalChanged",
+            from_goal="restroom",
+            to_goal="return_to_bed",
+            reason="interpreted_wants_bed",
+        ),
+        ev(6, "Say", text="Let's go back to bed now.", strategy="guided_return"),
+    )
+    assert not [r for r in score(wants_bed, "SM-5") if not r.passed]
 
 
 def test_tm1_tm3():

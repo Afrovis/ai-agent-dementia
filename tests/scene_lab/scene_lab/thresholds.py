@@ -22,6 +22,8 @@ class Thresholds(BaseModel):
     estimate_min_s: float = 1.0
     estimate_words_per_s: float = 2.5
     tail_s: float = 60.0
+    # Mirrors AgentConfig.utterance_presence_seconds: recent speech counts as presence.
+    utterance_presence_s: float = 30.0
 
 
 def load(path: str | Path | None = None) -> Thresholds:

@@ -205,9 +205,11 @@ def _restroom_need_resolved(trace: Trace, t: float) -> bool:
         elif event.type == "GoalChanged":
             if event.data.get("to_goal") == "restroom":
                 resolved = False
-            elif event.data.get("from_goal") == "restroom" and (
-                event.data.get("reason") == "returned_from_bathroom"
-            ):
+            elif event.data.get("from_goal") == "restroom" and event.data.get("reason") in {
+                "returned_from_bathroom",
+                # Session.on_interpretation sets the flag after a wants_bed goal change.
+                "interpreted_wants_bed",
+            }:
                 resolved = True
     return resolved
 
@@ -400,7 +402,9 @@ def check_trace(
 
     for say in says:
         person = _latest(trace, "PersonState", say.t)
-        if person and person.data.get("state") == "absent":
+        spoke = _latest(trace, "Utterance", say.t)
+        heard_recently = spoke is not None and say.t - spoke.t <= thresholds.utterance_presence_s
+        if person and person.data.get("state") == "absent" and not heard_recently:
             out.append(
                 _result(
                     trace,
