@@ -137,7 +137,7 @@ evidence judge (`unsupported_claim`, `correction_of_reality`) run on every
   hard moment: inside the 8 s gap, during agent speech, during a strategy
   change, while `OBSERVING`, two questions in a row, a question while
   walking to the bathroom, and a question the profile cannot answer. They
-  are labelled by the existing annotator flow once open question 1 has a
+  are labelled by the existing annotator flow once the answer-or-redirect policy has a
   guideline clause.
 
 ### 3. Fake-live tier

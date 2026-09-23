@@ -59,8 +59,8 @@ One JSON object per line, time-ordered:
 
 `t` is seconds from the scene or replay start. Adapters: `from_decision_bench(trace)`,
 `from_session_replay(timeline)`, `from_export(jsonl)` (bus `replay export`), and
-`from_agent_log(lines)` as a fallback for decision records if open question 4 is
-refused.
+`from_agent_log(lines)` for runs recorded before decision records existed
+(for example the desk captures).
 
 ### Invariant result
 
