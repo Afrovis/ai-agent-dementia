@@ -497,6 +497,23 @@ def time_as_words(now: datetime) -> str:
     return f"{hour} o'clock at night"
 
 
+def spoken_time_words(now: datetime, variant: int) -> str:
+    """A rotating day-part for speech; exact hours belong on the screen only."""
+    if 21 <= now.hour <= 23:
+        phrases = ("late in the evening", "late at night", "night-time")
+    elif 0 <= now.hour <= 3:
+        phrases = ("the middle of the night", "night-time", "still night-time")
+    elif 4 <= now.hour <= 6:
+        phrases = (
+            "very early in the morning",
+            "still night-time",
+            "nearly morning and still dark",
+        )
+    else:
+        phrases = ("night-time",)
+    return phrases[variant % len(phrases)]
+
+
 def _log_fallback(reason: str, path: str) -> None:
     logger.warning(
         json.dumps(

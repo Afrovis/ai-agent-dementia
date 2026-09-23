@@ -245,6 +245,8 @@ class Session:
     # to enforce yet".
     _last_say_at: datetime | None = field(default=None, init=False, repr=False)
     _reassurance_texts: list[str] = field(default_factory=list, init=False, repr=False)
+    _reassurance_reply_count: int = field(default=0, init=False, repr=False)
+    _spoken_time_variant: int = field(default=0, init=False, repr=False)
     _pain_acknowledged: bool = field(default=False, init=False, repr=False)
     _progress_acknowledged: bool = field(default=False, init=False, repr=False)
     _pending_say: PendingSay | None = field(default=None, init=False, repr=False)
@@ -414,6 +416,7 @@ class Session:
         if self.phase != target and (self.phase == Phase.ESCALATED or target == Phase.ESCALATED):
             # A new escalation gets its own speech budget and wording history.
             self._reassurance_texts.clear()
+            self._reassurance_reply_count = 0
         self.phase = target
         self.session_id = session_id
 
@@ -485,6 +488,8 @@ class Session:
         self._pending_zone_count = 0
         self._last_say_at = None
         self._reassurance_texts.clear()
+        self._reassurance_reply_count = 0
+        self._spoken_time_variant = 0
         self._pain_acknowledged = False
         self._progress_acknowledged = False
         self._compliance_until = None
@@ -1056,7 +1061,9 @@ class Session:
             )
         return None
 
-    def record_say(self, now: datetime, strategy_id: str = "", text: str = "") -> None:
+    def record_say(
+        self, now: datetime, strategy_id: str = "", text: str = "", *, trigger: str | None = None
+    ) -> None:
         """Record that a `Say` was just published, for `agent.rules.
         validate_say`'s minimum-gap check on the next one. Called by
         `agent.main` only after a `Say` actually passes validation and is
@@ -1069,6 +1076,12 @@ class Session:
             self._progress_acknowledged = True
         if self.phase == Phase.ESCALATED and strategy_id == REASSURE_WAITING_ID:
             self._reassurance_texts.append(text)
+            # Scheduled check-ins share wording history but never use the
+            # two-reply budget reserved for the person's utterances.
+            if trigger != "escalated_checkin":
+                self._reassurance_reply_count += 1
+        if strategy_id == "orient_time_place":
+            self._spoken_time_variant += 1
         if strategy_id:
             self._say_history.append((now, strategy_id, text))
             self._say_history = [
@@ -1079,8 +1092,8 @@ class Session:
 
     @property
     def reassurance_count(self) -> int:
-        """Count only reassurance sentences published in this escalation."""
-        return len(self._reassurance_texts)
+        """Count utterance reassurances, excluding scheduled check-ins."""
+        return self._reassurance_reply_count
 
     @property
     def reassurance_texts(self) -> tuple[str, ...]:

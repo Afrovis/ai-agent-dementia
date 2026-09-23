@@ -1,8 +1,10 @@
 """Piper TTS tests with a fake voice: no model weights or audio hardware."""
 
 import wave
+from datetime import datetime
 
 import pytest
+from agent.strategies import spoken_time_words
 
 from embodiment.tts import PiperSpeech, load_prerender_phrases
 
@@ -68,7 +70,7 @@ def test_pre_render_deduplicates_phrases(tmp_path):
     assert [call[0] for call in voice.calls] == ["Hello.", "Rest now."]
 
 
-def test_load_prerender_phrases_expands_all_greeting_hours(tmp_path):
+def test_load_prerender_phrases_expands_spoken_time_variants(tmp_path):
     strategies = tmp_path / "strategies.yaml"
     strategies.write_text(
         "strategies:\n"
@@ -85,9 +87,19 @@ def test_load_prerender_phrases_expands_all_greeting_hours(tmp_path):
 
     phrases = load_prerender_phrases(strategies, person)
 
-    assert len(phrases) == 12
-    assert "Hello Jean, it is 1 o'clock at night." in phrases
-    assert "Hello Jean, it is 12 o'clock at night." in phrases
+    assert len(phrases) == 7
+    assert "Hello Jean, it is late in the evening." in phrases
+    assert "Hello Jean, it is the middle of the night." in phrases
+    assert "Hello Jean, it is very early in the morning." in phrases
+    assert all("o'clock" not in phrase for phrase in phrases)
+    expected = {
+        spoken_time_words(datetime(2026, 1, 1, hour), variant)
+        for hour in range(24)
+        for variant in range(3)
+    }
+    assert {
+        phrase.removeprefix("Hello Jean, it is ").removesuffix(".") for phrase in phrases
+    } == expected
     assert all("Do not warm this" not in phrase for phrase in phrases)
 
 

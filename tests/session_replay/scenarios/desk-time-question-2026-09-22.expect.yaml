@@ -9,7 +9,7 @@ expect:
   - after: {heard: "Hey, what time is it?"}
     within_s: 15
     events:
-      - {type: Say, strategy: orient_time_place, text: "You are home in your bedroom, and it is 7 o'clock at night."}
+      - {type: Say, strategy: orient_time_place, text: "You are home in your bedroom, and it is night-time."}
   # A stated toilet need while escalated still lights the path and guides.
   - after: {heard: "I need to go to the restroom."}
     within_s: 15

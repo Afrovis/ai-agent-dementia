@@ -104,7 +104,7 @@ def test_rendered_time_words_use_shifted_hour():
     _publish_transition(bus, transition, session, now_fn())
     says = [event for _, event in bus.read("say", "test", "test") if isinstance(event, Say)]
     shows = [event for _, event in bus.read("show", "test", "test") if isinstance(event, Show)]
-    assert says and "3 o'clock at night" in says[-1].text
+    assert says and "the middle of the night" in says[-1].text
     assert shows and "3 o'clock at night" in shows[-1].body
 
 

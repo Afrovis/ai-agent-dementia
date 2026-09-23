@@ -164,7 +164,8 @@ _COMPOSE_TASK = (
     "will check on them. Do not describe what the person is doing or feeling unless "
     "latest_utterance or scene_note says so. Only state facts found in the input: never "
     "invent people, "
-    "places, times or plans. Mention the time only if latest_utterance is about it. Do not "
+    "places, times or plans. Mention the time of night only if latest_utterance is about it; "
+    "never state an exact clock time. Do not "
     "use 'but', which cancels the acknowledgement. Never correct what they believe, never "
     "ask a question or test memory, and never say 'no', 'you can't', or 'you're wrong'."
 )

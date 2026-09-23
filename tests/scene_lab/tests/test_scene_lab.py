@@ -298,6 +298,16 @@ def test_sm3_sm4():
         "SM-3",
     )
     fail(baseline(end=100), "SM-3", "major", "silent session")
+    for gap, fails in ((130, False), (160, True)):
+        escalated = scene(
+            ev(0, "PersonState", state="on_floor", zone="other"),
+            ev(0, "SessionState", phase="ESCALATED", goal="wait_for_caregiver"),
+            ev(0, "Say", text="Help is coming.", strategy="escalate_phone"),
+            ev(gap, "Say", text="I'm here with you.", strategy="reassure_waiting"),
+            end=gap,
+        )
+        assert bool([r for r in score(escalated, "SM-3") if not r.passed]) is fails
+    fail(baseline(end=70), "SM-3", "major", "silent session")
     returns_to_bed = baseline(ev(20, "PersonState", state="in_bed", zone="bed"))
     passes(returns_to_bed, "SM-3")
     fail(

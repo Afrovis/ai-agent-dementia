@@ -100,6 +100,7 @@ from agent.strategies import (
     StrategyDef,
     load_strategies,
     render_template,
+    spoken_time_words,
     time_as_words,
 )
 from agent.veto import Proposal, VetoContext
@@ -109,6 +110,7 @@ HEALTH_INTERVAL_S = 30.0
 HEARTBEAT_INTERVAL_S = 60.0
 PENDING_SAY_MAX_AGE_S = 30.0
 MAX_REASSURANCES = 2
+ESCALATED_CHECKIN_S = 120.0
 # After the cap, a direct question or distress 3 is answered at most once
 # per this many seconds: a frightened person on the floor may ask "can you
 # hear me?" every 15 s, and a sentence each time is the repetition the cap
@@ -433,7 +435,7 @@ def _maybe_publish_say(
         )
         return False
 
-    time_words = time_as_words(session.wall_clock(now))
+    time_words = spoken_time_words(session.wall_clock(now), session._spoken_time_variant)
     text = render_template(strategy.say_template, profile, time_words=time_words)
     compose = llm is not None and (
         strategy.id == "validate_and_redirect"
@@ -589,7 +591,7 @@ def _maybe_publish_say(
         return False
 
     bus.publish(say_event)
-    session.record_say(now, strategy.id, say_event.text)
+    session.record_say(now, strategy.id, say_event.text, trigger=transition.reason)
     _log("published Say", event_type="Say", strategy=strategy.id)
     _said_decision(bus, session, say_event, trigger=transition.reason, direct=direct)
     return True
@@ -607,6 +609,7 @@ _SPEECH_TRIGGERS = frozenset(
         "pain_reported",
     }
 )
+_SCHEDULED_TRIGGERS = frozenset({"escalated_checkin"})
 
 
 def _said_decision(
@@ -614,8 +617,12 @@ def _said_decision(
 ) -> None:
     """Why a Say went out: the transition that caused it (a dwell timer or the person's
     speech), so a trace can tell a reply from a ladder step that happened to follow."""
-    reply = direct or (
-        trigger is not None and (trigger in _SPEECH_TRIGGERS or trigger.startswith("interpreted_"))
+    reply = trigger not in _SCHEDULED_TRIGGERS and (
+        direct
+        or (
+            trigger is not None
+            and (trigger in _SPEECH_TRIGGERS or trigger.startswith("interpreted_"))
+        )
     )
     _decision_activity(
         bus,
@@ -709,7 +716,7 @@ def _flush_pending_say(bus, session: Session, now: datetime, profile: PersonProf
         if pending.show is not None:
             bus.publish(pending.show.model_copy(update={"ts": datetime.now(UTC)}))
         bus.publish(pending.event.model_copy(update={"ts": datetime.now(UTC)}))
-        session.record_say(now, pending.event.strategy, pending.event.text)
+        session.record_say(now, pending.event.strategy, pending.event.text, trigger=pending.trigger)
         session._pending_say = None
         _said_decision(
             bus,
@@ -952,6 +959,36 @@ def _handle_person_state(
         published.append(
             _publish_transition(bus, transition, session, now, profile=profile, llm=llm)
         )
+
+
+def _escalated_checkin(bus, session: Session, now: datetime, profile: PersonProfile) -> None:
+    """Pace a scheduled reassurance from actual speech, without using the reply budget."""
+    since = session.seconds_since_last_say(now)
+    if (
+        session.phase != Phase.ESCALATED
+        or since is None
+        or since < ESCALATED_CHECKIN_S
+        or not session.person_present(now)
+        or session.settled
+        or session._pending_say is not None
+    ):
+        return
+    strategy = next((s for s in session.strategies if s.id == REASSURE_WAITING_ID), None)
+    if strategy is None:
+        return
+    context = veto_context(session, profile, now)
+    if _vetoed(bus, Proposal("strategy", strategy.id), context, session_id=session.session_id):
+        return
+    transition = Transition(
+        phase=session.phase,
+        session_id=session.session_id,
+        goal=session.goal,
+        strategy_index=session.strategy_index,
+        reason="escalated_checkin",
+        strategy=strategy,
+    )
+    if _maybe_publish_say(bus, transition, session, now, profile, context=context):
+        _log("published escalated check-in", event_type="Say", session_id=session.session_id)
 
 
 def run_once(
@@ -1263,6 +1300,7 @@ def run_once(
         )
 
     _flush_pending_say(bus, session, now, profile)
+    _escalated_checkin(bus, session, now, profile)
 
     return published
 

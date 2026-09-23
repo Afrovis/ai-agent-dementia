@@ -633,12 +633,13 @@ def check_trace(
                 or event.type == "Say"
                 or event.data.get("state") in {"in_bed", "absent"}
             )
-            if (
-                closes_gap
-                and gap_start is not None
-                and at - gap_start > thresholds.silent_session_s
-            ):
-                state = _state(trace, gap_start)
+            state = _state(trace, gap_start) if gap_start is not None else {}
+            silent_limit = (
+                thresholds.escalated_silent_s
+                if state.get("phase") == "ESCALATED"
+                else thresholds.silent_session_s
+            )
+            if closes_gap and gap_start is not None and at - gap_start > silent_limit:
                 last_say = _latest(trace, "Say", gap_start)
                 reading = _latest(trace, "PersonState", at)
                 out.append(

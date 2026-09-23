@@ -139,6 +139,13 @@ _CAREGIVER_CLAIM_PHRASES = (
     r"stays\s+with\s+you",
 )
 
+# Keep this explicit clock-reading pattern aligned with dialogue_bench's
+# states_clock_time check. Spoken day-parts are allowed; exact times are not.
+_CLOCK_TIME_RE = re.compile(
+    r"\bo'?clock\b|\b\d{1,2}[:.]\d{2}\b|\b\d{1,2}\s*(?:a\.?m\.?|p\.?m\.?)\b|\bmidnight\b|\bnoon\b",
+    re.IGNORECASE,
+)
+
 
 class Phase(StrEnum):
     """The five session phases from HANDOFF.md section 6."""
@@ -270,6 +277,8 @@ def validate_composition(text: str, profile: PersonProfile) -> RuleResult:
     speech may contain private utterance-derived material that must not be
     copied into logs.
     """
+    if _CLOCK_TIME_RE.search(text):
+        return RuleResult(accepted=False, reason="composition states an exact clock time")
     if re.search(r"\bbut\b", text, flags=re.IGNORECASE):
         return RuleResult(accepted=False, reason="composition contains the word 'but'")
 

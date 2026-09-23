@@ -191,7 +191,7 @@ to the bedside page under `/speech/<opaque-id>.wav`; speech bytes never enter
 Redis. The image downloads `en_US-lessac-medium` when it is built. Startup
 pre-renders the configured fixed strategy phrases into the ephemeral
 `PIPER_CACHE_DIR`; built-in spoken greetings say night-time, while any caregiver
-template that still uses `{time_words}` is warmed in all twelve hour variants.
+template that still uses `{time_words}` is warmed in the spoken night phrase variants.
 Generated speech is not retained under `data/`. To rebuild and exercise the
 real voice path:
 

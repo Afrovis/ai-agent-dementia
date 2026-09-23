@@ -972,7 +972,84 @@ def test_time_question_answers_without_advancing_ladder():
     says = [event for _, event in bus.read("say", "test", "c1")]
     assert len(says) == 1
     assert says[0].strategy == "orient_time_place"
-    assert "11 o'clock at night" in says[0].text
+    assert "late in the evening" in says[0].text
+    assert "o'clock" not in says[0].text
+
+
+def test_escalated_checkins_are_scheduled_rotated_and_do_not_spend_reply_cap():
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    now_fn, advance = make_clock(NIGHT)
+    bus.publish(PersonState(source="perceive", state="on_floor", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    advance(119)
+    run_once(bus, session, now_fn=now_fn)
+    assert session.reassurance_texts == ()
+    advance(1)
+    run_once(bus, session, now_fn=now_fn)
+    assert len(session.reassurance_texts) == 1
+    assert session.reassurance_count == 0
+    advance(120)
+    run_once(bus, session, now_fn=now_fn)
+    assert len(session.reassurance_texts) == 2
+    assert session.reassurance_texts[0] != session.reassurance_texts[1]
+    decisions = [d for _, d in _decisions(bus, include_said=True) if d["decision"] == "said"]
+    assert [(d["trigger"], d["reply"]) for d in decisions[-2:]] == [
+        ("escalated_checkin", False),
+        ("escalated_checkin", False),
+    ]
+    for text in ("I am here", "Still waiting"):
+        advance(9)
+        bus.publish(Utterance(source="listen", text=text, confidence=0.9, duration_s=1))
+        run_once(bus, session, now_fn=now_fn)
+    assert session.reassurance_count == 2
+    assert len(session.reassurance_texts) == 4
+
+
+@pytest.mark.parametrize("state,zone", [("absent", "other"), ("in_bed", "bed")])
+def test_escalated_checkin_skips_absent_or_settled_person(state, zone):
+    bus = make_bus()
+    session = Session(config=AgentConfig(in_bed_stable_seconds=1000.0))
+    now_fn, advance = make_clock(NIGHT)
+    bus.publish(PersonState(source="perceive", state="on_floor", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    bus.publish(PersonState(source="perceive", state=state, confidence=0.9, zone=zone))
+    run_once(bus, session, now_fn=now_fn)
+    advance(120)
+    run_once(bus, session, now_fn=now_fn)
+    assert session.phase == Phase.ESCALATED
+    assert session.reassurance_texts == ()
+
+
+def test_orient_speech_rotates_and_rejects_composed_clock_time():
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    session.phase = Phase.ENGAGED
+    session.session_id = "test-session"
+    session._last_person_state = "standing"
+    now_fn, advance = make_clock(NIGHT)
+    strategy = next(s for s in DEFAULT_STRATEGIES if s.id == "orient_time_place")
+    transition = Transition(
+        phase=Phase.ENGAGED,
+        session_id=session.session_id,
+        goal=session.goal,
+        strategy_index=0,
+        reason="utterance_reply",
+        strategy=strategy,
+    )
+    llm = FakeLLM(
+        compositions=[Composition(text="You are home in your bedroom, and it is 4 o'clock.")]
+    )
+    assert _maybe_publish_say(bus, transition, session, now_fn(), PersonProfile(), llm, direct=True)
+    advance(9)
+    _publish_transition(bus, transition, session, now_fn())
+    says = [event.text for _, event in bus.read("say", "test", "c1")]
+    assert says == [
+        "You are home in your bedroom, and it is late in the evening.",
+        "You are home in your bedroom, and it is late at night.",
+    ]
+    shows = [event for _, event in bus.read("show", "test", "c1")]
+    assert shows and "11 o'clock at night" in shows[-1].body
 
 
 def test_cooldown_up_answers_time_question_without_changing_session():

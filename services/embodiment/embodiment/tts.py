@@ -155,8 +155,8 @@ def load_prerender_phrases(
     """Expand configured fixed Say templates into phrases to warm at startup.
 
     The built-in greetings say only that it is night-time. A caregiver may
-    still configure any fixed template with `{time_words}`; expanding all
-    twelve hours for those templates makes their first use a cache hit while
+    still configure any fixed template with `{time_words}`; expanding the
+    spoken day-part variants for those templates makes their first use a cache hit while
     leaving LLM-composed responses to be synthesized on demand.
     Invalid/missing caregiver files degrade to the safe built-in templates;
     their contents are never logged.
@@ -194,11 +194,22 @@ def load_prerender_phrases(
         "caregiver_name": caregiver_name.strip(),
     }
     phrases: list[str] = []
+    # Keep in sync with agent.strategies.spoken_time_words; services do not
+    # import one another in production.
+    spoken_time_phrases = (
+        "late in the evening",
+        "late at night",
+        "night-time",
+        "the middle of the night",
+        "still night-time",
+        "very early in the morning",
+        "nearly morning and still dark",
+    )
     for template in templates:
-        hours = range(1, 13) if "{time_words}" in template else (None,)
-        for hour in hours:
+        variants = spoken_time_phrases if "{time_words}" in template else (None,)
+        for phrase in variants:
             values = dict(base_values)
-            values["time_words"] = "" if hour is None else f"{hour} o'clock at night"
+            values["time_words"] = "" if phrase is None else phrase
             rendered = _render_template(template, values)
             if rendered:
                 phrases.append(rendered)

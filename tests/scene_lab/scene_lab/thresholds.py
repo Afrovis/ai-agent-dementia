@@ -15,6 +15,7 @@ class Thresholds(BaseModel):
     direct_reply_window_s: float = 30.0
     settle_s: float = 30.0
     silent_session_s: float = 60.0
+    escalated_silent_s: float = 150.0
     loop_lag_s: float = 3.0
     max_scene_s: float = 600.0
     active_phases: list[str] = ["OBSERVING", "ENGAGED", "ESCALATED"]
