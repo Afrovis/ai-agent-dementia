@@ -22,7 +22,7 @@ device and this is not a general safety system.
 | --- | --- | --- | --- |
 | `no_redirect_from_toilet_need` | `guided_return` | the goal is `restroom`, or a recent utterance names a toilet need or an accident ("loo", "pee", "wet myself", ...) that has not been resolved by a return to bed | TOIL-01 |
 | `no_redirect_from_stated_need` | `guided_return` | a recent utterance states another need: cold, pain, feeling unwell, a call for help | NICE-01 |
-| `no_orienting_a_settling_person` | `orient_time_place` | the person is in bed, has settled, or the session is in `COOLDOWN` | NICE-05 |
+| `no_orienting_a_settling_person` | `orient_time_place` | the person is in bed or has settled | NICE-05 |
 | `no_night_orientation_by_day` | `orient_time_place` | outside the configured night window (its sentence says it is night-time) | AA-03 |
 | `silence_when_settled` | any `Say` except the escalation sentence | the person is in bed and has not spoken since lying down | NICE-05 |
 | `no_memory_question` | a `Say` | the text asks the person to recall ("do you remember", "don't you know", ...) | VAL-01 |

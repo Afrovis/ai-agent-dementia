@@ -11,9 +11,11 @@ from nc_shared.events import (
     ResetSession,
     Say,
     Show,
+    Utterance,
 )
 
 from agent.config import AgentConfig
+from agent.llm import FakeLLM, Intent, Interpretation
 from agent.main import (
     DEBUG_GROUP,
     DEBUG_STREAM,
@@ -129,6 +131,24 @@ def test_force_before_person_keeps_standing_from_starting_session():
     person(bus, "standing")
     assert run_once(bus, session, now_fn=now_fn) == []
     assert session.phase == Phase.IDLE
+
+
+def test_forced_in_bed_silences_cooldown_reply():
+    bus, session, now_fn, _ = setup(datetime(2026, 9, 22, 23, tzinfo=UTC))
+    session.phase = Phase.COOLDOWN
+    session.session_id = "cooldown-session"
+    person(bus, "sitting_up", "bed")
+    run_once(bus, session, now_fn=now_fn)
+    request(bus, now_fn(), forced=True)
+    run_once(bus, session, now_fn=now_fn)
+    llm = FakeLLM(interpretations=[Interpretation(intent=Intent.CONFUSED_TIME, distress=0)])
+    bus.publish(Utterance(source="listen", text="What time is it?", confidence=0.9, duration_s=1))
+    run_once(bus, session, now_fn=now_fn, llm=llm)
+
+    assert session.phase == Phase.COOLDOWN
+    assert session.last_person_state == "in_bed"
+    assert bus.read("say", "test", "c1") == []
+    assert llm.calls == []
 
 
 def test_stale_requests_and_agent_echoes_are_acked_and_ignored():

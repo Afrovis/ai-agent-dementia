@@ -135,7 +135,7 @@ def _check_strategy(strategy: str, context: VetoContext) -> Verdict:
                 "guided_return while a stated need is unmet",
             )
     if strategy == ORIENT_TIME_PLACE:
-        if context.settled or context.person_state == "in_bed" or context.phase == "COOLDOWN":
+        if context.settled or context.person_state == "in_bed":
             return _deny(
                 "no_orienting_a_settling_person",
                 "NICE-05",

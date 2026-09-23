@@ -165,12 +165,21 @@ def _scenario_param(path):
     return pytest.param(path, marks=marks, id=path.stem)
 
 
-def test_known_bug_scenario_has_strict_xfail_mark():
-    path = SCENARIOS / "desk-cooldown-sitting-up-2026-09-23.jsonl"
+def test_known_bug_scenario_has_strict_xfail_mark(tmp_path):
+    path = tmp_path / "bug.jsonl"
+    path.write_text("")
+    path.with_suffix(".expect.yaml").write_text('llm: none\nknown_bug: "ignored in COOLDOWN"\n')
     parameter = _scenario_param(path)
     mark = next(mark for mark in parameter.marks if mark.name == "xfail")
     assert mark.kwargs["strict"] is True
     assert "COOLDOWN" in mark.kwargs["reason"]
+
+
+def test_scenario_without_known_bug_is_unmarked(tmp_path):
+    path = tmp_path / "ok.jsonl"
+    path.write_text("")
+    path.with_suffix(".expect.yaml").write_text("llm: none\n")
+    assert not _scenario_param(path).marks
 
 
 @pytest.mark.parametrize(

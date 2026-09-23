@@ -87,7 +87,7 @@ from agent.goals import GOALS
 from agent.llm import ClaudeLLM, FallbackLLM, LLMClient
 from agent.llm import local_llm as build_local_llm
 from agent.profile import DEFAULT_PROFILE, PersonProfile, load_profile
-from agent.rules import Phase, RuleResult, validate_composition, validate_goal, validate_say
+from agent.rules import Phase, RuleResult, validate_composition, validate_say
 from agent.session import PendingSay, Session, Transition
 from agent.strategies import (
     ESCALATE_PHONE_ID,
@@ -673,9 +673,8 @@ def _reply_to_utterance(
         return
     context = veto_context(session, profile, now)
     if strategy_id == PATH_LIGHT_ID:
-        # validate_goal rejects wait_for_caregiver -> restroom. Keep the
-        # caregiver alert active while still meeting the stated toilet need.
-        assert not validate_goal(session.goal, "restroom").accepted
+        # Direct guidance does not change the goal. Keep any caregiver alert
+        # active while still meeting the stated toilet need.
         light = LightCommand(
             source=SERVICE_NAME,
             session_id=session.session_id,
@@ -837,7 +836,15 @@ def run_once(
             continue
         prior_turns = session.recent_utterances
         transition = session.on_utterance(now)
-        llm_active = session.phase in (Phase.OBSERVING, Phase.ENGAGED, Phase.ESCALATED)
+        cooldown_reply = (
+            session.phase == Phase.COOLDOWN
+            and session.last_person_state is not None
+            and session.last_person_state != "in_bed"
+            and not session.debug_overrides.force_in_bed
+        )
+        llm_active = (
+            session.phase in (Phase.OBSERVING, Phase.ENGAGED, Phase.ESCALATED) or cooldown_reply
+        )
         if llm_active:
             # Record only after snapshotting the prior turns used by
             # ``interpret``. Composition triggered by this same update can
@@ -872,20 +879,23 @@ def run_once(
                 )
             if interpretation is not None:
                 goal_before_interpretation = session.goal
-                interpreted = session.on_interpretation(
-                    interpretation.intent.value, interpretation.distress, now
-                )
-                if interpreted is not None:
-                    published.append(
-                        _publish_transition(
-                            bus, interpreted, session, now, profile=profile, llm=llm
-                        )
+                if not cooldown_reply:
+                    interpreted = session.on_interpretation(
+                        interpretation.intent.value, interpretation.distress, now
                     )
+                    if interpreted is not None:
+                        published.append(
+                            _publish_transition(
+                                bus, interpreted, session, now, profile=profile, llm=llm
+                            )
+                        )
 
                 intent = interpretation.intent.value
-                if session.phase in (Phase.ENGAGED, Phase.ESCALATED):
+                if session.phase in (Phase.ENGAGED, Phase.ESCALATED) or cooldown_reply:
                     reply_id = None
-                    if intent == "wants_bed" and (
+                    if cooldown_reply and interpretation.distress >= 2:
+                        reply_id = REASSURE_WAITING_ID
+                    elif intent == "wants_bed" and (
                         goal_before_interpretation == "return_to_bed"
                         or session.phase == Phase.ESCALATED
                     ):
@@ -902,13 +912,19 @@ def run_once(
                         )
                         if explicit_question or not session.recently_said("orient_time_place", now):
                             reply_id = "orient_time_place"
-                    elif intent == "need_restroom" and session.phase == Phase.ESCALATED:
+                    elif intent == "need_restroom" and (
+                        session.phase == Phase.ESCALATED or cooldown_reply
+                    ):
                         reply_id = PATH_LIGHT_ID
+                    elif cooldown_reply and intent in {"looking_for_person", "pain"}:
+                        reply_id = REASSURE_WAITING_ID
                     elif session.phase == Phase.ESCALATED:
                         reply_id = REASSURE_WAITING_ID
                     if reply_id is not None and session._last_say_at != now:
                         _reply_to_utterance(bus, session, reply_id, now, profile, llm)
-            elif session.phase == Phase.ESCALATED and session._last_say_at != now:
+            elif (
+                session.phase == Phase.ESCALATED or cooldown_reply
+            ) and session._last_say_at != now:
                 _reply_to_utterance(bus, session, REASSURE_WAITING_ID, now, profile, llm)
 
             # Interpretation may just have escalated. A plan must never run
@@ -953,7 +969,7 @@ def run_once(
                             level=logging.WARNING,
                             strategy=plan.next_strategy,
                         )
-        elif session.phase == Phase.ESCALATED and session._last_say_at != now:
+        elif (session.phase == Phase.ESCALATED or cooldown_reply) and session._last_say_at != now:
             _reply_to_utterance(bus, session, REASSURE_WAITING_ID, now, profile, None)
 
     now = now_fn()

@@ -41,6 +41,18 @@ def test_resolved_restroom_need_allows_guided_return():
     assert check(Proposal("strategy", "guided_return"), facts).allowed
 
 
+def test_cooldown_orientation_depends_on_person_state_and_settling():
+    proposal = Proposal("strategy", "orient_time_place")
+    assert check(proposal, context(phase="COOLDOWN", person_state="sitting_up")).allowed
+    for facts in (
+        context(phase="COOLDOWN", person_state="in_bed"),
+        context(phase="COOLDOWN", person_state="sitting_up", settled=True),
+    ):
+        verdict = check(proposal, facts)
+        assert not verdict.allowed
+        assert verdict.rule == "no_orienting_a_settling_person"
+
+
 @pytest.mark.parametrize(
     ("proposal", "facts", "rule", "clause"),
     [
