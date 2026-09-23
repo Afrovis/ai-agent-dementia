@@ -12,7 +12,7 @@ Last updated: 2026-09-22.
 | --- | --- |
 | Package | `tests/scene_lab/`, an installable package `scene_lab` with its own `pyproject.toml`, like `decision_bench`. On-demand, no CI. |
 | Offline formats | Reuse decision_bench YAML and session_replay JSONL + `expect.yaml`. Do not invent a third scenario format. |
-| Fake-live stack | `docker compose -p nightsim -f docker-compose.yml -f tests/scene_lab/compose.sim.yml`. No `capture`, no `perceive`, always-night, `DRY_RUN=true`, empty `NTFY_URL`, `LIGHT_ENABLED=false`, its own published ports and Redis. |
+| Fake-live stack | `docker compose -p nightsim -f docker-compose.yml -f tests/scene_lab/compose.sim.yml`. No `capture`, no `perceive`, always-night, `DRY_RUN=true`, empty `NTFY_URL`, `LIGHT_ENABLED=false`, its own published ports (bus 16379, embodiment 18443 over plain HTTP) and Redis. Scene `person.yaml`/`strategies.yaml` mount at `/app/scene/` (a file mount inside the read-only `/app/config` mount fails). Between scenes the runner stops the services, flushes the nightsim bus and starts them again; flushing under running services deletes their consumer groups. |
 | Person injection | Body: `PersonState` on `person`, with `source="scene_lab"`. Voice and page: the embodiment websocket, exactly as `services/embodiment/embodiment/static/script.js` speaks it. Never publish `Say`, `Show`, `SessionState` or anything else the system under test produces. |
 | Claude calls | `claude -p` on the claude.ai login only. No tools, empty temp cwd, `ANTHROPIC_API_KEY` and related variables stripped. Copy the isolation from decision_bench's annotator and judge; do not re-implement it. Mind: `--model sonnet`. Director: `--model opus`. |
 | Clock | Fake-live runs in real time. Offline runners use simulated time, with the latency-faithful option from phase 1. |
@@ -21,7 +21,7 @@ Last updated: 2026-09-22.
 | Reply deadline | `R` = 5 s, from utterance end to reply playback start. Measured on every reply. |
 | 8 s gap | A direct reply to the person is exempt from the 8 s gap (owner, 2026-09-22). The agent change that implements this is a separate `decision:` PR that also updates rule 3 in the root `HANDOFF.md`. Until that PR merges, TT-5 already applies the exemption, and TT-1 will report late replies. |
 | Answer or redirect | Flag only. TT-2 writes `review` entries and never passes or fails. |
-| Decision records | The agent publishes `Activity(kind="decision")` for every pending-say drop (with its reason) and every veto (with its rule). This is an `events.py` change: regenerate `ARCHITECTURE.md`. |
+| Decision records | The agent publishes `Activity(kind="decision")` for every pending-say drop (with its reason), every veto (with its rule) and every interpretation (`decision: interpreted`, with intent, distress and the utterance text). This is an `events.py` change: regenerate `ARCHITECTURE.md`. The interpretation record was added during the build: promotion needs it to replay live moments deterministically, and SM-5 needs it to see `wants_bed`. |
 | Bug list | Every run, live or offline, writes `bugs.jsonl` and `bugs.md` at its root, appended per scene. |
 
 ## 2. Rules
@@ -72,6 +72,30 @@ One JSON object per line, time-ordered:
 
 Thresholds (`R: 5.0`, settle time, silence limits, `max_scene_s: 600`) come
 from one `thresholds.yaml` and are printed in every report.
+
+Precisions settled while building (2026-09-22), all in `invariants.py`:
+
+- TT-1 measures from the end of speech, which is listen's `transcribe`
+  start Activity when the trace has one (live), otherwise the Utterance
+  time (offline). The first live utterance after a fresh stack includes
+  the whisper model download.
+- TT-6 counts speech within `utterance_presence_s` (30 s, mirroring
+  `AgentConfig.utterance_presence_seconds`) as presence.
+- SM-3 "did not end" applies only once the person has been in bed for
+  `settle_s + tail_s`; a person still up when a bench timeline ends is an
+  open session, not a failure.
+- SM-5 rebuilds the veto context from the trace: the night window from
+  trace meta (session_replay and nightsim are always night),
+  `things_to_avoid` from the profile, `restroom_need_resolved` from
+  GoalChanged and interpretation records. A denial that depends only on
+  an unobservable `restroom_need_resolved` is a minor "possible veto
+  bypass", not critical.
+- TM-1 is loop lag in the strict sense: an input that arrives while an LLM
+  call chain blocks the loop waits until the chain ends. A slow reaction
+  with no LLM call running is deliberate confirmation or dwell timing and
+  is not flagged.
+- Wording checks exclude `addresses_by_name`, which is a positive
+  requirement and fails on every Say that omits the name.
 
 ### Bug entry (`runs/<run-id>/bugs.jsonl`)
 

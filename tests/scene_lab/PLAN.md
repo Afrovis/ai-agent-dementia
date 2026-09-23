@@ -1,7 +1,9 @@
 # scene_lab plan
 
-Status: plan, 2026-09-22. Nothing is built yet. The execution brief is
-[HANDOFF.md](HANDOFF.md).
+Status: phases 0–5 built, 2026-09-22 (branch `scene-lab-plan`). Phase 6
+is not started. The execution brief is [HANDOFF.md](HANDOFF.md), the
+measured baseline is [BASELINE.md](BASELINE.md), and usage is in
+[README.md](README.md).
 
 ## Goal
 
