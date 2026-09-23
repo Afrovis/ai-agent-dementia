@@ -75,6 +75,17 @@ def test_index_serves_face_page():
     assert 'id="face"' in response.text
 
 
+def test_page_and_static_files_are_revalidated():
+    bus = FakeBus()
+    app = create_app(bus)
+    with TestClient(app) as client:
+        page = client.get("/")
+        script = client.get("/static/script.js")
+
+    assert page.headers["cache-control"] == "no-cache"
+    assert script.headers["cache-control"] == "no-cache"
+
+
 def test_static_css_and_js_are_served():
     bus = FakeBus()
     app = create_app(bus)
