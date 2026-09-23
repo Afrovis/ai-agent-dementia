@@ -414,6 +414,16 @@ def test_every_default_strategy_template_passes_validate_say(strategy, profile):
         assert result.accepted is True, f"{strategy.id!r} produced {text!r}: {result.reason}"
 
 
+@pytest.mark.parametrize(
+    "strategy_id", ["acknowledge_pain", "comfort_pain", "acknowledge_progress"]
+)
+def test_new_reply_phrases_pass_validate_say(strategy_id):
+    strategy = next(s for s in DEFAULT_STRATEGIES if s.id == strategy_id)
+    for profile in (DEFAULT_PROFILE, NAMED_PROFILE):
+        text = render_template(strategy.say_template, profile)
+        assert validate_say(text, seconds_since_last_say=None, min_gap_seconds=8).accepted
+
+
 @pytest.mark.parametrize("profile", [DEFAULT_PROFILE, NAMED_PROFILE], ids=["unset_name", "named"])
 def test_every_example_yaml_strategy_template_passes_validate_say(profile):
     strategies = load_strategies(EXAMPLE_STRATEGIES_PATH)

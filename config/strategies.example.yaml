@@ -9,13 +9,17 @@
 # `perceive`'s `zones.yaml`.
 #
 # HANDOFF.md section 7 / PLAN.md section 5.3 list ten strategies. Eight are
-# implemented, plus the reply-only acknowledge_return and reassure_waiting strategies:
+# implemented, plus reply-only acknowledge_return, acknowledge_pain,
+# comfort_pain, acknowledge_progress, and reassure_waiting strategies:
 #
 #   1  ambient_orient          2  soft_greeting        3  orient_time_place
 #   4  validate_and_redirect   5  guided_return        6  familiar_voice
 #   8  path_light             9  reassure_waiting
 #   10 escalate_phone
 #   -  acknowledge_return    confirms a stated return to bed
+#   -  acknowledge_pain      acknowledges an urgent pain report
+#   -  comfort_pain          comforts a mild pain report
+#   -  acknowledge_progress  acknowledges restroom progress once
 #
 # Deliberately absent, and not a bug:
 #
@@ -94,6 +98,21 @@ strategies:
     headline: Take your time
     body: You can settle back into bed.
     say: "That's right{name_vocative}, take your time getting back to bed."
+  - id: acknowledge_pain
+    enabled: true
+    headline: Help is coming
+    body: Someone is on their way.
+    say: "I'm sorry it hurts{name_vocative}; I'm letting someone know now."
+  - id: comfort_pain
+    enabled: true
+    headline: I'm here with you
+    body: Try to rest comfortably.
+    say: "I'm sorry it hurts{name_vocative}; I'm here with you."
+  - id: acknowledge_progress
+    enabled: true
+    headline: Take your time
+    body: The path is lit.
+    say: "Good{name_vocative}, take your time."
   - id: ambient_orient
     order: 1
     enabled: true

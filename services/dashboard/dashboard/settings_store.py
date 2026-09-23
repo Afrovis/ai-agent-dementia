@@ -33,6 +33,11 @@ KNOWN_STRATEGY_IDS = frozenset(
         "guided_return",
         "familiar_voice",
         "path_light",
+        "acknowledge_return",
+        "reassure_waiting",
+        "acknowledge_pain",
+        "comfort_pain",
+        "acknowledge_progress",
         "escalate_phone",
     }
 )

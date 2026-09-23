@@ -92,6 +92,34 @@ def test_tt1_and_tm2():
     ] == "strategy_changed"
 
 
+def test_tt1_deliberate_silence_passes_unless_it_answers_a_question():
+    for text, severity, passed, cause in (
+        ("I am waiting", "info", True, "no reply by design: reassured_enough"),
+        (
+            "Is anyone there",
+            "critical",
+            False,
+            "no reply by design to a question: reassured_enough",
+        ),
+    ):
+        trace = baseline(
+            ev(2, "Utterance", text=text),
+            TraceEvent(
+                t=3,
+                kind="decision",
+                type="Activity",
+                data={"decision": "no_reply", "reason": "reassured_enough"},
+            ),
+            end=40,
+        )
+        result = next(r for r in score(trace, "TT-1") if cause in r.reason)
+        assert (result.severity, result.passed, result.context["drop_reason"]) == (
+            severity,
+            passed,
+            "reassured_enough",
+        )
+
+
 def _said(t, strategy, reply, trigger):
     return TraceEvent(
         t=t,

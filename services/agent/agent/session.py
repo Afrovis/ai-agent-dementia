@@ -95,6 +95,7 @@ from agent.strategies import (
     ESCALATE_PHONE_ID,
     GUIDED_RETURN_ID,
     PATH_LIGHT_ID,
+    REASSURE_WAITING_ID,
     StrategyDef,
     StrategyEngine,
 )
@@ -243,6 +244,9 @@ class Session:
     # `IDLE`, `_reset_timers`), which that check treats as "no minimum gap
     # to enforce yet".
     _last_say_at: datetime | None = field(default=None, init=False, repr=False)
+    _reassurance_texts: list[str] = field(default_factory=list, init=False, repr=False)
+    _pain_acknowledged: bool = field(default=False, init=False, repr=False)
+    _progress_acknowledged: bool = field(default=False, init=False, repr=False)
     _pending_say: PendingSay | None = field(default=None, init=False, repr=False)
     _compliance_until: datetime | None = field(default=None, init=False, repr=False)
     _say_history: list[tuple[datetime, str, str]] = field(
@@ -363,6 +367,8 @@ class Session:
             return None
         old_goal = self.goal
         self.goal = target_goal
+        if target_goal == RESTROOM_GOAL:
+            self._progress_acknowledged = False
         return GoalChangeResult(
             session_id=self.session_id, from_goal=old_goal, to_goal=target_goal, reason=reason
         )
@@ -405,6 +411,9 @@ class Session:
         else:
             session_id = self.session_id
 
+        if self.phase != target and (self.phase == Phase.ESCALATED or target == Phase.ESCALATED):
+            # A new escalation gets its own speech budget and wording history.
+            self._reassurance_texts.clear()
         self.phase = target
         self.session_id = session_id
 
@@ -475,6 +484,9 @@ class Session:
         self._pending_zone = None
         self._pending_zone_count = 0
         self._last_say_at = None
+        self._reassurance_texts.clear()
+        self._pain_acknowledged = False
+        self._progress_acknowledged = False
         self._compliance_until = None
         self._say_history.clear()
         self._consecutive_distress = 0
@@ -853,6 +865,18 @@ class Session:
         else:
             self._consecutive_distress = 0
 
+        if intent == "pain" and distress >= 2:
+            return self._apply(
+                Phase.ESCALATED,
+                reason="pain_reported",
+                now=now,
+                notify=NotifySpec(
+                    level="attention",
+                    title="Pain reported",
+                    body="They said they are in pain; please check in.",
+                ),
+            )
+
         if self._consecutive_distress >= 2:
             return self._apply(
                 Phase.ESCALATED,
@@ -1037,6 +1061,12 @@ class Session:
         published -- a rejected `Say` must not reset this clock, since
         nothing was actually said."""
         self._last_say_at = now
+        if strategy_id == "comfort_pain":
+            self._pain_acknowledged = True
+        elif strategy_id == "acknowledge_progress":
+            self._progress_acknowledged = True
+        if self.phase == Phase.ESCALATED and strategy_id == REASSURE_WAITING_ID:
+            self._reassurance_texts.append(text)
         if strategy_id:
             self._say_history.append((now, strategy_id, text))
             self._say_history = [
@@ -1044,6 +1074,16 @@ class Session:
                 for entry in self._say_history
                 if (now - entry[0]).total_seconds() <= max(120, self.config.repeat_window_seconds)
             ]
+
+    @property
+    def reassurance_count(self) -> int:
+        """Count only reassurance sentences published in this escalation."""
+        return len(self._reassurance_texts)
+
+    @property
+    def reassurance_texts(self) -> tuple[str, ...]:
+        """Keep wording history for variation beyond the initial two replies."""
+        return tuple(self._reassurance_texts)
 
     def seconds_since_last_say(self, now: datetime) -> float | None:
         """`None` before any `Say` has been published this session (also

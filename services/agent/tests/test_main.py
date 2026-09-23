@@ -28,7 +28,7 @@ from nc_shared.events import (
 )
 
 from agent.config import AgentConfig
-from agent.llm import Composition, FakeLLM, Intent, Interpretation
+from agent.llm import Composition, FakeLLM, Intent, Interpretation, Plan
 from agent.main import (
     PERSON_GROUP,
     PERSON_STREAM,
@@ -502,6 +502,229 @@ def test_escalated_speech_is_interpreted_and_reassured_after_gap():
     assert reassurances[-1].text == "Help is on the way."
     assert [name for name, _ in llm.calls] == ["interpret", "compose"]
     assert len(bus.read("notify", "test", "c1")) == 1
+
+
+def test_severe_pain_escalates_with_pain_reply_and_skips_planner_speech():
+    bus = make_bus()
+    session = Session(config=AgentConfig(observe_seconds=1.0))
+    now_fn, advance = make_clock(NIGHT)
+    bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    advance(2)
+    run_once(bus, session, now_fn=now_fn)
+    llm = FakeLLM(interpretations=[Interpretation(intent=Intent.PAIN, distress=2)])
+    bus.publish(
+        Utterance(source="listen", text="My hip really hurts", confidence=0.9, duration_s=1)
+    )
+    run_once(bus, session, now_fn=now_fn, llm=llm)
+
+    assert session.phase == Phase.ESCALATED
+    assert session.reassurance_count == 0
+    notify = [event for _, event in bus.read("notify", "test", "c1")]
+    assert [(event.level, event.title, event.body) for event in notify] == [
+        ("attention", "Pain reported", "They said they are in pain; please check in.")
+    ]
+    says = [event for _, event in bus.read("say", "test", "c1")]
+    assert [(event.strategy, event.text) for event in says] == [
+        ("acknowledge_pain", "I'm sorry it hurts; I'm letting someone know now.")
+    ]
+    decisions = [
+        json.loads(event.detail)
+        for _, event in bus.read("activity", "test", "c1", count=100)
+        if event.kind == "decision"
+    ]
+    assert any(
+        d.get("decision") == "said" and d.get("trigger") == "pain_reported" and d["reply"]
+        for d in decisions
+    )
+
+
+def test_mild_pain_is_comforted_once_then_silent_without_planner_speech():
+    bus = make_bus()
+    session = Session(config=AgentConfig(observe_seconds=1.0))
+    now_fn, advance = make_clock(NIGHT)
+    bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    advance(2)
+    run_once(bus, session, now_fn=now_fn)
+    llm = FakeLLM(
+        interpretations=[Interpretation(intent=Intent.PAIN, distress=1)] * 3,
+        plans=[Plan(next_strategy="soft_greeting", confidence=1.0)] * 3,
+    )
+    for utterance in ("My hip aches", "It still aches", "Does my hip still hurt?"):
+        bus.publish(Utterance(source="listen", text=utterance, confidence=0.9, duration_s=1))
+        run_once(bus, session, now_fn=now_fn, llm=llm)
+        advance(9)
+    says = [event for _, event in bus.read("say", "test", "c1")]
+    assert [(event.strategy, event.text) for event in says] == [
+        ("comfort_pain", "I'm sorry it hurts; I'm here with you."),
+        ("comfort_pain", "I'm sorry it hurts; I'm here with you."),
+    ]
+    decisions = [
+        json.loads(event.detail)
+        for _, event in bus.read("activity", "test", "c1", count=100)
+        if event.kind == "decision"
+    ]
+    assert any(
+        d.get("decision") == "no_reply" and d["reason"] == "pain_acknowledged" for d in decisions
+    )
+    assert session.phase == Phase.ENGAGED
+
+
+def test_restroom_progress_once_question_and_new_trip():
+    bus = make_bus()
+    session = Session(config=AgentConfig(observe_seconds=1.0, zone_confirm_readings=1))
+    now_fn, advance = make_clock(NIGHT)
+    bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    advance(2)
+    run_once(bus, session, now_fn=now_fn)
+    bus.publish(PersonState(source="perceive", state="walking", confidence=0.9, zone="door"))
+    run_once(bus, session, now_fn=now_fn)
+    llm = FakeLLM(
+        interpretations=[
+            Interpretation(intent=Intent.FINE, distress=0),
+            Interpretation(intent=Intent.FINE, distress=0),
+            Interpretation(intent=Intent.CONFUSED_TIME, distress=0),
+            Interpretation(intent=Intent.FINE, distress=0),
+        ]
+    )
+    for utterance in ("Nearly there", "Almost there now", "Where's the switch again?"):
+        advance(17)
+        bus.publish(Utterance(source="listen", text=utterance, confidence=0.9, duration_s=1))
+        run_once(bus, session, now_fn=now_fn, llm=llm)
+    assert [event.strategy for _, event in bus.read("say", "test", "c1")] == [
+        "path_light",
+        "acknowledge_progress",
+        "path_light",
+    ]
+    assert [event.state for _, event in bus.read("light", "test", "c1")] == ["on"]
+    decisions = [
+        json.loads(event.detail)
+        for _, event in bus.read("activity", "test", "c1", count=100)
+        if event.kind == "decision"
+    ]
+    assert any(
+        d.get("decision") == "no_reply" and d["reason"] == "progress_acknowledged"
+        for d in decisions
+    )
+
+    back = session.propose_goal("return_to_bed", "test", now_fn())
+    assert back is not None
+    _publish_transition(bus, back, session, now_fn())
+    again = session.propose_goal("restroom", "test", now_fn())
+    assert again is not None
+    _publish_transition(bus, again, session, now_fn())
+    advance(17)
+    bus.publish(
+        Utterance(source="listen", text="I'm fine, going along", confidence=0.9, duration_s=1)
+    )
+    run_once(bus, session, now_fn=now_fn, llm=llm)
+    assert [event.strategy for _, event in bus.read("say", "test", "c2")][
+        -1
+    ] == "acknowledge_progress"
+
+
+def test_escalated_reassurance_cap_questions_distress_and_varied_composition():
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    now_fn, advance = make_clock(NIGHT)
+    bus.publish(PersonState(source="perceive", state="on_floor", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    llm = FakeLLM(
+        interpretations=[
+            Interpretation(intent=Intent.UNCLEAR, distress=distress) for distress in (1, 1, 1, 1, 3)
+        ],
+        compositions=[Composition(text="Help is on the way.") for _ in range(4)],
+    )
+    for utterance in (
+        "I am here",
+        "I am still here",
+        "I am waiting",
+        "Is anyone there?",
+        "Help me",
+    ):
+        advance(9)
+        bus.publish(Utterance(source="listen", text=utterance, confidence=0.9, duration_s=1))
+        run_once(bus, session, now_fn=now_fn, llm=llm)
+
+    reassurances = [
+        event
+        for _, event in bus.read("say", "test", "c1", count=20)
+        if event.strategy == "reassure_waiting"
+    ]
+    assert len(reassurances) == 4
+    assert session.reassurance_count == 4
+    assert reassurances[0].text == "Help is on the way."
+    assert reassurances[1].text != reassurances[0].text
+    assert len({event.text.lower() for event in reassurances}) == 4
+    decisions = [
+        json.loads(event.detail)
+        for _, event in bus.read("activity", "test", "c1", count=100)
+        if event.kind == "decision"
+    ]
+    assert [decision for decision in decisions if decision["decision"] == "no_reply"] == [
+        {
+            "decision": "no_reply",
+            "reason": "reassured_enough",
+            "text": "I am waiting",
+            "phase": "ESCALATED",
+            "goal": "wait_for_caregiver",
+            "reassurances": 2,
+        }
+    ]
+
+
+def test_escalated_no_llm_fallback_obeys_cap_and_resets_on_new_escalation():
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    now_fn, advance = make_clock(NIGHT)
+    bus.publish(PersonState(source="perceive", state="on_floor", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    for utterance in ("I am here", "Still here", "Waiting", "When will help come"):
+        advance(9)
+        bus.publish(Utterance(source="listen", text=utterance, confidence=0.9, duration_s=1))
+        run_once(bus, session, now_fn=now_fn)
+    reassurances = [
+        event
+        for _, event in bus.read("say", "test", "c1", count=20)
+        if event.strategy == "reassure_waiting"
+    ]
+    assert len(reassurances) == 3
+    assert len({event.text for event in reassurances}) == 3
+    assert session.reassurance_count == 3
+
+    session._apply(Phase.COOLDOWN, reason="test", now=now_fn())
+    assert session.reassurance_count == 0
+    session._apply(Phase.ESCALATED, reason="test", now=now_fn())
+    assert session.reassurance_count == 0
+    advance(9)
+    bus.publish(Utterance(source="listen", text="I am here again", confidence=0.9, duration_s=1))
+    run_once(bus, session, now_fn=now_fn)
+    assert session.reassurance_count == 1
+
+
+def test_escalated_unavailable_interpretation_obeys_cap():
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    now_fn, advance = make_clock(NIGHT)
+    bus.publish(PersonState(source="perceive", state="on_floor", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    llm = FakeLLM(interpretations=[None, None, None, None])
+    for utterance in ("I am here", "Still here", "Waiting", "When will my daughter arrive"):
+        advance(9)
+        bus.publish(Utterance(source="listen", text=utterance, confidence=0.9, duration_s=1))
+        run_once(bus, session, now_fn=now_fn, llm=llm)
+    assert session.reassurance_count == 3
+    assert [name for name, _ in llm.calls] == [
+        "interpret",
+        "compose",
+        "interpret",
+        "compose",
+        "interpret",
+        "interpret",
+        "compose",
+    ]
 
 
 def test_escalated_restroom_need_keeps_alert_and_guides():

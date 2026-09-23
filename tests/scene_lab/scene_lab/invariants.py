@@ -9,6 +9,7 @@ from collections.abc import Callable
 from statistics import median
 from typing import Literal
 
+from agent.questions import is_direct_question
 from pydantic import BaseModel
 
 from .thresholds import Thresholds
@@ -318,18 +319,28 @@ def check_trace(
             limit = min(
                 next_utt.t if next_utt else float("inf"), utt.t + thresholds.direct_reply_window_s
             )
-            decision = next(
-                (
-                    e
-                    for e in trace.events
-                    if e.kind == "decision"
-                    and e.data.get("decision") in {"pending_say_dropped", "vetoed"}
-                    and utt.t <= e.t <= limit
-                ),
-                None,
+            decisions = [
+                e
+                for e in trace.events
+                if e.kind == "decision"
+                and e.data.get("decision") in {"pending_say_dropped", "vetoed", "no_reply"}
+                and utt.t <= e.t <= limit
+            ]
+            decision = next((e for e in decisions if e.data.get("decision") == "no_reply"), None)
+            if decision is None:
+                decision = next(iter(decisions), None)
+            designed_silence = (
+                say is None and decision is not None and decision.data.get("decision") == "no_reply"
             )
             if say is not None and pb is None:
                 cause = "reply composed but never played"
+            elif designed_silence:
+                reason = decision.data.get("reason", "unknown")
+                cause = (
+                    f"no reply by design to a question: {reason}"
+                    if is_direct_question(utt.data.get("text", ""))
+                    else f"no reply by design: {reason}"
+                )
             elif decision and decision.data.get("decision") == "pending_say_dropped":
                 cause = f"dropped pending say: {decision.data.get('reason', 'unknown')}"
             elif decision and decision.data.get("decision") == "vetoed":
@@ -346,15 +357,18 @@ def check_trace(
             context = _state(trace, utt.t)
             if decision:
                 context["drop_reason"] = decision.data.get("reason")
+            designed_answer_to_question = designed_silence and is_direct_question(
+                utt.data.get("text", "")
+            )
             out.append(
                 _result(
                     trace,
                     "TT-1",
-                    "critical",
-                    False,
+                    "info" if designed_silence and not designed_answer_to_question else "critical",
+                    designed_silence and not designed_answer_to_question,
                     utt.t,
                     limit,
-                    f"no reply: {cause}",
+                    cause if designed_silence else f"no reply: {cause}",
                     [f"Utterance@{utt.t}: {utt.data.get('text')}", cause],
                     context,
                 )

@@ -85,6 +85,9 @@ ESCALATE_PHONE_ID = "escalate_phone"
 PATH_LIGHT_ID = "path_light"
 REASSURE_WAITING_ID = "reassure_waiting"
 ACKNOWLEDGE_RETURN_ID = "acknowledge_return"
+ACKNOWLEDGE_PAIN_ID = "acknowledge_pain"
+COMFORT_PAIN_ID = "comfort_pain"
+ACKNOWLEDGE_PROGRESS_ID = "acknowledge_progress"
 GUIDED_RETURN_ID = "guided_return"
 FAMILIAR_VOICE_ID = "familiar_voice"
 
@@ -348,6 +351,48 @@ DEFAULT_STRATEGIES: tuple[StrategyDef, ...] = (
         say_template="Someone is coming to help.",
         # Force-only: see `StrategyDef.terminal`.
         terminal=True,
+    ),
+    StrategyDef(
+        id=ACKNOWLEDGE_PAIN_ID,
+        order=11,
+        enabled=True,
+        intrusiveness=2,
+        dwell_seconds=0.0,
+        cooldown_seconds=0.0,
+        face="speaking",
+        brightness=0.5,
+        headline_template="Help is coming",
+        body_template="Someone is on their way.",
+        say_template="I'm sorry it hurts{name_vocative}; I'm letting someone know now.",
+        goal_only=True,
+    ),
+    StrategyDef(
+        id=COMFORT_PAIN_ID,
+        order=12,
+        enabled=True,
+        intrusiveness=2,
+        dwell_seconds=0.0,
+        cooldown_seconds=0.0,
+        face="speaking",
+        brightness=0.5,
+        headline_template="I'm here with you",
+        body_template="Try to rest comfortably.",
+        say_template="I'm sorry it hurts{name_vocative}; I'm here with you.",
+        goal_only=True,
+    ),
+    StrategyDef(
+        id=ACKNOWLEDGE_PROGRESS_ID,
+        order=13,
+        enabled=True,
+        intrusiveness=2,
+        dwell_seconds=0.0,
+        cooldown_seconds=0.0,
+        face="speaking",
+        brightness=0.5,
+        headline_template="Take your time",
+        body_template="The path is lit.",
+        say_template="Good{name_vocative}, take your time.",
+        goal_only=True,
     ),
 )
 
