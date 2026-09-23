@@ -115,6 +115,20 @@ def results_to_entries(
 
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_USAGE_LIMIT = re.compile(r"hit your (session|usage|weekly) limit|\"api_error_status\":\s*429")
+_RESETS = re.compile(r"resets [^\"]+")
+
+
+def usage_limited(message: str | None) -> str | None:
+    """The reset note when a `claude -p` failure is the subscription's usage limit.
+
+    Every later Claude call fails the same way, so a batch should stop rather than run
+    scenes whose mind and director cannot start.
+    """
+    if not message or not _USAGE_LIMIT.search(message):
+        return None
+    reset = _RESETS.search(message)
+    return reset.group(0) if reset else "reset time unknown"
 
 
 def harness_error(run: str, scene: str, message: str) -> BugEntry:

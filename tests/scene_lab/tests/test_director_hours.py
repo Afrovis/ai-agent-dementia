@@ -276,3 +276,42 @@ def test_director_schema_references_resolve_from_the_root():
         node = schema
         for part in ref.removeprefix("#/").split("/"):
             node = node[part]
+
+
+def test_usage_limit_is_recognised():
+    from scene_lab.bugs import usage_limited
+
+    message = (
+        'claude exited with status 1: {"api_error_status":429,'
+        '"result":"You\'ve hit your session limit · resets 3:30am (America/New_York)"}'
+    )
+    assert usage_limited(message) == "resets 3:30am (America/New_York)"
+    assert usage_limited("claude exited with status 1: bad JSON") is None
+    assert usage_limited(None) is None
+
+
+def test_hours_stops_on_director_usage_limit(tmp_path):
+    clock = FakeClock()
+
+    class LimitedDirector(FakeDirector):
+        last_error = None
+
+        def next_scene(self, state):
+            self.last_error = '"api_error_status":429 You\'ve hit your session limit'
+            return super().next_scene(state)
+
+    async def runner(*args):
+        raise AssertionError("no scene may start once the usage limit is reached")
+
+    path = asyncio.run(
+        run_hours(
+            1,
+            runs_root=tmp_path,
+            director=LimitedDirector(),
+            scene_runner=runner,
+            stack_factory=FakeStack,
+            clock=clock,
+        )
+    )
+    assert "usage limit" in (path / "bugs.md").read_text()
+    assert json.loads((tmp_path / "index.jsonl").read_text())["scene_count"] == 0

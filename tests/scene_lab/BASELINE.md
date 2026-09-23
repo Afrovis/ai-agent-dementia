@@ -74,7 +74,19 @@ These hold across the offline baseline and the live runs.
    is coming to help" said while the latest reading is `absent` (fall-02,
    fall-05, silent-wander-04, silent-wander-06). The agent exempts this
    strategy on purpose (`_flush_pending_say`).
-8. **Talk-over and barge-in.** With an interrupting persona, playback
+8. **A person on the floor is directed to the bathroom.** In the one
+   director-chosen scene (fall, hip pain, poor hearing;
+   `2026-09-23T0050-live/fall-poor-hearing-floor-1`) the fall itself was
+   handled at once (`rule5_on_floor`, Notify, "Someone is coming to
+   help."). Then "Oh dear silly me, I'm just down here a moment." and "My
+   hip's giving me a bit of jip down here." were interpreted as
+   `need_restroom`, and the agent said "The restroom is through the bedroom
+   door and immediately to the left, Jean." three times, once right after
+   "No, no bathroom, I'm on the floor, dear." It later offered "while you
+   enjoy a photo of the garden" to "my hip hurts something awful". No veto
+   rule forbids `path_light` while the person is `on_floor`, so SM-5 has
+   nothing to flag.
+9. **Talk-over and barge-in.** With an interrupting persona, playback
    started over the person's speech 12 times in one scene (TT-3), and one
    interruptible sentence stopped 0.64 s after speech began against a
    0.5 s deadline (TT-4).
@@ -208,13 +220,26 @@ one `index.jsonl` line, as intended. After the fix a director call takes
 about 20 s and picks an uncovered cell (for example distress_pain ×
 poor-hearing × need_without_keyword).
 
-DIRECTOR_HOUR_RESULTS
+The second `run --hours 1` (`2026-09-23T0050-live`, commit `a300dbe`)
+started at 00:50:31 and ended at 01:40:32: within the hour, 28 scenes, no
+scene near the 600 s cap. It is only a partial test of the director. The
+first scene was chosen by Opus (the fall scene in finding 8). From the
+second call on, every `claude -p` call returned HTTP 429 "You've hit your
+session limit", so the director fell back to existing cards and each
+scene's mind failed at once: 28 director and 23 mind harness entries, all
+`origin: harness`. The run's `bugs.md` still grouped and ranked everything
+correctly, but it measured the harness more than the agent. A batch now
+stops at the first usage-limit failure and records one harness entry with
+the reset time, rather than running scenes whose mind cannot start.
 
 `scene_lab bugs 2026-09-22T2348-live 2026-09-23T0020-live` labels the
 600 s cap stop fixed in between as `gone`, the director failures as `new`
 and the unanswered utterance as `persisting`.
 
-Not met yet: the `--hours 4` acceptance run.
+Not met yet: the `--hours 4` acceptance run. On the subscription, one
+session window did not cover an hour of Sonnet mind calls (about one every
+6 s of scene time with a talkative persona) plus Opus director calls, on
+top of this build session's own use.
 
 ## Phase 5: promotion
 

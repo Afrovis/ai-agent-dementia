@@ -11,7 +11,7 @@ from pathlib import Path
 
 import yaml
 
-from .bugs import harness_error
+from .bugs import harness_error, usage_limited
 from .scene import Scene, load_scene
 
 PACKAGE = Path(__file__).resolve().parent
@@ -117,6 +117,8 @@ class Director:
     def __init__(self, model: str = "opus", runner=None):
         self.model = model
         self.runner = runner
+        # Why the last call fell back, if it did; the batch stops on a usage limit.
+        self.last_error: str | None = None
 
     def next_scene(self, state: dict) -> Scene:
         from decision_bench.annotate import run_claude
@@ -172,14 +174,18 @@ class Director:
                 self._log(
                     run, {"attempt": attempt + 1, "scene": scene.id, "rationale": raw["rationale"]}
                 )
+                self.last_error = None
                 return scene
             except Exception as exc:
                 error = f"\nValidation error: {type(exc).__name__}: {exc}. Correct the JSON."
                 self._log(run, {"attempt": attempt + 1, "error": str(exc)})
+                if usage_limited(str(exc)):
+                    break  # a retry fails the same way
         return self.fallback(state, error)
 
     def fallback(self, state: dict, error: str) -> Scene:
         """Least-covered existing card; used after invalid output or a timed-out call."""
+        self.last_error = error
         run = state["run"]
         scenes = state.get("scenes", [])
         left = state["time_left_s"]

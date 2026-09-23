@@ -15,7 +15,7 @@ import yaml
 from nc_shared.bus import Bus
 
 from .body import Body
-from .bugs import RunDir, harness_error
+from .bugs import RunDir, harness_error, usage_limited
 from .director import Director, coverage, noise_level
 from .mind import ClaudeMind
 from .page import VirtualPage
@@ -382,6 +382,14 @@ async def _execute_scene(scene, source, run, stack, preflight, thresholds):
         )
 
 
+def _limit_entry(run, scene_id: str, reset: str):
+    return harness_error(
+        run.id,
+        scene_id,
+        f"Claude usage limit reached ({reset}); batch stopped, no further scenes started",
+    )
+
+
 async def run_hours(
     hours: float,
     *,
@@ -460,6 +468,9 @@ async def run_hours(
             except (KeyboardInterrupt, asyncio.CancelledError):
                 # Ctrl-C while the director thinks: no new scene; still finish the run.
                 break
+            if reset := usage_limited(getattr(chosen, "last_error", None)):
+                run.append([_limit_entry(run, scene.id, reset)])
+                break
             # Director latency is part of the deadline; do not start if its budget expired.
             remaining = deadline - clock()
             if remaining < thresholds.max_scene_s or scene.duration_s > remaining:
@@ -511,6 +522,13 @@ async def run_hours(
             run.metadata["scene_count"] = len(scenes)
             (run.path / "coverage.json").write_text(json.dumps(coverage(scenes), indent=2) + "\n")
             run.render_bugs_md()
+            limited = next(
+                (r for e in entries if e.origin == "harness" and (r := usage_limited(e.summary))),
+                None,
+            )
+            if limited:
+                run.append([_limit_entry(run, scene.id, limited)])
+                break
             if interrupted or any("KeyboardInterrupt" in e.summary for e in entries):
                 break
     finally:
