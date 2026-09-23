@@ -1,0 +1,41 @@
+id: promoted-car-keys-no-reply
+category: disorientation
+summary: Promoted from disorientation-01 at 103.746 s
+start: 02:14
+timeline:
+- t: 0.0
+  person:
+    state: sitting_up
+    zone: bed
+    confidence: 0.95
+- t: 25.002
+  person:
+    state: standing
+    zone: bed
+    confidence: 0.95
+- t: 45.64
+  utterance:
+    text: I have to pick up the kids from school.
+    confidence: 0.7825756254253533
+    duration_s: 3.45
+- t: 55.001
+  person:
+    state: walking
+    zone: door
+    confidence: 0.95
+- t: 90.003
+  person:
+    state: standing
+    zone: door
+    confidence: 0.95
+- t: 103.745
+  utterance:
+    text: Where are my car keys? They'll be waiting.
+    confidence: 0.694946663268435
+    duration_s: 3.87
+checkpoints:
+- id: flagged-moment
+  window:
+  - 103.74571998214722
+  - 103.74571998214722
+  question: late reply; unrated

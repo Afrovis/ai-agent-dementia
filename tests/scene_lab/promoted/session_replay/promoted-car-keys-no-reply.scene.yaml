@@ -1,0 +1,69 @@
+id: disorientation-01
+category: disorientation
+start: 02:14
+duration_s: 600
+profile: config/person.example.yaml
+strategies: default
+persona:
+  summary: Gets up believing they must collect the children from school, heads for
+    the door, asks for the car keys, and stays up by the door.
+  hearing: normal
+  patience: medium
+  interrupts: false
+opening:
+- at: 0.0
+  move:
+    state: sitting_up
+    zone: bed
+    over_s: 0
+- at: 25.0
+  move:
+    state: standing
+    zone: bed
+    over_s: 0
+- at: 40.0
+  say: I have to pick up the kids from school.
+- at: 55.0
+  move:
+    state: walking
+    zone: door
+    over_s: 0
+- at: 90.0
+  move:
+    state: standing
+    zone: door
+    over_s: 0
+- at: 100.0
+  say: Where are my car keys? They'll be waiting.
+- at: 150.0
+  move:
+    state: walking
+    zone: other
+    over_s: 0
+- at: 200.0
+  move:
+    state: standing
+    zone: door
+    over_s: 0
+- at: 300.0
+  move:
+    state: standing
+    zone: door
+    over_s: 0
+- at: 420.0
+  move:
+    state: walking
+    zone: door
+    over_s: 0
+- at: 600.0
+  move:
+    state: standing
+    zone: door
+    over_s: 0
+- at: 600
+  end: true
+stressors: []
+mind: script
+noise:
+  flicker: 0
+  low_confidence: 0

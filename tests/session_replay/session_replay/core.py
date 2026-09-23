@@ -196,6 +196,16 @@ def _timeline_row(start: datetime, when: datetime, event: BaseEvent) -> dict:
     ):
         if key in payload:
             row[key] = payload[key]
+    if payload.get("kind") == "decision" and payload.get("detail"):
+        # Agent decision records (scene_lab): expose why a Say went out or was dropped,
+        # so expectations can ask for a reply ({type: Activity, decision: said, reply: true}).
+        try:
+            detail = json.loads(payload["detail"])
+        except (TypeError, ValueError):
+            detail = {}
+        for key in ("decision", "reply", "trigger", "direct", "rule", "intent"):
+            if key in detail:
+                row[key] = detail[key]
     return row
 
 

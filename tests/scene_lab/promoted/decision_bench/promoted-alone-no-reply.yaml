@@ -1,0 +1,31 @@
+id: promoted-alone-no-reply
+category: conversation
+summary: Promoted from persona-repeated-question at 33.9167 s
+start: 02:15
+timeline:
+- t: 0.0
+  person:
+    state: sitting_up
+    zone: bed
+    confidence: 0.95
+- t: 5.856
+  utterance:
+    text: When is Tom coming?
+    confidence: 0.6820526687345161
+    duration_s: 2.43
+- t: 24.717
+  utterance:
+    text: But is Tom coming soon? He said he'd be here.
+    confidence: 0.7815531463450692
+    duration_s: 4.26
+- t: 33.916
+  utterance:
+    text: I don't like being here on my own.
+    confidence: 0.7605654337375318
+    duration_s: 3.51
+checkpoints:
+- id: flagged-moment
+  window:
+  - 33.916682077407835
+  - 33.916682077407835
+  question: 'no reply: never composed'

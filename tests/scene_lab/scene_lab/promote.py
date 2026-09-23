@@ -87,7 +87,13 @@ def template(check: str, rows: list[dict], at: float, bug: dict | None = None) -
         predicate=lambda r: r["payload"]["state"] not in {"in_bed", "absent"},
     )
     if check == "TT-1" and utterance:
-        return {"after": _anchor(utterance), "within_s": 5, "events": [{"type": "Say"}]}
+        # A reply, not any Say: the replayed agent records why it spoke, and a ladder step
+        # that happens to follow the question does not answer it.
+        return {
+            "after": _anchor(utterance),
+            "within_s": 5,
+            "events": [{"type": "Activity", "decision": "said", "reply": True}],
+        }
     if check == "TT-5" and person:
         person = next(row for row in rows if row["event_type"] == "PersonState")
         return {"after": _anchor(person), "within_s": max(0, at - person["t"]), "min_spacing_s": 8}
@@ -138,11 +144,11 @@ def _interpretations(raw_rows, selected):
                     "intent": detail["intent"],
                     "distress": detail["distress"],
                 }
-    for row in selected:
-        if row["event_type"] == "Utterance":
-            text = row["payload"]["text"]
-            result.setdefault(text, {"intent": "unclear", "distress": 0})
-    return result
+    kept = [row["payload"]["text"] for row in selected if row["event_type"] == "Utterance"]
+    for text in kept:
+        result.setdefault(text, {"intent": "unclear", "distress": 0})
+    # Only the promoted window's utterances; the rest of the scene is not replayed.
+    return {text: result[text] for text in kept}
 
 
 def _refine(spec, bugs, rows):
@@ -226,12 +232,20 @@ def promote(
     export = read_jsonl(folder / "export.jsonl")
     if not export:
         raise ValueError("scene export is empty")
-    origin = parse_ts(export[0]["ts"])
-    if (folder / "report.json").exists():
-        report = json.loads((folder / "report.json").read_text())
-        if report.get("scene_start"):
-            origin = parse_ts(report["scene_start"])
+    # Same origin as trace.from_export (the earliest exported event), so bug-entry times and
+    # --at line up with the rows selected here.
+    origin = min(parse_ts(r["ts"]) for r in export)
     last = max((parse_ts(r["ts"]) - origin).total_seconds() for r in export)
+    # Snap --at to the matching bug entries so a rounded time never cuts off the flagged
+    # utterance itself.
+    nearby = [
+        float(r["t"])
+        for r in read_jsonl(run_dir / "bugs.jsonl")
+        if r.get("scene") == scene and abs(float(r.get("t", -9999)) - at) <= 2
+    ]
+    # 1 ms of slack: bug times come from the trace and row times are recomputed here, so the
+    # same event can differ in the last float digits.
+    at = min(max([at, *nearby]) + (0.001 if nearby else 0.0), max(at, last))
     start, end = max(0, at - before), min(last, at + after)
     if start > end or at > last:
         raise ValueError("flagged moment lies outside scene export")
@@ -292,7 +306,9 @@ def promote(
                 "llm": "recorded",
                 "interpretations": _interpretations(export, kept),
                 "expect": [
-                    template(b["check"], inputs, at, b)
+                    # Anchor on the bug's own time (the flagged utterance for TT-1), not the
+                    # rounded --at, which can fall just before it.
+                    template(b["check"], inputs, max(at, float(b.get("t", at))), b)
                     for b in bugs
                     if b.get("check") in {"TT-1", "TT-5", "TT-6", "SM-1", "SM-3", "SM-5"}
                 ],

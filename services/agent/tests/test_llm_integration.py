@@ -72,7 +72,8 @@ def test_interpretation_goal_and_planner_are_advisory_and_rule_checked():
     assert [(event.kind, event.phase, event.ok) for event in activities] == [
         ("interpret", "start", True),
         ("interpret", "end", True),
-        ("decision", "end", False),
+        ("decision", "end", False),  # interpreted
+        ("decision", "end", False),  # said
     ]
     assert llm.calls[0][1]["last_turns"] == []
     assert llm.calls[0][1]["profile"]["night_themes"] == ["looking for work"]

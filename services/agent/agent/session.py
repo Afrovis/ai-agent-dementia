@@ -149,6 +149,7 @@ class PendingSay:
     queued_at: datetime
     show: Show | None = None
     direct: bool = False
+    trigger: str | None = None
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,18 @@
+# Source: 2026-09-22T2348-live/disorientation-01 t=103.746; checks: TT-1, TT-2
+status: draft  # human approval required
+llm: recorded
+interpretations:
+  I have to pick up the kids from school.:
+    intent: wants_to_leave
+    distress: 0
+  Where are my car keys? They'll be waiting.:
+    intent: unclear
+    distress: 0
+expect:
+- after:
+    heard: Where are my car keys? They'll be waiting.
+  within_s: 5
+  events:
+  - type: Activity
+    decision: said
+    reply: true

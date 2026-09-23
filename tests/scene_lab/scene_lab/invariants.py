@@ -98,9 +98,51 @@ def _result(
     )
 
 
+def _said_record(trace: Trace, say: TraceEvent) -> TraceEvent | None:
+    """The agent's `said` decision record for this Say (same strategy, same loop tick)."""
+    return next(
+        (
+            e
+            for e in trace.events
+            if e.kind == "decision"
+            and e.data.get("decision") == "said"
+            and e.data.get("strategy") == say.data.get("strategy")
+            and abs(e.t - say.t) <= 0.5
+        ),
+        None,
+    )
+
+
 def _first_reply(trace: Trace, utt: TraceEvent) -> TraceEvent | None:
+    """First Say after the utterance and before the next one that answers it.
+
+    When the agent records why it spoke (`said` records), a Say caused by a dwell timer
+    or zone change is a scheduled step, not a reply, even if it follows the utterance.
+    Traces without those records count any following Say.
+    """
     next_utt = next((e.t for e in trace.of_type("Utterance") if e.t > utt.t), float("inf"))
-    return next((e for e in trace.of_type("Say") if utt.t <= e.t < next_utt), None)
+    following = [e for e in trace.of_type("Say") if utt.t <= e.t < next_utt]
+    if not any(e.kind == "decision" and e.data.get("decision") == "said" for e in trace.events):
+        return following[0] if following else None
+    for say in following:
+        record = _said_record(trace, say)
+        if record is None or record.data.get("reply"):
+            return say
+    return None
+
+
+def _scheduled_step_after(trace: Trace, utt: TraceEvent) -> TraceEvent | None:
+    next_utt = next((e.t for e in trace.of_type("Utterance") if e.t > utt.t), float("inf"))
+    return next(
+        (
+            e
+            for e in trace.of_type("Say")
+            if utt.t <= e.t < next_utt
+            and (record := _said_record(trace, e)) is not None
+            and not record.data.get("reply")
+        ),
+        None,
+    )
 
 
 def _summary(
@@ -282,6 +324,11 @@ def check_trace(
                 cause = f"vetoed: {decision.data.get('rule', 'unknown')}"
             elif _state(trace, limit)["phase"] not in thresholds.active_phases:
                 cause = "phase"
+            elif step := _scheduled_step_after(trace, utt):
+                cause = (
+                    f"only a scheduled {step.data.get('strategy')} step followed "
+                    f"({_said_record(trace, step).data.get('trigger')})"
+                )
             else:
                 cause = "never composed"
             context = _state(trace, utt.t)

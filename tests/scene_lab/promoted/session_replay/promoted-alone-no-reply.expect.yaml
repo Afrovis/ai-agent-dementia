@@ -1,0 +1,21 @@
+# Source: 2026-09-23T0015-live/persona-repeated-question t=33.9167; checks: TT-1
+status: draft  # human approval required
+llm: recorded
+interpretations:
+  When is Tom coming?:
+    intent: looking_for_person
+    distress: 0
+  But is Tom coming soon? He said he'd be here.:
+    intent: looking_for_person
+    distress: 1
+  I don't like being here on my own.:
+    intent: unclear
+    distress: 1
+expect:
+- after:
+    heard: I don't like being here on my own.
+  within_s: 5
+  events:
+  - type: Activity
+    decision: said
+    reply: true

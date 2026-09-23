@@ -487,7 +487,12 @@ def _maybe_publish_say(
     )
     if gap_only:
         session._pending_say = PendingSay(
-            say_event, transition.goal, transition.strategy_index, now, direct=direct
+            say_event,
+            transition.goal,
+            transition.strategy_index,
+            now,
+            direct=direct,
+            trigger=transition.reason,
         )
         _log(
             "deferred Say",
@@ -502,7 +507,40 @@ def _maybe_publish_say(
     bus.publish(say_event)
     session.record_say(now, strategy.id, say_event.text)
     _log("published Say", event_type="Say", strategy=strategy.id)
+    _said_decision(bus, session, say_event, trigger=transition.reason, direct=direct)
     return True
+
+
+# Transition reasons produced while handling the person's speech; any `interpreted_*`
+# reason is one too. A Say from any other transition (a dwell timer, a zone change) is a
+# scheduled step, even when it happens to follow an utterance.
+_SPEECH_TRIGGERS = frozenset(
+    {"utterance", "utterance_reply", "llm_plan_strategy", "distress_detected_twice"}
+)
+
+
+def _said_decision(
+    bus, session: Session, say: Say, *, trigger: str | None, direct: bool, age_s: float = 0.0
+) -> None:
+    """Why a Say went out: the transition that caused it (a dwell timer or the person's
+    speech), so a trace can tell a reply from a ladder step that happened to follow."""
+    reply = direct or (
+        trigger is not None and (trigger in _SPEECH_TRIGGERS or trigger.startswith("interpreted_"))
+    )
+    _decision_activity(
+        bus,
+        say.session_id,
+        {
+            "decision": "said",
+            "strategy": say.strategy,
+            "trigger": trigger,
+            "direct": direct,
+            "reply": reply,
+            "deferred_s": round(age_s, 3),
+            "phase": session.phase.value,
+            "goal": session.goal,
+        },
+    )
 
 
 def _drop_pending_say(bus, session: Session, reason: str, now: datetime) -> None:
@@ -583,6 +621,14 @@ def _flush_pending_say(bus, session: Session, now: datetime, profile: PersonProf
         bus.publish(pending.event.model_copy(update={"ts": datetime.now(UTC)}))
         session.record_say(now, pending.event.strategy, pending.event.text)
         session._pending_say = None
+        _said_decision(
+            bus,
+            session,
+            pending.event,
+            trigger=pending.trigger,
+            direct=pending.direct,
+            age_s=(now - pending.queued_at).total_seconds(),
+        )
         _log(
             "published deferred Say",
             event_type="Say",

@@ -92,6 +92,30 @@ def test_tt1_and_tm2():
     ] == "strategy_changed"
 
 
+def _said(t, strategy, reply, trigger):
+    return TraceEvent(
+        t=t,
+        kind="decision",
+        type="Activity",
+        data={"decision": "said", "strategy": strategy, "reply": reply, "trigger": trigger},
+    )
+
+
+def test_tt1_scheduled_step_is_not_a_reply():
+    ladder = baseline(
+        ev(2, "Utterance", text="Where is Tom?"),
+        ev(4, "Say", text="Hello Jean, it's night-time.", strategy="soft_greeting"),
+        _said(4, "soft_greeting", False, "strategy_advanced"),
+    )
+    fail(ladder, "TT-1", "critical", "only a scheduled soft_greeting step followed")
+    reply = baseline(
+        ev(2, "Utterance", text="Where is Tom?"),
+        ev(4, "Say", text="Tom is safe.", strategy="validate_and_redirect"),
+        _said(4, "validate_and_redirect", True, "utterance_reply"),
+    )
+    passes(reply, "TT-1")
+
+
 def test_tt2_review_and_question_heuristic():
     assert is_question_or_request("Could you help me")
     assert is_question_or_request("I need the loo")
