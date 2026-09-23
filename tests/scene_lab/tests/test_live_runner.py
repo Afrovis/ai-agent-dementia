@@ -197,20 +197,24 @@ def test_frombench_and_diff(tmp_path):
         id="a",
         source="live",
         events=[
-            TraceEvent(t=1, kind="output", type="Say", data={}),
-            TraceEvent(t=7, kind="output", type="Notify", data={}),
+            TraceEvent(t=1, kind="output", type="Say", data={"strategy": "path_light"}),
+            TraceEvent(t=7, kind="output", type="Notify", data={"level": "info"}),
+            TraceEvent(t=9, kind="output", type="Say", data={"strategy": "guided_return"}),
         ],
     )
     offline = Trace(
         id="b",
         source="decision_bench",
         events=[
-            TraceEvent(t=2, kind="output", type="Say", data={}),
-            TraceEvent(t=12, kind="output", type="Show", data={}),
+            TraceEvent(t=2, kind="output", type="Say", data={"strategy": "path_light"}),
+            TraceEvent(t=2, kind="output", type="Say", data={"strategy": "guided_return"}),
+            TraceEvent(t=12, kind="output", type="Show", data={"face": "awake"}),
         ],
     )
     rows = compare(live, offline, 3)
-    assert [row["status"] for row in rows] == ["matched", "only-live", "only-in-process"]
+    # Same decisions line up by content; a late one is "shifted", not unmatched.
+    assert [row["status"] for row in rows] == ["matched", "only-live", "shifted", "only-in-process"]
+    assert rows[2]["delta_s"] == 7
 
 
 def test_mind_plan_runs_while_clock_advances():
