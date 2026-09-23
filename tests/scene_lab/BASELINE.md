@@ -1,0 +1,238 @@
+# scene_lab baseline, 2026-09-22/23
+
+The first measurements with scene_lab, and the evidence for each phase's
+acceptance in [HANDOFF.md](HANDOFF.md) §4. Text only: the runs themselves
+live in `../data-ai-agent-dementia/analysis/scene-lab/runs/` and are not
+committed. Run ids below name those folders.
+
+Agent model everywhere: `gemma4:e4b-mlx` on host Ollama, unless a row says
+`stub`. Every live `report.json` says `contention: true`: another compose
+project (`majority-vote`, a manual stack from another worktree) was up the
+whole time. Its agent sat in `IDLE` and made no LLM calls in the windows
+checked, so the contention was nominal, but HANDOFF rule 6 applies: treat
+the live latencies as indicative until they are repeated with that stack
+down.
+
+## What scene_lab finds in the current agent
+
+These hold across the offline baseline and the live runs.
+
+1. **Questions go unanswered.** A question or statement that the
+   interpreter does not map to a goal (`unclear`, `looking_for_person`,
+   `wants_to_leave`) gets no reply. Often the next thing said is a scheduled
+   ladder step that happens to follow, which the first version of TT-1
+   counted as a reply. Now that the agent records why it spoke (`said`
+   records, see below), 17 of 58 checked utterances in the offline
+   baseline have no reply. For 10 the only thing that followed was a
+   scheduled ladder step: "Where am I?", "Tom? Are you there?", "Please, I
+   just want to go home.", "It really hurts, I can't sleep.", "I'm so
+   frightened." Six were never composed at all, among them "Which way is
+   the bathroom?", "My chest hurts. I feel strange." and "Where's the loo?
+   This isn't right." One ("I can't get warm.") was vetoed. Live,
+   a persona asking about Tom four times got four ladder steps and no
+   answer.
+2. **Replies miss the 5 s deadline live.** Measured from the end of speech
+   to the start of playback over 39 replies in one scene
+   (`persona-interrupting-talker`, `2026-09-23T0034-live`): p50 5.5 s,
+   p95 7.5 s, max 7.9 s; 27 of the 39 were over 5 s. Single replies in
+   scripted scenes took 7.0 s and 6.7 s. The
+   budget splits into listen's time from end of speech to the published
+   transcript (1.2 to 4.1 s; 8.7 s once on a fresh stack, which included
+   the whisper model download), one or two LLM calls of 1.5 to 2.5 s each,
+   and page fetch plus playback start (about 0.4 s). Offline with `fixed:2.5`, an utterance waits 5 s for
+   interpret plus compose (TM-1), or 7.5 s when a second question arrives
+   during the first.
+3. **The restroom goal does not start from the camera in time.** perceive
+   publishes a `PersonState` only on a confirmed state change or its 60 s
+   heartbeat, never for a zone change alone
+   (`services/perceive/perceive/main.py`, `classify.py` tracker). The agent
+   confirms a zone after 3 consecutive readings with no time component
+   (`AgentConfig.zone_confirm_readings`, `Session._confirmed_zone`). A
+   person who walks steadily to the bathroom path therefore has the zone
+   confirmed about two heartbeats later, roughly 140 s. In every live
+   restroom scene the goal started only when the person *said* they
+   needed the toilet. decision_bench timelines repeat readings by hand and
+   hide this; the body model in `body.py` follows perceive's real cadence.
+4. **Nothing is said to a person who keeps talking on the restroom path.**
+   With the `restroom` goal active, "I really need to use the bathroom."
+   and "Left, you said." got no reply (live, `2026-09-23T0033-live`).
+5. **Escalation comes fast and then repeats.** A worried, repeating person
+   exhausted the strategy ladder and escalated to the caregiver within
+   44 to 78 s (`strategies_exhausted`). After that the agent said
+   "Someone is on their way, Jean, and you're safe here." about 15 times
+   in 6 minutes while the person asked a yes-or-no question about their
+   children. In that run one composed reassurance said "Jean, your
+   children are fine", a claim the profile does not support, and one said
+   "consider the phrase 'Tom is nearby and everything is settled'", the
+   caregiver template text leaking into speech.
+6. **Long silence while escalated.** SM-3 flags up to 475 s without a word
+   after "Someone is coming to help" while the person is still up (19 of
+   33 offline SM-3 hits are `ESCALATED/wait_for_caregiver/escalate_phone`,
+   8 are `ENGAGED/restroom/path_light`). This may be intended; see the
+   questions in the PR.
+7. **`escalate_phone` is spoken into an empty room.** TT-6 finds "Someone
+   is coming to help" said while the latest reading is `absent` (fall-02,
+   fall-05, silent-wander-04, silent-wander-06). The agent exempts this
+   strategy on purpose (`_flush_pending_say`).
+8. **Talk-over and barge-in.** With an interrupting persona, playback
+   started over the person's speech 12 times in one scene (TT-3), and one
+   interruptible sentence stopped 0.64 s after speech began against a
+   0.5 s deadline (TT-4).
+
+## Phase 0: trace, invariants and bug list
+
+Runs: `2026-09-23T0044-decision_bench` (56 scenes: 42 scenarios, their
+noisy variants and the 7 `conversation` scenarios) and
+`2026-09-23T0050-session_replay` (the 3 desk captures, `--llm recorded`),
+both at commit `a300dbe`.
+
+| Check | decision_bench, gemma | desk captures |
+| --- | --- | --- |
+| TT-1 no reply (critical) | 17 of 58 | 4 of 5 |
+| TT-2 review | 33 | 6 |
+| TT-5 short gap (minor, estimated playback) | 1 | 0 |
+| TT-6 Say while absent | 4 | 0 |
+| SM-3 silent session gap | 33 | 2 |
+| SM-4 light left on at trace end (minor) | 4 | 1 |
+| SM-5 published action a veto would deny | 0 of 372 | 0 of 23 |
+| WORD states_clock_time (minor) | 34 | 3 |
+| SM-1, SM-2, TT-3, TT-4, TT-7, TM-1 | 0 | 0 |
+
+Desk captures: "Hey, can you hear me?" (a ladder step followed), "It is
+not yet time to go to sleep.", "And we bet now." and "Okay, I'm back from
+the restroom." get no reply.
+
+TT-3 and TT-4 need `SpeechStarted` and real playback, so offline they are
+"not applicable"; they only fire live. Playback offline is estimated from
+word count (reported as `playback estimated: True`).
+
+### False positives removed while building the baseline
+
+Each was traced to its cause on a real trace before the check changed;
+HANDOFF §3 records the settled rules.
+
+- SM-3 "session did not end" fired whenever a bench timeline ended with
+  the person still up; it now needs the person back in bed for
+  settle + tail.
+- TM-1 flagged every deliberate confirmation delay (68 of 75 hits); it is
+  now loop lag in the strict sense, time spent blocked behind an LLM call.
+- SM-5 first skipped everything (missing context), then flagged
+  `orient_time_place` (session_replay forces an always-on night window)
+  and `guided_return` after "Can I go back to bed?" (the agent resolves the
+  restroom need on `interpreted_wants_bed`). All SM-5 criticals so far were
+  such reconstruction errors; there are none now.
+- TT-6 flagged a reply to someone who had just spoken while the camera had
+  lost them; recent speech now counts as presence, as in the agent.
+- `addresses_by_name` is a positive requirement, not a violation, and no
+  longer runs on every Say.
+
+### Decision records
+
+The agent publishes `Activity(kind="decision")` for pending-say drops,
+vetoes, interpretations (`interpreted`: intent, distress, text) and every
+Say (`said`: trigger, direct, deferred time, `reply`). The last two were
+added during the build: promotion needs recorded interpretations to replay
+deterministically, and TT-1 needs `reply` to tell an answer from a ladder
+step. They are telemetry only; the agent says exactly what it said before.
+
+## Phase 1: latency-faithful offline
+
+Deterministic pair, stub LLM (`2026-09-23T0050-decision_bench` against
+`-2`): with `--llm-latency fixed:2.5` everything is identical except
+TM-1, which goes from 0 to 8. Each hit is an utterance whose effect waits
+for interpret plus compose (5.0 s): conversation-01 and -03, distress-pain-01,
+fall-01 and its low-confidence variant, fall-03, fall-06, and conversation-05,
+where the second of two questions 3 s apart waits 7.5 s behind the first.
+Everything else only moves in time by the call durations.
+
+gemma pair (`2026-09-23T0044` against `2026-09-23T0047`): TM-1 0 → 11, TT-1
+critical 17 → 12 plus 3 major, SM-3 33 → 31. The TM-1 change is the
+latency. The TT-1 and SM-3 changes mix latency with gemma's own
+run-to-run variation (the same scenario's interpretation differs between
+runs, e.g. `distress-pain-01` against its `-typo` variant), which is why
+the stub pair is the attribution.
+
+Desk captures carry no recorded LLM durations; `--llm-latency recorded`
+falls back to `fixed:2.5` with a warning and adds one TM-1 hit
+(desk-time-question at 237 s). Captures made from now on keep the timing
+rows (`session_replay extract`).
+
+The 7 `conversation` scenarios are timeline-only with stub checkpoints and
+stay unlabelled until the answer-or-redirect policy exists.
+
+## Phase 2: scripted fake-live
+
+Three decision_bench scenarios, converted with `scene_lab from-bench`, ran
+live on the `nightsim` stack and in-process with the same model, then
+`scene_lab diff`:
+
+| Scene | Live run | Matched | Shifted | Only one side | Explanation |
+| --- | --- | ---: | ---: | ---: | --- |
+| restroom-01 | `2026-09-22T2338-live` | 9 | 7 | 0 | In-process the utterance lands at its scripted start (12.0 s). Live the line ends at 13.1 s, listen publishes at 17.1 s (4.1 s) and interpret takes 1.8 s, so the goal change, light and Say move to 19.1 s. |
+| disorientation-01 | `2026-09-22T2348-live` | 4 | 17 | 0 | One cascade: the first utterance arrives about 5.6 s later live, and the ladder's dwell timer restarts at the utterance, so every later step moves by about 6 s. |
+| conversation-01 | `2026-09-22T2359-live` | 19 | 1 | 0 | The time answer waits for transcription (2.8 s) and interpret (1.5 s). |
+
+Every decision appears on both sides; every difference is time, and each
+is explained by transcription and LLM latency. The manual check with a
+real browser page next to the virtual one is not done (it needs a person
+at a browser).
+
+## Phase 3: Claude mind
+
+The five persona scenes ran live, each once, after two harness fixes found
+in the first runs:
+
+- The mind spoke the device's lines ("Tom's alright. He's safe at home...")
+  because the prompt labelled device speech "Agent heard:". It is now
+  "The bedside device said to you:", with an explicit role and a person's
+  pace.
+- Finishing a line re-planned the mind every 2 to 3 s, a nonstop monologue.
+  Only device speech and silence re-plan now.
+
+After the fixes: 68 mind calls, 0 failures, latency p50 5.2 s, p95 7.9 s,
+max 12.0 s (sonnet via `claude -p`). The mind stays in role and paces
+itself; the interrupting persona calmed down over 6 minutes. Scenes that
+ended early did so by the mind's own `end_scene` (hidden-restroom at 102 s
+once Jean reached the bathroom).
+
+Not met yet: HANDOFF asks for each scene to run three times unattended.
+Each ran once after the fixes (repeated-question also before them).
+
+## Phase 4: director
+
+The first `run --hours 1` (`2026-09-23T0020-live`) could not direct at all:
+every director call failed on a JSON schema with unresolvable `$defs`, and
+every scene came from the least-covered-card fallback. That run was
+stopped with Ctrl-C, which recorded the scene in progress, `bugs.md` and
+one `index.jsonl` line, as intended. After the fix a director call takes
+about 20 s and picks an uncovered cell (for example distress_pain ×
+poor-hearing × need_without_keyword).
+
+DIRECTOR_HOUR_RESULTS
+
+`scene_lab bugs 2026-09-22T2348-live 2026-09-23T0020-live` labels the
+600 s cap stop fixed in between as `gone`, the director failures as `new`
+and the unanswered utterance as `persisting`.
+
+Not met yet: the `--hours 4` acceptance run.
+
+## Phase 5: promotion
+
+Two live failures promoted with `scene_lab promote` are in
+[promoted/](promoted/README.md). Both replay offline with recorded
+interpretations and latencies, fail on the current agent, and pass once
+the agent replies within 5 s:
+
+- "I don't like being here on my own." (`unclear`, distress 1): only the
+  scheduled `soft_greeting` follows.
+- "Where are my car keys? They'll be waiting." (`unclear`): nothing
+  answers it.
+
+## Harness bugs found by running it
+
+Recorded so the next reader trusts the numbers: flushing Redis under running
+services deleted consumer groups (now stop, flush, start); scripted scenes
+lost their beats at the first decision point; the `activity` stream's 200
+cap dropped early playback reports and decision records from end-of-scene
+exports (now a live `StreamTap`); a scripted end at exactly 600 s counted as
+a cap stop; the live-vs-in-process diff paired by time rather than content.
