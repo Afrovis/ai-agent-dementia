@@ -933,6 +933,7 @@ def run_once(
             plan = (
                 llm.plan(_session_state_for_llm(session), _profile_for_llm(profile))
                 if session.phase == Phase.ENGAGED
+                and session.last_person_state != "in_bed"
                 and not session.compliance_hold(now)
                 and (interpretation is None or interpretation.intent.value != "confused_time")
                 else None

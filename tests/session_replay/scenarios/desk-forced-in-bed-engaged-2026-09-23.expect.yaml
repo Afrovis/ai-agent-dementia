@@ -1,0 +1,21 @@
+llm: recorded
+interpretations:
+  "Hey, can you hear me?": {intent: unclear, distress: 0}
+  "Thank you.": {intent: fine, distress: 0}
+plans:
+  # Align the first observed soft_greeting transition after this utterance.
+  "Hey, can you hear me?": {next_strategy: soft_greeting}
+  # Recorded from the live llm_plan_strategy at 01:22:02.
+  "Thank you.": {next_strategy: guided_return}
+expect:
+  # 01:20:34 the operator released force-in-bed and a session started; the
+  # ladder ran soft_greeting, orient_time_place and validate_and_redirect.
+  # 01:21:48 the operator forced the person in bed while ENGAGED. The agent
+  # waits for in_bed to be stable before COOLDOWN; the recorded plan then
+  # proposed guided_return to someone it believed was already in bed.
+  # Once the latest reading is in_bed, no return-to-bed nudge may follow.
+  - after: {debug: {force_in_bed: true}}
+    within_s: 60
+    absent:
+      - {type: Say, strategy: guided_return}
+      - {type: Say, strategy: validate_and_redirect}

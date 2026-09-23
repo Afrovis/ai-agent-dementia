@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from nc_shared.events import DebugControl, PersonState, ResetSession, Utterance
 
-from session_replay.core import check_expectations, extract, read_jsonl, run_scenario
+from session_replay.core import RecordedLLM, check_expectations, extract, read_jsonl, run_scenario
 
 SCENARIOS = Path(__file__).parents[1] / "scenarios"
 
@@ -89,6 +89,25 @@ def test_run_simulated_inputs_and_expectations(tmp_path, mode):
     }
     passed, _ = check_expectations(timeline, expected)
     assert passed is (mode == "recorded")
+
+
+def test_recorded_plan_follows_latest_interpreted_utterance():
+    llm = RecordedLLM(
+        {},
+        {
+            "Thank you.": {"next_strategy": "guided_return"},
+            "Restroom please": {"goal_change": "restroom", "confidence": 0.8},
+        },
+    )
+    assert llm.plan() is None
+    llm.interpret("Thank you.", (), {})
+    assert llm.plan().next_strategy == "guided_return"
+    assert llm.plan().confidence == 1.0
+    llm.interpret("Restroom please", (), {})
+    assert llm.plan().goal_change == "restroom"
+    assert llm.plan().confidence == 0.8
+    llm.interpret("Unknown", (), {})
+    assert llm.plan() is None
 
 
 def test_ordered_window_and_never():

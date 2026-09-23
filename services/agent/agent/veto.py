@@ -27,6 +27,7 @@ import re
 from dataclasses import dataclass
 
 GUIDED_RETURN = "guided_return"
+VALIDATE_AND_REDIRECT = "validate_and_redirect"
 ORIENT_TIME_PLACE = "orient_time_place"
 
 
@@ -118,6 +119,15 @@ def _deny(rule: str, clause: str, reason: str) -> Verdict:
 
 
 def _check_strategy(strategy: str, context: VetoContext) -> Verdict:
+    if context.person_state == "in_bed" and strategy in (
+        GUIDED_RETURN,
+        VALIDATE_AND_REDIRECT,
+    ):
+        return _deny(
+            "no_return_prompt_in_bed",
+            "NICE-05",
+            f"{strategy} to a person who is already in bed",
+        )
     if strategy == GUIDED_RETURN:
         if context.goal == "restroom" or (
             not context.restroom_need_resolved

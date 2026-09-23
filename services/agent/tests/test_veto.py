@@ -41,6 +41,17 @@ def test_resolved_restroom_need_allows_guided_return():
     assert check(Proposal("strategy", "guided_return"), facts).allowed
 
 
+@pytest.mark.parametrize("strategy", ["guided_return", "validate_and_redirect"])
+def test_return_to_bed_strategies_are_vetoed_in_bed(strategy):
+    proposal = Proposal("strategy", strategy)
+    verdict = check(proposal, context(person_state="in_bed"))
+    assert not verdict.allowed
+    assert verdict.rule == "no_return_prompt_in_bed"
+    assert verdict.clause == "NICE-05"
+    assert verdict.reason == f"{strategy} to a person who is already in bed"
+    assert check(proposal, context(person_state="sitting_up")).allowed
+
+
 def test_cooldown_orientation_depends_on_person_state_and_settling():
     proposal = Proposal("strategy", "orient_time_place")
     assert check(proposal, context(phase="COOLDOWN", person_state="sitting_up")).allowed
