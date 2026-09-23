@@ -20,6 +20,11 @@ from nc_shared.events import (
 OVERRIDE_SECONDS = 15.0
 """How long listening (from SpeechStarted) or a Show face override lasts."""
 
+DOZE_SECONDS = 25.0
+"""How long resting eyes stay sleepy, slowly closing, before they sleep."""
+
+RESTING = {"in_bed", "sitting_up"}
+
 
 class EyesState:
     """Keep the latest eyes state; emit a message only when it changes.
@@ -31,11 +36,18 @@ class EyesState:
     SpeechStarted temporarily takes precedence over the override;
     Utterance or a 15-second timeout reveals it again. A subsequent Show
     speaking ends that listening interval.
+
+    A resting posture (in bed or sitting up) does not hold the narrow sleepy
+    eyes: they stay sleepy for DOZE_SECONDS while the page lowers the lids,
+    then sleep. The doze restarts when the person sits up from lying down and
+    when listening or a face override ends; lying down from sitting keeps it.
     """
 
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self.clock = clock
         self.posture = "open"
+        self.doze_from = 0.0
+        self.now = self.clock()
         self.show_override: str | None = None
         self.show_override_at: float | None = None
         self.listening_at: float | None = None
@@ -53,6 +65,9 @@ class EyesState:
 
     def _snapshot(self) -> dict:
         expression = self.posture
+        if self.posture in RESTING:
+            dozing = self.now - self.doze_from < DOZE_SECONDS
+            expression = "sleepy" if dozing else "sleeping"
         if self.show_override is not None:
             expression = self.show_override
         if self.listening_at is not None:
@@ -72,11 +87,14 @@ class EyesState:
         return self.state
 
     def _expire(self, now: float) -> None:
+        self.now = now
         if self.listening_at is not None and now - self.listening_at >= OVERRIDE_SECONDS:
             self.listening_at = None
+            self.doze_from = now
         if self.show_override_at is not None and now - self.show_override_at >= OVERRIDE_SECONDS:
             self.show_override = None
             self.show_override_at = None
+            self.doze_from = now
         while self.recent_notifies and now - self.recent_notifies[0][0] > 10:
             self.recent_notifies.popleft()
 
@@ -90,14 +108,22 @@ class EyesState:
         now = self.clock() if now is None else now
         self._expire(now)
         if isinstance(event, PersonState):
-            self.posture = {"in_bed": "sleeping", "sitting_up": "sleepy"}.get(event.state, "open")
+            posture = event.state if event.state in RESTING else "open"
+            stirred = posture == "sitting_up" and self.posture != "sitting_up"
+            if stirred or (posture in RESTING and self.posture not in RESTING):
+                self.doze_from = now
+            self.posture = posture
         elif isinstance(event, Gaze):
             self.gaze = {"target": event.target, "x": event.x, "y": event.y}
         elif isinstance(event, SpeechStarted):
             self.listening_at = now
         elif isinstance(event, Utterance):
+            if self.listening_at is not None:
+                self.doze_from = now
             self.listening_at = None
         elif isinstance(event, Show):
+            if self.show_override is not None or self.listening_at is not None:
+                self.doze_from = now
             self.show_override = event.face if event.face in {"listening", "speaking"} else None
             self.show_override_at = now if self.show_override is not None else None
             if event.face == "speaking":

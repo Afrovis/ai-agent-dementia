@@ -13,11 +13,15 @@ from nc_shared.bus import FakeBus
 from nc_shared.events import (
     Activity,
     AudioChunk,
+    BedZoneStatus,
+    CalibrateBed,
+    DebugControl,
     GoalChanged,
     Health,
     PersonState,
     PoseDebug,
     RawFrame,
+    ResetSession,
     Say,
     SessionState,
     Show,
@@ -70,6 +74,17 @@ def test_index_serves_face_page():
 
     assert response.status_code == 200
     assert 'id="face"' in response.text
+
+
+def test_page_and_static_files_are_revalidated():
+    bus = FakeBus()
+    app = create_app(bus)
+    with TestClient(app) as client:
+        page = client.get("/")
+        script = client.get("/static/script.js")
+
+    assert page.headers["cache-control"] == "no-cache"
+    assert script.headers["cache-control"] == "no-cache"
 
 
 def test_static_css_and_js_are_served():
@@ -231,10 +246,17 @@ def test_debug_messages_forward_and_late_join_caches_person_and_session():
     assert next(msg for msg in live.messages if msg["type"] == "pose")["latency_ms"] == 2
     late = Socket()
     asyncio.run(manager.send_current_state(late))
-    assert [msg["type"] for msg in late.messages] == ["person", "session", "eyes", "config"]
+    assert [msg["type"] for msg in late.messages] == [
+        "debug_config",
+        "person",
+        "session",
+        "eyes",
+        "config",
+    ]
 
 
 def receive_initial_eyes_and_config(websocket):
+    assert websocket.receive_json()["type"] == "debug_config"
     assert websocket.receive_json() == {
         "type": "eyes",
         "expression": "open",
@@ -259,6 +281,7 @@ def test_new_websocket_replays_latest_eyes_and_config():
         "gaze": {"target": "face", "x": 0.25, "y": 0.4},
     }
     with TestClient(app) as client, client.websocket_connect("/ws") as websocket:
+        assert websocket.receive_json()["type"] == "debug_config"
         assert websocket.receive_json() == app.state.manager.last_eyes
         assert websocket.receive_json() == {
             "type": "config",
@@ -266,6 +289,102 @@ def test_new_websocket_replays_latest_eyes_and_config():
             "night_end": "06:15",
             "clock_24h": True,
         }
+
+
+def test_debug_stream_forwards_applied_state_and_bed_zone_only():
+    bus = FakeBus()
+    manager = ConnectionManager()
+    bus.publish(DebugControl(source="embodiment", time_offset_hours=9), maxlen=100)
+    bus.publish(CalibrateBed(source="embodiment"), maxlen=100)
+    bus.publish(ResetSession(source="embodiment"), maxlen=100)
+    bus.publish(DebugControl(source="agent", time_offset_hours=3, force_in_bed=True), maxlen=100)
+    bus.publish(
+        BedZoneStatus(
+            source="perceive", has_bed=True, polygon=[(0.1, 0.2), (0.8, 0.2), (0.8, 0.9)]
+        ),
+        maxlen=100,
+    )
+
+    class Socket:
+        def __init__(self):
+            self.messages = []
+
+        async def send_text(self, raw):
+            self.messages.append(json.loads(raw))
+
+    live = Socket()
+    manager._connections.append(live)  # noqa: SLF001
+    asyncio.run(broadcast_loop(bus, manager, max_iterations=1))
+    assert [item["type"] for item in live.messages] == ["debug_state", "bed_zone"]
+    assert live.messages[0] == {
+        "type": "debug_state",
+        "time_offset_hours": 3.0,
+        "force_in_bed": True,
+    }
+    assert live.messages[1]["polygon"] == [[0.1, 0.2], [0.8, 0.2], [0.8, 0.9]] or live.messages[1][
+        "polygon"
+    ] == [(0.1, 0.2), (0.8, 0.2), (0.8, 0.9)]
+    assert bus.pending("debug", "embodiment") == []
+    late = Socket()
+    asyncio.run(manager.send_current_state(late))
+    assert [item["type"] for item in late.messages] == [
+        "debug_config",
+        "eyes",
+        "config",
+        "debug_state",
+        "bed_zone",
+    ]
+
+
+def test_debug_controls_disabled_ignores_requests(monkeypatch):
+    monkeypatch.delenv("EMBODIMENT_DEBUG_CONTROLS", raising=False)
+    bus = FakeBus()
+    with TestClient(create_app(bus)) as client, client.websocket_connect("/ws") as websocket:
+        assert websocket.receive_json() == {"type": "debug_config", "enabled": False}
+        websocket.send_json({"type": "debug_control", "time_offset_hours": 2, "force_in_bed": True})
+        websocket.send_json({"type": "calibrate_bed"})
+        websocket.send_json({"type": "reset_session"})
+        websocket.send_json(client_hello())
+        websocket.receive_json()
+    assert bus._streams.get("debug", []) == []  # noqa: SLF001
+
+
+def test_debug_controls_enabled_publishes_validated_requests(monkeypatch):
+    monkeypatch.setenv("EMBODIMENT_DEBUG_CONTROLS", "yes")
+    bus = FakeBus()
+    with TestClient(create_app(bus)) as client, client.websocket_connect("/ws") as websocket:
+        assert websocket.receive_json() == {"type": "debug_config", "enabled": True}
+        websocket.send_json(
+            {"type": "debug_control", "time_offset_hours": 100, "force_in_bed": True}
+        )
+        websocket.send_json(
+            {"type": "debug_control", "time_offset_hours": -100, "force_in_bed": False}
+        )
+        websocket.send_json(
+            {"type": "debug_control", "time_offset_hours": "nan", "force_in_bed": True}
+        )
+        websocket.send_json(
+            {"type": "debug_control", "time_offset_hours": True, "force_in_bed": True}
+        )
+        websocket.send_json({"type": "calibrate_bed"})
+        websocket.send_json({"type": "reset_session"})
+        websocket.send_json(client_hello())
+        websocket.receive_json()
+    events = [
+        {"DebugControl": DebugControl, "CalibrateBed": CalibrateBed, "ResetSession": ResetSession}[
+            entry.event_type
+        ].model_validate_json(entry.data)
+        for entry in bus._streams["debug"]  # noqa: SLF001
+    ]
+    assert [type(event) for event in events] == [
+        DebugControl,
+        DebugControl,
+        CalibrateBed,
+        ResetSession,
+    ]
+    assert [event.time_offset_hours for event in events[:2]] == [23, -23]
+    assert [event.force_in_bed for event in events[:2]] == [True, False]
+    assert all(event.source == "embodiment" for event in events)
 
 
 def test_websocket_receives_show_event_delivered_via_bus():
@@ -282,6 +401,7 @@ def test_websocket_receives_show_event_delivered_via_bus():
     bus.publish(show)
 
     with TestClient(app) as client, client.websocket_connect("/ws") as websocket:
+        assert websocket.receive_json()["type"] == "debug_config"
         # The app's own startup task runs the broadcast loop unbounded in the
         # background; give it a moment to pick up the pre-published event.
         message = websocket.receive_json()
@@ -830,7 +950,7 @@ def test_two_pages_get_count_and_health_update():
     app = create_app(bus)
 
     def clients_message(socket, count):
-        for _ in range(5):
+        for _ in range(6):
             message = socket.receive_json()
             if message["type"] == "clients" and len(message["pages"]) == count:
                 return message

@@ -176,6 +176,41 @@ def test_planner_may_select_only_the_exact_next_available_strategy():
     assert session.strategy_index == 1
 
 
+def test_planner_skips_in_bed_utterance_but_interprets_it():
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    llm = FakeLLM(
+        interpretations=[Interpretation(intent=Intent.FINE, distress=0)],
+        plans=[Plan(next_strategy="soft_greeting", confidence=0.9)],
+    )
+    bus.publish(PersonState(source="perceive", state="sitting_up", confidence=0.9, zone="bed"))
+    run_once(bus, session, now_fn=lambda: NIGHT, llm=llm)
+    bus.publish(Utterance(source="listen", text="Are you there?", confidence=0.9, duration_s=1.0))
+    run_once(bus, session, now_fn=lambda: NIGHT + timedelta(seconds=1), llm=None)
+    assert session.phase.value == "ENGAGED"
+    bus.publish(PersonState(source="perceive", state="in_bed", confidence=0.9, zone="bed"))
+    run_once(bus, session, now_fn=lambda: NIGHT + timedelta(seconds=2), llm=llm)
+    bus.publish(Utterance(source="listen", text="Thank you.", confidence=0.9, duration_s=1.0))
+    run_once(bus, session, now_fn=lambda: NIGHT + timedelta(seconds=3), llm=llm)
+    assert session.last_person_state == "in_bed"
+    assert [name for name, _ in llm.calls] == ["interpret"]
+
+
+def test_planner_still_runs_for_sitting_up_utterance():
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    llm = FakeLLM(
+        interpretations=[Interpretation(intent=Intent.FINE, distress=0)],
+        plans=[Plan(next_strategy="soft_greeting", confidence=0.9)],
+    )
+    bus.publish(PersonState(source="perceive", state="sitting_up", confidence=0.9, zone="bed"))
+    run_once(bus, session, now_fn=lambda: NIGHT, llm=llm)
+    bus.publish(Utterance(source="listen", text="Thank you.", confidence=0.9, duration_s=1.0))
+    run_once(bus, session, now_fn=lambda: NIGHT + timedelta(seconds=1), llm=llm)
+    assert session.last_person_state == "sitting_up"
+    assert [name for name, _ in llm.calls] == ["interpret", "plan"]
+
+
 def test_second_distressed_interpretation_escalates_through_session_rules():
     bus = make_bus()
     session = Session(config=AgentConfig())

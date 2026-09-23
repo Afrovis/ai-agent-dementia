@@ -211,8 +211,10 @@ cancellation from `getUserMedia`.
 The bedside page shows glowing red eyes (design and exact values in
 `docs/EYES_UPGRADE_PLAN.md` and `docs/EYES_UPGRADE_HANDOFF.md`). Embodiment
 picks the expression itself, as a reflex, in `embodiment/eyes.py`: `in_bed`
-is sleeping (with floating z's), `sitting_up` is sleepy, anything else is
-open; `SpeechStarted` means listening until the next `Utterance` or 15 s, and
+and `sitting_up` are sleepy for a 25 s doze (`DOZE_SECONDS`) while the page
+slowly lowers the lids, then sleeping (with floating z's); sitting up from
+lying down, or the end of listening or a face override, restarts the doze;
+anything else is open; `SpeechStarted` means listening until the next `Utterance` or 15 s, and
 `Show.face` listening/speaking overrides posture for at most 15 s. The page
 switches to speaking while speech audio plays. The alert vignette comes on
 when the session enters `ESCALATED` and fades out when the caregiver
@@ -273,6 +275,18 @@ Say playback events show requests, failures, interruptions and completed clips;
 if the browser blocks autoplay, a bedside "Tap to turn on the voice" button
 appears so a person can unlock and retry a recent clip.
 The overlay also shows this page's identity and audio state, plus the count of connected bedside pages.
+
+For desk testing, set `EMBODIMENT_DEBUG_CONTROLS=true` and restart
+`embodiment` to get operator controls in that overlay: shift the agent's time
+of day by whole hours (so 3 a.m. is reachable at noon) or reset it, force the
+agent to treat every `PersonState` as in bed, and, when perceive reports no bed
+zone, a "Detect bed zone" button that runs `calibrate_bed` on about 20 live
+frames, writes `zones.yaml` and reloads it in `perceive` without a restart.
+These travel as `DebugControl`, `CalibrateBed` and `BedZoneStatus` on the
+`debug` stream. The offset moves only the night window and spoken time, never
+session timers. Overrides live in the agent's memory, so restarting `agent`
+clears them; an amber badge stays on screen while any override is active. The
+page has no login, so leave the flag off anywhere but a desk test.
 
 `dashboard` on port 8444 serves the caregiver pages, including the Zones
 editor (issue #10): draw the bed, door, and bathroom-path zones on a live frame and save them to

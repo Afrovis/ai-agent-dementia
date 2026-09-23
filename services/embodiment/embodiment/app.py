@@ -41,6 +41,7 @@ import binascii
 import json
 import logging
 import math
+import os
 import re
 import time
 from collections.abc import AsyncIterator
@@ -55,12 +56,16 @@ from nc_shared.events import (
     Ack,
     Activity,
     AudioChunk,
+    BedZoneStatus,
+    CalibrateBed,
+    DebugControl,
     Gaze,
     Health,
     Notify,
     PersonState,
     PoseDebug,
     RawFrame,
+    ResetSession,
     Say,
     SessionState,
     Show,
@@ -192,6 +197,9 @@ class ConnectionManager:
             "night_end": night_end,
             "clock_24h": clock_24h,
         }
+        self.last_debug_state: dict | None = None
+        self.last_bed_zone: dict | None = None
+        self.debug_controls_enabled = False
 
     async def connect(self, websocket: WebSocket, channel: str = "ws") -> None:
         """Accept `websocket` and register it for future broadcasts."""
@@ -411,6 +419,10 @@ class ConnectionManager:
             self.last_session = message
         elif message.get("type") == "eyes":
             self.last_eyes = message
+        elif message.get("type") == "debug_state":
+            self.last_debug_state = message
+        elif message.get("type") == "bed_zone":
+            self.last_bed_zone = message
         dead: list[WebSocket] = []
         recipients = []
         for connection in list(self._connections):
@@ -444,13 +456,18 @@ class ConnectionManager:
             await self.disconnect(connection, reason="send failed")
 
     async def send_current_state(self, websocket: WebSocket) -> None:
-        """Push the latest display and eyes state to a newly connected page."""
+        """Push the latest display, eyes and debug state to a newly connected page."""
+        await websocket.send_text(
+            json.dumps({"type": "debug_config", "enabled": self.debug_controls_enabled})
+        )
         for message in (
             self.last_show,
             self.last_person,
             self.last_session,
             self.last_eyes,
             self.config,
+            self.last_debug_state,
+            self.last_bed_zone,
         ):
             if message is not None:
                 await websocket.send_text(json.dumps(message))
@@ -586,6 +603,7 @@ async def broadcast_loop(
         "ack",
         "pose_debug",
         "activity",
+        "debug",
     ):
         bus.ensure_group(stream, GROUP)
 
@@ -610,12 +628,40 @@ async def broadcast_loop(
             ("ack", None),
             ("pose_debug", _debug_to_message),
             ("activity", _debug_to_message),
+            ("debug", None),
         )
         for stream, to_message in streams:
             messages = await asyncio.to_thread(
-                bus.read, stream, GROUP, consumer, count=count, block_ms=block_ms
+                bus.read,
+                stream,
+                GROUP,
+                consumer,
+                count=count,
+                # Rare operator events; never add a block wait to speech latency.
+                block_ms=None if stream == "debug" else block_ms,
             )
             for msg_id, event in messages:
+                if stream == "debug":
+                    if isinstance(event, DebugControl) and event.source == "agent":
+                        await manager.broadcast(
+                            {
+                                "type": "debug_state",
+                                "time_offset_hours": event.time_offset_hours,
+                                "force_in_bed": event.force_in_bed,
+                            }
+                        )
+                    elif isinstance(event, BedZoneStatus):
+                        await manager.broadcast(
+                            {
+                                "type": "bed_zone",
+                                "has_bed": event.has_bed,
+                                "polygon": event.polygon,
+                                "calibration": event.calibration,
+                                "detail": event.detail,
+                            }
+                        )
+                    bus.ack(stream, GROUP, msg_id)
+                    continue
                 if stream == "session" and not isinstance(event, SessionState):
                     bus.ack(stream, GROUP, msg_id)
                     continue
@@ -884,6 +930,11 @@ def create_app(
     manager = ConnectionManager(
         bus, night_start=night_start, night_end=night_end, clock_24h=clock_24h
     )
+    manager.debug_controls_enabled = os.getenv("EMBODIMENT_DEBUG_CONTROLS", "").lower() in {
+        "true",
+        "1",
+        "yes",
+    }
     photo_dir = Path(photo_dir)
     voice_clip_dir = Path(voice_clip_dir)
 
@@ -923,6 +974,15 @@ def create_app(
     app = FastAPI(title="Night Companion embodiment", lifespan=lifespan)
     app.state.manager = manager
     app.state.bus = bus
+
+    @app.middleware("http")
+    async def revalidate_page(request, call_next):
+        # The bedside page stays open for days; make a plain reload pick up a
+        # redeployed script instead of a heuristically cached one.
+        response = await call_next(request)
+        if request.url.path == "/" or request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -979,6 +1039,61 @@ def create_app(
                     "visibility",
                 }:
                     await manager.update(websocket, message)
+                elif isinstance(message, dict) and message.get("type") in {
+                    "debug_control",
+                    "calibrate_bed",
+                    "reset_session",
+                }:
+                    kind = message["type"]
+                    if not manager.debug_controls_enabled:
+                        logger.warning(
+                            json.dumps(
+                                {
+                                    "service": SERVICE_NAME,
+                                    "event_type": kind,
+                                    "detail": "controls disabled",
+                                }
+                            )
+                        )
+                        continue
+                    if kind == "debug_control":
+                        offset = message.get("time_offset_hours")
+                        forced = message.get("force_in_bed")
+                        if (
+                            type(offset) not in (int, float)
+                            or not math.isfinite(offset)
+                            or type(forced) is not bool
+                        ):
+                            logger.warning(
+                                json.dumps(
+                                    {
+                                        "service": SERVICE_NAME,
+                                        "event_type": kind,
+                                        "detail": "invalid control values",
+                                    }
+                                )
+                            )
+                            continue
+                        event = DebugControl(
+                            source=SERVICE_NAME,
+                            time_offset_hours=max(-23, min(23, offset)),
+                            force_in_bed=forced,
+                        )
+                    elif kind == "calibrate_bed":
+                        event = CalibrateBed(source=SERVICE_NAME)
+                    else:
+                        event = ResetSession(source=SERVICE_NAME)
+                    bus.publish(event, maxlen=100)
+                    logger.warning(
+                        json.dumps(
+                            {
+                                "service": SERVICE_NAME,
+                                "event_type": type(event).__name__,
+                                "time_offset_hours": getattr(event, "time_offset_hours", None),
+                                "force_in_bed": getattr(event, "force_in_bed", None),
+                            }
+                        )
+                    )
                 else:
                     publish_playback(bus, message)
         except WebSocketDisconnect as exc:

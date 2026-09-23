@@ -12,7 +12,7 @@ from nc_shared.events import (
     Utterance,
 )
 
-from embodiment.eyes import EyesState
+from embodiment.eyes import DOZE_SECONDS, EyesState
 
 
 def person(state):
@@ -36,7 +36,7 @@ def notify():
 @pytest.mark.parametrize(
     ("posture", "expression"),
     [
-        ("in_bed", "sleeping"),
+        ("in_bed", "sleepy"),
         ("sitting_up", "sleepy"),
         ("standing", "open"),
         ("walking", "open"),
@@ -62,14 +62,16 @@ def test_speech_started_times_out_on_tick_and_utterance_ends_listening():
     assert eyes.consume(SpeechStarted(source="listen"), now=1)["expression"] == "listening"
     eyes.consume(SpeechStarted(source="listen"), now=10)
     assert eyes.tick(24) is None
-    assert eyes.tick(25)["expression"] == "sleeping"
+    assert eyes.tick(25)["expression"] == "sleepy"
     eyes.consume(SpeechStarted(source="listen"), now=30)
     assert (
         eyes.consume(Utterance(source="listen", text="hi", confidence=1, duration_s=1), now=31)[
             "expression"
         ]
-        == "sleeping"
+        == "sleepy"
     )
+    assert eyes.tick(31 + DOZE_SECONDS - 0.1) is None
+    assert eyes.tick(31 + DOZE_SECONDS)["expression"] == "sleeping"
 
 
 def test_show_override_and_posture_interaction():
@@ -82,7 +84,7 @@ def test_show_override_and_posture_interaction():
     eyes.consume(SpeechStarted(source="listen"), now=0)
     eyes.consume(Utterance(source="listen", text="hi", confidence=1, duration_s=1), now=1)
     assert eyes.state["expression"] == "listening"
-    assert eyes.consume(show("asleep"))["expression"] == "sleeping"
+    assert eyes.consume(show("asleep"))["expression"] == "sleepy"
     assert eyes.consume(show("awake")) is None
 
 
@@ -91,7 +93,28 @@ def test_show_override_expires_after_fifteen_seconds():
     eyes.consume(person("in_bed"), now=0)
     assert eyes.consume(show("listening"), now=100)["expression"] == "listening"
     assert eyes.tick(114) is None
-    assert eyes.tick(115)["expression"] == "sleeping"
+    assert eyes.tick(115)["expression"] == "sleepy"
+    assert eyes.tick(115 + DOZE_SECONDS)["expression"] == "sleeping"
+
+
+@pytest.mark.parametrize("posture", ["in_bed", "sitting_up"])
+def test_resting_eyes_doze_then_sleep(posture):
+    eyes = EyesState(clock=lambda: 0)
+    assert eyes.consume(person(posture), now=10)["expression"] == "sleepy"
+    assert eyes.tick(10 + DOZE_SECONDS - 0.1) is None
+    assert eyes.tick(10 + DOZE_SECONDS)["expression"] == "sleeping"
+    assert eyes.consume(person("standing"), now=100)["expression"] == "open"
+
+
+def test_lying_down_keeps_dozing_and_sitting_up_restarts_it():
+    eyes = EyesState(clock=lambda: 0)
+    eyes.consume(person("sitting_up"), now=0)
+    assert eyes.consume(person("in_bed"), now=10) is None
+    assert eyes.tick(DOZE_SECONDS)["expression"] == "sleeping"
+    assert eyes.consume(person("in_bed"), now=60) is None
+    assert eyes.consume(person("sitting_up"), now=70)["expression"] == "sleepy"
+    assert eyes.consume(person("sitting_up"), now=80) is None
+    assert eyes.tick(70 + DOZE_SECONDS)["expression"] == "sleeping"
 
 
 def test_show_speaking_after_speech_started_takes_over():

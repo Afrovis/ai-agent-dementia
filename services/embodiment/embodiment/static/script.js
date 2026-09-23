@@ -160,7 +160,111 @@
     frameTimes: [], lastFrame: 0, lastAudio: 0, micLevel: 0,
     hearingUntil: 0, active: {}, speaking: false, audioUnlocked: false,
     audioBlocked: false, events: [], personChanged: Date.now(), pages: [],
+    controlsEnabled: false, appliedControl: { time_offset_hours: 0, force_in_bed: false },
+    pendingControl: null, pendingUntil: 0,
+    bedZone: null,
   };
+  const controlsEl = document.getElementById("debug-controls");
+  // Control gestures must not unlock or retry patient-facing speech.
+  for (const kind of ["pointerdown", "click"]) {
+    controlsEl.addEventListener(kind, (event) => event.stopPropagation());
+  }
+  controlsEl.addEventListener("keydown", (event) => {
+    if (event.key.toLowerCase() !== "d") event.stopPropagation();
+  });
+
+  function sendDebug(message) {
+    if (debugState.controlsEnabled && playbackSocket && playbackSocket.readyState === WebSocket.OPEN) {
+      playbackSocket.send(JSON.stringify(message));
+      return true;
+    }
+    return false;
+  }
+
+  // Clicks step from the last requested control, not the agent's last echo, so
+  // quick repeated clicks are not lost while the echo is still on its way.
+  function requestedControl() {
+    if (debugState.pendingControl && Date.now() >= debugState.pendingUntil) debugState.pendingControl = null;
+    return debugState.pendingControl || debugState.appliedControl;
+  }
+  function requestControl(control) {
+    if (sendDebug({ type: "debug_control", ...control })) {
+      debugState.pendingControl = control;
+      debugState.pendingUntil = Date.now() + 3000;
+      renderControls();
+    }
+  }
+  controlsEl.querySelectorAll("[data-offset]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const current = requestedControl();
+      const step = Number(button.dataset.offset);
+      requestControl({
+        time_offset_hours: step === 0 ? 0 : Math.max(-23, Math.min(23, current.time_offset_hours + step)),
+        force_in_bed: current.force_in_bed });
+    });
+  });
+  document.getElementById("force-in-bed").addEventListener("click", () => {
+    const current = requestedControl();
+    requestControl({ time_offset_hours: current.time_offset_hours, force_in_bed: !current.force_in_bed });
+  });
+  const resetSession = document.getElementById("reset-session");
+  let resetDeadline = 0;
+  let resetTimer = null;
+  resetSession.addEventListener("click", () => {
+    if (Date.now() < resetDeadline) {
+      resetDeadline = 0;
+      clearTimeout(resetTimer);
+      if (sendDebug({ type: "reset_session" })) {
+        resetSession.textContent = "Session reset sent";
+        resetTimer = setTimeout(() => { resetSession.textContent = "Reset session"; }, 3000);
+      } else {
+        resetSession.textContent = "Reset session";
+      }
+      return;
+    }
+    clearTimeout(resetTimer);
+    resetDeadline = Date.now() + 3000;
+    resetSession.textContent = "Confirm reset?";
+    resetTimer = setTimeout(() => {
+      resetDeadline = 0;
+      resetSession.textContent = "Reset session";
+    }, 3000);
+  });
+  document.getElementById("detect-bed").addEventListener("click", () => sendDebug({ type: "calibrate_bed" }));
+
+  function renderControls() {
+    controlsEl.classList.toggle("hidden", !debugState.controlsEnabled);
+    const requested = requestedControl();
+    const waiting = requested !== debugState.appliedControl ? "…" : "";
+    const requestedOffset = requested.time_offset_hours;
+    const suffix = requestedOffset === 0 ? "" : ` (${requestedOffset > 0 ? "+" : "−"}${Math.abs(requestedOffset)}h)`;
+    const agentTime = new Date(Date.now() + requestedOffset * 3600000);
+    document.getElementById("agent-clock").textContent = `Agent clock ${agentTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}${suffix}${waiting}`;
+    document.getElementById("force-in-bed").textContent = `Force in bed: ${requested.force_in_bed ? "ON" : "OFF"}${waiting}`;
+    // The override banner shows what the agent has actually applied.
+    const applied = debugState.appliedControl;
+    const offset = applied.time_offset_hours;
+    const overrides = [offset !== 0 ? `${offset > 0 ? "+" : "−"}${Math.abs(offset)}h` : "", applied.force_in_bed ? "in bed forced" : ""].filter(Boolean).join(" · ");
+    const active = !!overrides;
+    const banner = document.getElementById("debug-override-banner");
+    const badge = document.getElementById("debug-override-badge");
+    banner.textContent = `DEBUG OVERRIDE ACTIVE: ${overrides}`;
+    badge.textContent = `DEBUG ${overrides}`;
+    banner.classList.toggle("hidden", !active);
+    badge.classList.toggle("hidden", !active);
+    const bed = debugState.bedZone;
+    const label = document.getElementById("bed-zone-label");
+    const detail = document.getElementById("bed-zone-detail");
+    const detect = document.getElementById("detect-bed");
+    label.textContent = !bed ? "Bed zone: waiting for status" : bed.calibration === "running" ? "Detecting bed zone…" : bed.has_bed ? "Bed zone set" : "No bed zone set";
+    detail.textContent = !bed ? "" : bed.calibration === "failed" ? (bed.detail || "Bed detection failed") : (!bed.has_bed && bed.detail) || "";
+    detect.classList.toggle("hidden", !bed || (bed.has_bed && bed.calibration !== "running"));
+    if (bed && !bed.has_bed) detect.classList.remove("hidden");
+    detect.disabled = !!bed && bed.calibration === "running";
+    detect.textContent = detect.disabled ? "Detecting bed zone…" : "Detect bed zone";
+  }
+  setInterval(renderControls, 1000);
+  renderControls();
   function identityMessage(type) {
     return { type, page_id: pageId, device_id: deviceId,
       user_agent: navigator.userAgent.slice(0, 256), platform: (navigator.platform || "unknown").slice(0, 80),
@@ -222,6 +326,19 @@
       ctx.fillRect(transport.x, transport.y, transport.width, transport.height);
       const image = letterboxRect(video.videoWidth, video.videoHeight, transport.width, transport.height);
       ctx.drawImage(video, transport.x + image.x, transport.y + image.y, image.width, image.height);
+      const polygon = debugState.bedZone && debugState.bedZone.polygon;
+      if (polygon && polygon.length > 2) {
+        ctx.beginPath();
+        polygon.forEach(([px, py], index) => {
+          const x = transport.x + px * transport.width;
+          const y = transport.y + py * transport.height;
+          if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        });
+        ctx.closePath();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = "#ffbd69";
+        ctx.stroke();
+      }
       const pose = debugState.pose;
       if (pose && pose.detected) {
         const age = (Date.now() - new Date(pose.ts).getTime()) / 1000;
@@ -377,7 +494,8 @@
     });
   }
 
-  function unlockAudioFromGesture() {
+  function unlockAudioFromGesture(event) {
+    if (event && controlsEl.contains(event.target)) return;
     // Call play() synchronously inside the gesture; browser activation can be
     // lost after the first await. A blocked clip is retried only while fresh.
     const record = pendingSpeech;
@@ -554,6 +672,19 @@
       addDebugEvent(`heard: ${msg.text}`, msg.ts);
     } else if (msg.type === "pose") {
       debugState.pose = msg;
+    } else if (msg.type === "debug_config") {
+      debugState.controlsEnabled = msg.enabled === true;
+      renderControls();
+    } else if (msg.type === "debug_state") {
+      debugState.appliedControl = msg;
+      const pending = debugState.pendingControl;
+      if (pending && pending.time_offset_hours === msg.time_offset_hours && pending.force_in_bed === msg.force_in_bed) {
+        debugState.pendingControl = null;
+      }
+      renderControls();
+    } else if (msg.type === "bed_zone") {
+      debugState.bedZone = msg;
+      renderControls();
     } else if (msg.type === "activity") {
       if (msg.kind === "playback") return;
       debugState.active[msg.kind] = msg.phase === "start";

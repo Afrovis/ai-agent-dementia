@@ -69,7 +69,7 @@ services:
       PERCEIVE_VISION_TIMEOUT_SECONDS: ${PERCEIVE_VISION_TIMEOUT_SECONDS}
     volumes:
       - ./data:/app/data
-      - ./config:/app/config:ro
+      - ./config:/app/config
 
   listen:
     build:
@@ -174,6 +174,7 @@ services:
       PIPER_CACHE_DIR: ${PIPER_CACHE_DIR:-/tmp/night-companion-tts}
       PIPER_SPEED: ${PIPER_SPEED:-0.85}
       STRATEGIES_PATH: ${STRATEGIES_PATH}
+      EMBODIMENT_DEBUG_CONTROLS: ${EMBODIMENT_DEBUG_CONTROLS:-false}
       PERSON_PATH: ${PERSON_PATH:-/app/config/person.yaml}
     ports:
       - "${EMBODIMENT_PORT}:${EMBODIMENT_PORT}"
