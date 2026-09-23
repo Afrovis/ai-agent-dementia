@@ -10,6 +10,7 @@
   <div id="brightness-overlay"></div>
   <div id="media-status"></div>
   <div id="clients-warning" class="hidden" role="alert"></div>
+  <div id="debug-override-badge" class="hidden" role="status"></div>
 
   <main id="stage">
     <div id="photo" class="hidden">
@@ -36,6 +37,20 @@
 
   <aside id="debug" class="hidden" aria-label="Pipeline debug overlay">
     <div class="debug-title">PIPELINE <span id="debug-clock"></span></div>
+    <div id="debug-override-banner" class="hidden" role="status"></div>
+    <section id="debug-controls" class="hidden" aria-label="Operator debug controls">
+      <div class="debug-title">OPERATOR CONTROLS</div>
+      <div class="debug-control-row"><span id="agent-clock">Agent clock --:--</span></div>
+      <div class="debug-control-row">
+        <button type="button" data-offset="-1">−1h</button>
+        <button type="button" data-offset="1">+1h</button>
+        <button type="button" data-offset="0">Reset</button>
+      </div>
+      <div class="debug-control-row"><button id="force-in-bed" type="button">Force in bed: OFF</button></div>
+      <div id="bed-zone-label">Bed zone: waiting for status</div>
+      <div id="bed-zone-detail"></div>
+      <button id="detect-bed" class="hidden" type="button">Detect bed zone</button>
+    </section>
     <canvas id="debug-camera" width="320" height="180"></canvas>
     <div id="debug-pose-label">camera off</div>
     <div class="debug-status"><span id="debug-person" class="state-chip">unknown</span> <span id="debug-person-detail"></span></div>
