@@ -3,7 +3,8 @@ data/
 __pycache__/
 *.pyc
 .venv/
-.venv-dialogue/
+.venv-*/
+.claude/worktrees/
 .DS_Store
 *.egg-info/
 build/
