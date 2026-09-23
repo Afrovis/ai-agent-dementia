@@ -247,7 +247,7 @@ owner's own test clips ever go to a cloud model.
     critical violations but did not beat the majority baseline on labelled
     decisions (83.3% vs 86.5%). Its confidence carried no signal.
   - Live desk testing brought a debug overlay, `session_replay` and fixes to
-    startup, echo and barge-in (#80–#83).
+    startup, echo and barge-in (#80).
   - scene_lab phases 0–5 (#85).
 - **Volunteer recording site** built (#64, #65).
 
@@ -265,6 +265,10 @@ owner's own test clips ever go to a cloud model.
 ### Open or next
 
 - PR #86 (bedside eyes), open for review.
+- PRs #81–#83 (debug controls, operator session reset, answering a person
+  who is up during COOLDOWN, no return-to-bed nudges in bed) were merged
+  into `live-pipeline-debugging`, **not `main`**. That branch still needs a
+  PR into `main`.
 - Issue #27: the two-week volunteer dry run.
 - A dark / infrared recording round. Nothing has been validated in IR yet, so
   pose-backend robustness in the dark and under blankets is untested.
