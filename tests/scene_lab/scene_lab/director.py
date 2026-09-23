@@ -99,6 +99,20 @@ def _valid_config(scene: Scene) -> None:
             setattr(scene, field, default)
 
 
+def output_schema() -> dict:
+    """JSON schema for the director's reply. Scene's nested models live in `$defs`, which
+    must sit at the root: `#/$defs/...` references resolve from the root document, and a
+    schema nested under `properties.scene` made every Claude call fail."""
+    scene = Scene.model_json_schema()
+    defs = scene.pop("$defs", {})
+    return {
+        "type": "object",
+        "properties": {"scene": scene, "rationale": {"type": "string"}},
+        "required": ["scene", "rationale"],
+        "$defs": defs,
+    }
+
+
 class Director:
     def __init__(self, model: str = "opus", runner=None):
         self.model = model
@@ -129,18 +143,7 @@ class Director:
                     system = Path(directory) / "system.txt"
                     system.write_text("Return only structured JSON for a synthetic scene card.")
                     result = (self.runner or run_claude)(
-                        system,
-                        prompt + error,
-                        {
-                            "type": "object",
-                            "properties": {
-                                "scene": Scene.model_json_schema(),
-                                "rationale": {"type": "string"},
-                            },
-                            "required": ["scene", "rationale"],
-                        },
-                        self.model,
-                        "low",
+                        system, prompt + error, output_schema(), self.model, "low"
                     )
                 raw = (
                     result.get("structured_output", result) if isinstance(result, dict) else result

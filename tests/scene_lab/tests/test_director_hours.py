@@ -252,3 +252,27 @@ def test_hours_director_timeout_uses_fallback(tmp_path, monkeypatch):
     )
     assert director.fallbacks == 1
     assert json.loads((tmp_path / "index.jsonl").read_text())["scene_count"] == 1
+
+
+def test_director_schema_references_resolve_from_the_root():
+    from scene_lab.director import output_schema
+
+    schema = output_schema()
+    refs = set()
+
+    def walk(node):
+        if isinstance(node, dict):
+            if "$ref" in node:
+                refs.add(node["$ref"])
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(schema)
+    assert refs, "Scene should reference nested models"
+    for ref in refs:
+        node = schema
+        for part in ref.removeprefix("#/").split("/"):
+            node = node[part]
