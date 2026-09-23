@@ -231,7 +231,41 @@ def test_debug_messages_forward_and_late_join_caches_person_and_session():
     assert next(msg for msg in live.messages if msg["type"] == "pose")["latency_ms"] == 2
     late = Socket()
     asyncio.run(manager.send_current_state(late))
-    assert [msg["type"] for msg in late.messages] == ["person", "session"]
+    assert [msg["type"] for msg in late.messages] == ["person", "session", "eyes", "config"]
+
+
+def receive_initial_eyes_and_config(websocket):
+    assert websocket.receive_json() == {
+        "type": "eyes",
+        "expression": "open",
+        "alert": False,
+        "gaze": {"target": "none", "x": None, "y": None},
+    }
+    assert websocket.receive_json() == {
+        "type": "config",
+        "night_start": "20:00",
+        "night_end": "07:00",
+        "clock_24h": False,
+    }
+
+
+def test_new_websocket_replays_latest_eyes_and_config():
+    bus = FakeBus()
+    app = create_app(bus, night_start="21:30", night_end="06:15", clock_24h=True)
+    app.state.manager.last_eyes = {
+        "type": "eyes",
+        "expression": "sleepy",
+        "alert": True,
+        "gaze": {"target": "face", "x": 0.25, "y": 0.4},
+    }
+    with TestClient(app) as client, client.websocket_connect("/ws") as websocket:
+        assert websocket.receive_json() == app.state.manager.last_eyes
+        assert websocket.receive_json() == {
+            "type": "config",
+            "night_start": "21:30",
+            "night_end": "06:15",
+            "clock_24h": True,
+        }
 
 
 def test_websocket_receives_show_event_delivered_via_bus():
@@ -262,6 +296,7 @@ def test_websocket_delivers_say_event_published_after_connect():
     app = create_app(bus)
 
     with TestClient(app) as client, client.websocket_connect("/ws") as websocket:
+        receive_initial_eyes_and_config(websocket)
         bus.publish(
             Say(source="agent", text="It is night.", strategy="soft_greeting", interruptible=True)
         )
@@ -277,6 +312,7 @@ def test_websocket_synthesizes_say_and_delivers_same_origin_audio_url(tmp_path):
     app = create_app(bus, speech=speech)
 
     with TestClient(app) as client, client.websocket_connect("/ws") as websocket:
+        receive_initial_eyes_and_config(websocket)
         bus.publish(
             Say(
                 source="agent",
@@ -306,6 +342,7 @@ def test_websocket_uses_caregiver_clip_without_calling_piper(tmp_path):
     app = create_app(bus, speech=speech, voice_clip_dir=tmp_path)
 
     with TestClient(app) as client, client.websocket_connect("/ws") as websocket:
+        receive_initial_eyes_and_config(websocket)
         bus.publish(
             Say(
                 source="agent",
@@ -327,6 +364,7 @@ def test_websocket_missing_caregiver_clip_stays_text_only_without_piper(tmp_path
     app = create_app(bus, speech=speech, voice_clip_dir=tmp_path)
 
     with TestClient(app) as client, client.websocket_connect("/ws") as websocket:
+        receive_initial_eyes_and_config(websocket)
         bus.publish(
             Say(
                 source="agent",
@@ -347,7 +385,9 @@ def test_websocket_delivers_early_speech_signal_for_barge_in():
     app = create_app(bus)
 
     with TestClient(app) as client, client.websocket_connect("/ws") as websocket:
+        receive_initial_eyes_and_config(websocket)
         bus.publish(SpeechStarted(source="listen", session_id="session-1"))
+        assert websocket.receive_json()["expression"] == "listening"
         message = websocket.receive_json()
 
     assert message == {"type": "speech_started", "session_id": "session-1"}
@@ -765,6 +805,7 @@ def test_hello_registers_both_sockets_and_disconnect_logs_duration(caplog):
     with caplog.at_level(logging.INFO, logger="embodiment"):
         with TestClient(app) as client:
             with client.websocket_connect("/ws") as ws, client.websocket_connect("/media") as media:
+                receive_initial_eyes_and_config(ws)
                 ws.send_json(client_hello())
                 assert ws.receive_json()["pages"][0]["page_id"] == "page1234"
                 media.send_json(client_hello())
@@ -859,6 +900,7 @@ def test_stale_and_bad_hello_are_ignored(caplog):
     manager = app.state.manager
     with caplog.at_level(logging.INFO, logger="embodiment"):
         with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            receive_initial_eyes_and_config(ws)
             ws.send_json(client_hello(page_id="x" * 65))
             ws.send_json(client_hello(user_agent="x" * 300))
             ws.send_text(json.dumps(client_hello()) + " " * 2100)

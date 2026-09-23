@@ -52,8 +52,10 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from nc_shared.events import (
+    Ack,
     Activity,
     AudioChunk,
+    Gaze,
     Health,
     Notify,
     PersonState,
@@ -66,6 +68,8 @@ from nc_shared.events import (
     Utterance,
 )
 from nc_shared.replay import CAPPED_MAXLEN
+
+from embodiment.eyes import EyesState
 
 SERVICE_NAME = "embodiment"
 GROUP = "embodiment"
@@ -166,7 +170,14 @@ def _client_state(message: dict) -> dict | None:
 class ConnectionManager:
     """Tracks connected websocket clients and the last-known `Show` state."""
 
-    def __init__(self, bus=None) -> None:
+    def __init__(
+        self,
+        bus=None,
+        *,
+        night_start: str = "20:00",
+        night_end: str = "07:00",
+        clock_24h: bool = False,
+    ) -> None:
         self._connections: list[WebSocket] = []
         self._clients: dict[WebSocket, ClientSocket] = {}
         self.bus = bus
@@ -174,6 +185,13 @@ class ConnectionManager:
         self.last_show: dict | None = None
         self.last_person: dict | None = None
         self.last_session: dict | None = None
+        self.last_eyes: dict = EyesState().state
+        self.config = {
+            "type": "config",
+            "night_start": night_start,
+            "night_end": night_end,
+            "clock_24h": clock_24h,
+        }
 
     async def connect(self, websocket: WebSocket, channel: str = "ws") -> None:
         """Accept `websocket` and register it for future broadcasts."""
@@ -391,6 +409,8 @@ class ConnectionManager:
             self.last_person = message
         elif message.get("type") == "session":
             self.last_session = message
+        elif message.get("type") == "eyes":
+            self.last_eyes = message
         dead: list[WebSocket] = []
         recipients = []
         for connection in list(self._connections):
@@ -424,8 +444,14 @@ class ConnectionManager:
             await self.disconnect(connection, reason="send failed")
 
     async def send_current_state(self, websocket: WebSocket) -> None:
-        """Push the last-known `Show` state to a newly connected `websocket`."""
-        for message in (self.last_show, self.last_person, self.last_session):
+        """Push the latest display and eyes state to a newly connected page."""
+        for message in (
+            self.last_show,
+            self.last_person,
+            self.last_session,
+            self.last_eyes,
+            self.config,
+        ):
             if message is not None:
                 await websocket.send_text(json.dumps(message))
 
@@ -540,6 +566,7 @@ async def broadcast_loop(
     max_iterations: int | None = None,
     stop_event: asyncio.Event | None = None,
     voice_clip_dir: Path | str = DEFAULT_VOICE_CLIP_DIR,
+    eyes: EyesState | None = None,
 ) -> None:
     """Broadcast display, speech, and early voice-activity events to browsers.
 
@@ -550,9 +577,19 @@ async def broadcast_loop(
     """
     bus.ensure_group("show", GROUP)
     bus.ensure_group("say", GROUP)
-    for stream in ("speech_in", "person", "session", "pose_debug", "activity"):
+    for stream in (
+        "speech_in",
+        "person",
+        "gaze",
+        "session",
+        "notify",
+        "ack",
+        "pose_debug",
+        "activity",
+    ):
         bus.ensure_group(stream, GROUP)
 
+    eyes = eyes or EyesState()
     voice_clip_dir = Path(voice_clip_dir)
     iterations = 0
     while True:
@@ -567,7 +604,10 @@ async def broadcast_loop(
             ("say", _say_to_message),
             ("speech_in", _speech_started_to_message),
             ("person", _debug_to_message),
+            ("gaze", None),
             ("session", _debug_to_message),
+            ("notify", None),
+            ("ack", None),
             ("pose_debug", _debug_to_message),
             ("activity", _debug_to_message),
         )
@@ -577,6 +617,12 @@ async def broadcast_loop(
             )
             for msg_id, event in messages:
                 if stream == "session" and not isinstance(event, SessionState):
+                    bus.ack(stream, GROUP, msg_id)
+                    continue
+                eyes_message = eyes.consume(event, msg_id)
+                if eyes_message is not None:
+                    await manager.broadcast(eyes_message)
+                if isinstance(event, (Gaze, Notify, Ack)):
                     bus.ack(stream, GROUP, msg_id)
                     continue
                 # Complete utterances share `speech_in` with the onset signal.
@@ -670,6 +716,9 @@ async def broadcast_loop(
                     message = to_message(event)
                 await manager.broadcast(message)
                 bus.ack(stream, GROUP, msg_id)
+        eyes_message = eyes.tick()
+        if eyes_message is not None:
+            await manager.broadcast(eyes_message)
 
 
 def publish_frame(bus, message: dict, session_id: str | None = None) -> RawFrame:
@@ -823,13 +872,18 @@ def create_app(
     speech=None,
     prerender_phrases: tuple[str, ...] = (),
     voice_clip_dir: Path | str = DEFAULT_VOICE_CLIP_DIR,
+    night_start: str = "20:00",
+    night_end: str = "07:00",
+    clock_24h: bool = False,
 ) -> FastAPI:
     """Build the FastAPI app, wiring `bus` into the websocket broadcast loop.
 
     `photo_dir` is where caregiver-uploaded photos referenced by a `Show`
     event's `photo_id` are read from.
     """
-    manager = ConnectionManager(bus)
+    manager = ConnectionManager(
+        bus, night_start=night_start, night_end=night_end, clock_24h=clock_24h
+    )
     photo_dir = Path(photo_dir)
     voice_clip_dir = Path(voice_clip_dir)
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from pathlib import Path
 
 import redis
@@ -51,6 +52,13 @@ def ssl_kwargs_for(cert_file: str, cert_key: str) -> dict[str, str]:
     return {}
 
 
+def _clock_time(value: str, name: str) -> str:
+    """Validate one 24-hour HH:MM boundary for the bedside clock."""
+    if re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", value) is None:
+        raise ValueError(f"{name} must be HH:MM in 24-hour time")
+    return value
+
+
 def run() -> None:
     """Start the embodiment FastAPI app, over HTTPS when a certificate exists."""
     redis_url = os.environ.get("REDIS_URL", "redis://bus:6379")
@@ -62,6 +70,13 @@ def run() -> None:
     # would silently resolve no photos at all.
     photo_dir = os.environ.get("PHOTO_DIR") or "data/photos"
     voice_clip_dir = os.environ.get("VOICE_CLIP_DIR") or "/app/data/voice-clips"
+    night_start = _clock_time(
+        os.environ.get("EMBODIMENT_NIGHT_START") or "20:00", "EMBODIMENT_NIGHT_START"
+    )
+    night_end = _clock_time(
+        os.environ.get("EMBODIMENT_NIGHT_END") or "07:00", "EMBODIMENT_NIGHT_END"
+    )
+    clock_24h = (os.environ.get("EMBODIMENT_CLOCK_24H") or "false").lower() == "true"
 
     strategies_path = os.environ.get("STRATEGIES_PATH") or "/app/config/strategies.yaml"
     person_path = os.environ.get("PERSON_PATH") or "/app/config/person.yaml"
@@ -91,6 +106,9 @@ def run() -> None:
         speech=speech,
         prerender_phrases=phrases,
         voice_clip_dir=voice_clip_dir,
+        night_start=night_start,
+        night_end=night_end,
+        clock_24h=clock_24h,
     )
 
     ssl_kwargs = ssl_kwargs_for(cert_file, cert_key)
