@@ -13,8 +13,15 @@ SAMPLE_RATE = 16000
 # script.js: 4096 native-rate frames per callback. At 48 kHz this yields
 # floor(4096 / 3) = 1365 PCM16 samples, about 85 ms per /media message.
 CHUNK_SAMPLES = 1365
-DEFAULT_PIPER_DIR = Path("/Users/mathiasserver/Documents/data-ai-agent-dementia/models/piper-sim")
 ALLOWED_VOICES = {"en_US-amy-medium", "en_US-ryan-medium"}
+
+
+def default_piper_dir() -> Path:
+    """`<data dir>/models/piper-sim` in the sibling data folder beside the main checkout."""
+    from .bugs import _default_root
+
+    # _default_root() is <data dir>/analysis/scene-lab/runs.
+    return _default_root().parents[2] / "models" / "piper-sim"
 
 
 def _resample(samples: np.ndarray, source_rate: int, target_rate: int) -> np.ndarray:
@@ -52,7 +59,7 @@ class Voice:
         from piper import PiperVoice, SynthesisConfig
 
         if self._voice is None:
-            directory = Path(os.environ.get("SCENE_LAB_PIPER_DIR", DEFAULT_PIPER_DIR))
+            directory = Path(os.environ.get("SCENE_LAB_PIPER_DIR") or default_piper_dir())
             model = directory / f"{self.voice_name}.onnx"
             if not model.is_file():
                 raise FileNotFoundError(model)

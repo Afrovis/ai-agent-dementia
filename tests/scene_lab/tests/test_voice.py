@@ -1,9 +1,10 @@
+import os
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from scene_lab.voice import AudioStream, RoomNoise, Voice
+from scene_lab.voice import AudioStream, RoomNoise, Voice, default_piper_dir
 
 
 def fake_synth(text, *, length_scale):
@@ -29,8 +30,7 @@ def test_styles_and_stream():
 
 @pytest.mark.skipif(
     not (
-        Path("/Users/mathiasserver/Documents/data-ai-agent-dementia/models/piper-sim")
-        / "en_US-amy-medium.onnx"
+        Path(os.environ.get("SCENE_LAB_PIPER_DIR") or default_piper_dir()) / "en_US-amy-medium.onnx"
     ).is_file(),
     reason="Piper simulation voice is not installed",
 )

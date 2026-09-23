@@ -1,25 +1,50 @@
 # scene_lab
 
-Install into the local test environment:
+Simulated nights for the agent: label-free invariants over any trace, a
+latency-faithful offline mode, and a fake-live tier where a Claude-played
+person talks to the real stack. Design: [PLAN.md](PLAN.md); brief and
+contracts: [HANDOFF.md](HANDOFF.md); first measurements:
+[BASELINE.md](BASELINE.md); promoted drafts: [promoted/](promoted/README.md).
+
+Install into one Python 3.12 environment, from the repository root:
 
 ```sh
-/Users/mathiasserver/.claude/jobs/e96c9b56/tmp/venv/bin/pip install --no-build-isolation --no-deps -e tests/scene_lab
+pip install -e shared -e services/agent -e "tests/decision_bench[dev]" \
+  -e tests/session_replay -e "tests/dialogue_bench[dev]" -e "tests/scene_lab[dev,live]"
+pytest tests/scene_lab/tests
 ```
 
 Check a bus export with `python -m scene_lab check export.jsonl --format export`, a normalized trace with `--format trace`, or JSON agent logs with `--format agent_log`. Compare runs with `python -m scene_lab bugs RUN_ID [RUN_ID ...]`.
 
+The offline benches take the same checks: `python -m decision_bench ... --invariants [--llm-latency fixed:2.5]`
+and `python -m session_replay run SCENARIO... --invariants [--llm-latency recorded]`.
+
 Runs go to `SCENE_LAB_RUNS` if set; otherwise to the sibling `data-ai-agent-dementia/analysis/scene-lab/runs` directory. Each run contains scene traces, JSON and Markdown reports, and an append-only `bugs.jsonl`.
 
-`agent_log` is best effort: the current agent log omits Say text and usually has no timestamp, so the adapter uses line order as its time axis. Bus exports provide the timing evidence for TT and TM checks. SM-5 reports an info skip unless the trace supplies the night-window, profile avoid-list, and restroom-resolution facts in `meta`.
+The checks lean on the agent's decision records (`Activity(kind="decision")`):
+pending-say drops, vetoes, interpretations and one `said` record per Say saying
+what caused it. TT-1 counts a Say as a reply only when its `said` record has
+`reply: true`; traces from before those records count any following Say.
+
+`agent_log` is best effort: the current agent log omits Say text and usually has no timestamp, so the adapter uses line order as its time axis. Bus exports provide the timing evidence for TT and TM checks.
 
 ## Scripted fake-live scenes
 
 The three starter cards in `scenes/` were converted from `restroom-01`,
 `disorientation-01`, and `conversation-01`. Install `scene_lab`, its `live`
 extra for Piper, and the repository's shared, agent, and decision bench packages
-in the same Python environment. Set `SCENE_LAB_PIPER_DIR` to a directory with
-`en_US-amy-medium.onnx` and its matching JSON file. The simulation uses Amy
-for the person and keeps synthesized audio in memory.
+in the same Python environment. The person's voice is a Piper voice other than
+the agent's `en_US-lessac-medium`; fetch it once and point `SCENE_LAB_PIPER_DIR`
+at the folder (default `../data-ai-agent-dementia/models/piper-sim`):
+
+```sh
+python -m piper.download_voices --data-dir ../data-ai-agent-dementia/models/piper-sim \
+  en_US-amy-medium en_US-ryan-medium
+```
+
+The simulation uses Amy for the person and keeps synthesized audio in memory.
+listen downloads `small.en` into `data/models/faster-whisper` of the main
+checkout on its first utterance; later runs reuse it.
 
 ```sh
 python -m scene_lab from-bench restroom-01
@@ -31,8 +56,10 @@ python -m scene_lab diff /path/to/live/restroom-01/trace.jsonl /tmp/restroom-inp
 `run` accepts `--no-stack-up`, `--keep-stack`, `--runs-root PATH`, and
 `--run-dir PATH`. It builds the isolated `nightsim` compose project, uses Redis
 only on port 16379, and records `ollama ps`, other agent stacks, and the Git
-commit in `report.json`. The `inprocess` command uses decision bench's
-`StubLLM`, so its diff describes both service timing and model differences.
+commit in `report.json`. `inprocess` defaults to decision bench's `StubLLM`;
+pass `--backend ollama --model gemma4:e4b-mlx` (the live model) so the diff
+shows timing differences rather than model differences. `diff` pairs
+decisions by content and reports each time shift.
 The live run needs Docker, a reachable Ollama model, and a working Piper voice.
 The coordinator should check that no manual agent stack or concurrent Ollama
 client is active, build the stack at the recorded commit, and inspect the

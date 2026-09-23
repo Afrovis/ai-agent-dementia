@@ -127,6 +127,19 @@ write a sibling `*.expect.yaml`, and run `python -m session_replay run` (or
 Raw exports stay in gitignored `data/`; commit only reviewed, text-only
 extracted scenarios.
 
+`tests/scene_lab` finds turn-taking, timing and state bugs without labels.
+Add `--invariants` to either bench above (and `--llm-latency fixed:2.5` or
+`recorded` to give LLM calls their real duration), or run a simulated night
+on the separate `nightsim` compose project: `python -m scene_lab run
+tests/scene_lab/scenes/<card>.yaml`, or `run --hours N` with an Opus director.
+The person is played by `claude -p` on the subscription and speaks through
+real audio into `listen`. Every run writes `bugs.jsonl` and `bugs.md` under
+`../data-ai-agent-dementia/analysis/scene-lab/runs/`. Take the manual stack
+down first; both share host Ollama. The agent publishes
+`Activity(kind="decision")` records (drops, vetoes, interpretations, why each
+Say went out) for these checks. See [tests/scene_lab/README.md](tests/scene_lab/README.md)
+and the measured [BASELINE.md](tests/scene_lab/BASELINE.md).
+
 The agent can also use an MLX model served on the host by `mlx_lm.server`
 (`AGENT_LLM_BACKEND=openai`, see `.env.example`). The bench takes the same
 switch: `--backend openai --base-url http://127.0.0.1:11435`.
