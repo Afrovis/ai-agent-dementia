@@ -16,7 +16,13 @@ Last updated: 2026-09-22.
 | Person injection | Body: `PersonState` on `person`, with `source="scene_lab"`. Voice and page: the embodiment websocket, exactly as `services/embodiment/embodiment/static/script.js` speaks it. Never publish `Say`, `Show`, `SessionState` or anything else the system under test produces. |
 | Claude calls | `claude -p` on the claude.ai login only. No tools, empty temp cwd, `ANTHROPIC_API_KEY` and related variables stripped. Copy the isolation from decision_bench's annotator and judge; do not re-implement it. Mind: `--model sonnet`. Director: `--model opus`. |
 | Clock | Fake-live runs in real time. Offline runners use simulated time, with the latency-faithful option from phase 1. |
-| Output location | `../data-ai-agent-dementia/analysis/scene-lab/<YYYY-MM-DD>/<scene-id>/`. Nothing from a run is committed except promoted, text-only scenarios. |
+| Output location | `../data-ai-agent-dementia/analysis/scene-lab/runs/<run-id>/`, with `<run-id>` = `<YYYY-MM-DD>T<HHMM>-<kind>`. Nothing from a run is committed except promoted, text-only scenarios. |
+| Run length | `python -m scene_lab run --hours N`. Scenes are capped at 600 s. No new scene starts with under 600 s left. |
+| Reply deadline | `R` = 5 s, from utterance end to reply playback start. Measured on every reply. |
+| 8 s gap | A direct reply to the person is exempt from the 8 s gap (owner, 2026-09-22). The agent change that implements this is a separate `decision:` PR that also updates rule 3 in the root `HANDOFF.md`. Until that PR merges, TT-5 already applies the exemption, and TT-1 will report late replies. |
+| Answer or redirect | Flag only. TT-2 writes `review` entries and never passes or fails. |
+| Decision records | The agent publishes `Activity(kind="decision")` for every pending-say drop (with its reason) and every veto (with its rule). This is an `events.py` change: regenerate `ARCHITECTURE.md`. |
+| Bug list | Every run, live or offline, writes `bugs.jsonl` and `bugs.md` at its root, appended per scene. |
 
 ## 2. Rules
 
@@ -64,8 +70,27 @@ refused.
  "decision@18.1 pending_say dropped: strategy_changed"], "reason": "reply dropped"}
 ```
 
-Thresholds (`R`, settle time, silence limits) come from one `thresholds.yaml`
-and are printed in every report.
+Thresholds (`R: 5.0`, settle time, silence limits, `max_scene_s: 600`) come
+from one `thresholds.yaml` and are printed in every report.
+
+### Bug entry (`runs/<run-id>/bugs.jsonl`)
+
+```json
+{"run": "2026-09-23T2200-live", "scene": "conv-gap-question-01", "t": 18.1,
+ "check": "TT-1", "severity": "critical|major|minor|review|info",
+ "origin": "agent|harness", "fingerprint": "TT-1|ENGAGED|return_to_bed|orient_time_place|strategy_changed",
+ "summary": "reply to 'what time is it' dropped: strategy_changed",
+ "evidence": ["..."], "report": "conv-gap-question-01/report.md#t=18.1",
+ "commit": "<sha of HEAD>", "model": "gemma4:e4b-mlx"}
+```
+
+Append one line as soon as a scene is scored, and never rewrite earlier lines.
+`bugs.md` is regenerated from `bugs.jsonl` after every scene, grouped by
+fingerprint and sorted by severity, then count. `runs/index.jsonl` gets one
+line per run: its id, kind, commit, model, hours, scene count and bug counts
+by severity. `python -m scene_lab bugs <run-id>...` merges runs and labels
+each fingerprint as `new`, `persisting` or `gone` relative to the earliest
+run given.
 
 ### Scene card (`scenes/<id>.yaml`)
 
@@ -117,20 +142,22 @@ Each phase is one PR. Delegate well-scoped pieces to the coder, per project
 memory; verification and threshold choices stay with the coordinator.
 
 **Phase 0: trace and invariants.**
-- `trace.py`, `invariants.py`, `thresholds.yaml`, unit tests per rule 5.
+- `trace.py`, `invariants.py`, `thresholds.yaml`, `bugs.py` (entry, fingerprint,
+  `bugs.md` rendering, `index.jsonl`), unit tests per rule 5.
 - `--invariants` on `python -m decision_bench` and `python -m session_replay`.
-- Agent: publish pending-say drops and vetoes as decision records (only if
-  open question 4 is accepted; otherwise the log adapter). Regenerate
-  `ARCHITECTURE.md` if `events.py` changes.
+- Agent: publish pending-say drops and vetoes as `Activity(kind="decision")`.
+  Regenerate `ARCHITECTURE.md`.
 - Acceptance: a baseline report over all decision_bench scenarios (1 run,
   `gemma4:e4b-mlx`) and the 3 desk scenarios, listing every invariant failure
-  with its evidence, committed as `tests/scene_lab/BASELINE.md` (text only).
+  with its evidence and a `bugs.jsonl`/`bugs.md` for that run. A text-only
+  summary is committed as `tests/scene_lab/BASELINE.md`.
 
 **Phase 1: latency-faithful offline.**
 - `--llm-latency recorded|fixed:<s>` in both runners; session_replay reads
   `Activity` durations from its captures.
 - About 7 `conversation` decision_bench scenarios, timelines only; labels
-  wait for open question 1.
+  wait for the owner's answer-or-redirect policy. Until then TT-2 flags
+  them.
 - Acceptance: the baseline re-run with `fixed:2.5` shows which TT and TM
   results change, and the change is explained per scenario.
 
@@ -155,10 +182,12 @@ memory; verification and threshold choices stay with the coordinator.
 
 **Phase 4: director.**
 - `director.py`, coverage matrix in `coverage.yaml`, `python -m scene_lab
-  night --budget-hours 8`, `summary.md` ranking failures by severity and
-  reproducibility.
-- Acceptance: one overnight batch of at least 30 scenes, and a summary that
-  a human can act on without opening the traces.
+  run --hours N`. The director sees the time left and the run's bug list so
+  far.
+- Acceptance: a `--hours 4` run ends within 4 h plus shutdown, with no scene
+  over 600 s. Its `bugs.md` can be acted on without opening the traces.
+  `scene_lab bugs` over two runs labels fingerprints `new`, `persisting` or
+  `gone` correctly.
 
 **Phase 5: promotion.**
 - `python -m scene_lab promote <run-dir> --at <t> [--to session_replay|decision_bench]`.

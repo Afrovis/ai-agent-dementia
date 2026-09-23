@@ -44,7 +44,13 @@ to label per scenario. That is why this plan leans on invariants first.
 | --- | --- |
 | Where the simulated person plugs in | **Hybrid.** The body is `PersonState` on the `person` stream, and `perceive` and `capture` do not run. The voice is real synthesised speech sent as `AudioChunk` through the page's audio path, so VAD, Silero, Whisper and barge-in run for real. `agent`, `embodiment`, `listen`, `notify` (dry run) and `store` are real. |
 | What drives the person | Claude through `claude -p`, on the subscription and never the API, isolated like the decision_bench annotator: no tools, an empty working directory, API-key variables stripped. |
-| Clock | Real time. The services don't change, and latency is measured rather than modelled. Scenes run unattended in batches, overnight by default. |
+| Clock | Real time. The services don't change, and latency is measured rather than modelled. |
+| When it runs | On command for a set number of hours (`--hours N`). A scene is capped at 10 minutes, and no new scene starts unless it can finish before the time is up. |
+| Answer or redirect | Not decided per question yet. Every question or request the person makes, and what the agent did with it, is flagged for later human review (TT-2), and does not pass or fail. |
+| 8 s gap versus a direct answer | A direct answer to the person may break the 8 s gap (owner, 2026-09-22). The agent change that implements this updates rule 3 in the root `HANDOFF.md` in the same PR, as a `decision:` PR. |
+| Reply deadline | 5 s from the end of the person's utterance to the start of reply playback, and measured on every reply. |
+| Decision records | Accepted: the agent publishes pending-say drops and vetoes as `Activity(kind="decision")`. |
+| Bug list | Every run writes one flat list of every issue it found (`bugs.jsonl`, plus a readable `bugs.md`), so runs can be analysed and compared later. |
 | Offline format | No new format. Labelled scenarios are decision_bench YAML; captured regressions are session_replay JSONL plus `expect.yaml`. |
 | Plan location | `tests/scene_lab/PLAN.md` and `HANDOFF.md`. |
 
@@ -64,21 +70,25 @@ window that points at the evidence.
 Turn-taking (`TT`):
 
 - **TT-1 reply.** Every final `Utterance` in an active phase gets a reply.
-  A reply is a `Say` whose playback starts within `R` seconds (default 12)
-  and is not superseded by a newer utterance. A failure records why: dropped
-  pending say (with reason), vetoed, never composed, or phase.
-- **TT-2 answer, don't deflect.** For utterances that are questions or
-  requests, the evidence judge rates the reply as `answered`,
-  `validated_then_redirected`, `ignored_and_redirected` or `n/a`. Which
-  ratings pass is a policy question (open question 1). Until it is decided
-  the check reports and does not fail.
+  A reply is a `Say` whose playback starts within `R` = 5 s of the end of
+  the utterance and is not superseded by a newer utterance. A reply that
+  arrives later than 5 s is a `major` issue; no reply at all is `critical`.
+  A failure records why: dropped pending say (with reason), vetoed, never
+  composed, or phase. The latency of every reply is kept for TM-2.
+- **TT-2 answer or redirect (flag only).** For utterances that are questions
+  or requests, the evidence judge rates the reply as `answered`,
+  `validated_then_redirected`, `ignored_and_redirected` or `no_reply`. This
+  never passes or fails. Every case is written to the bug list with severity
+  `review`, so the owner can decide question by question later. The agreed
+  policy then turns these ratings into pass or fail.
 - **TT-3 no talk-over.** No playback starts between `SpeechStarted` and the
   matching `Utterance`, or within 1 s after it.
 - **TT-4 barge-in.** An interruptible playback stops within 0.5 s of
   `SpeechStarted`.
 - **TT-5 silence gap.** At least 8 s from playback `ended` to the next
-  playback `started`, measured on playback and not on publish time. A
-  direct-reply exemption depends on open question 2.
+  playback `started`, measured on playback and not on publish time. A direct
+  reply to the person's utterance is exempt. Only unprompted speech must keep
+  the gap.
 - **TT-6 no empty room.** No `Say` while the latest reading is `absent`.
 - **TT-7 stale reply.** No reply is published after the person has spoken
   again, and no reply answers an utterance older than the latest one.
@@ -174,8 +184,8 @@ The simulated person has four parts, in one host process:
 
 The **director** is the "tries different things in sequence" loop. It is a
 Claude call (Opus) between scenes. It sees a coverage matrix (category ×
-persona × stressor × noise), the report of every scene so far, and a
-nightly budget. It writes the next scene card. When a scene fails an
+persona × stressor × noise), the report of every scene so far, and the time
+left in the run. It writes the next scene card. When a scene fails an
 invariant it tries a smaller or harsher variant to confirm and isolate the
 bug before moving on. It never edits code or config outside the scene card.
 Stressors include a question in the silence gap, a question during
@@ -183,11 +193,40 @@ speech, rapid-fire questions, long silence, moving while talking, going
 absent mid-conversation, a stated need without the keyword, and repeating
 the same question.
 
+A run is started on command: `python -m scene_lab run --hours N`. Every scene
+has a hard cap of 10 minutes (`max_scene_s: 600`); a scene that has not
+ended by then is stopped, and the stop itself is recorded as an issue
+(SM-3). The run starts a new scene only while at least 10 minutes remain, so
+it ends within `N` hours plus stack shutdown. Ctrl-C finishes the current
+scene's recording and bug list before exiting.
+
 After each scene, the recorder writes
-`../data-ai-agent-dementia/analysis/scene-lab/<date>/<scene>/`. It holds
-`scene.yaml`, `export.jsonl` (`replay export`, no media), `agent.log`,
+`../data-ai-agent-dementia/analysis/scene-lab/runs/<run-id>/<scene>/`. It
+holds `scene.yaml`, `export.jsonl` (`replay export`, no media), `agent.log`,
 `mind.jsonl`, `trace.jsonl`, `report.json` and a human-readable `report.md`
-timeline. A nightly `summary.md` ranks the failures.
+timeline.
+
+### 3b. The bug list
+
+Every run, of any kind, writes one bug list at the run's root:
+`runs/<run-id>/bugs.jsonl`. That covers a fake-live batch, one scripted
+scene, or an offline `--invariants` pass over decision_bench or
+session_replay. There is one line per issue, appended as soon as the scene
+that produced it is scored, so a crashed run still keeps its list. Every
+invariant failure, every TT-2 `review` flag, every wording-check or judge
+hit, every scene that hit the 10-minute cap, and every harness error (mind
+failure, stack crash) becomes an entry. A harness error is marked
+`origin: harness`, so it is never mistaken for an agent bug.
+
+Each entry has a stable `fingerprint` made of the invariant id, the agent
+phase, goal and strategy at the time, and the drop reason if there is one.
+The same bug seen in many scenes then groups into one row. A readable
+`bugs.md` is regenerated after every scene. It groups by fingerprint, sorts
+by severity and count, and links every occurrence to its scene report and
+timestamp. `python -m scene_lab bugs <run-id> [<run-id> ...]` merges lists
+across runs, so you can see which bugs are new, which persist and which have
+gone since an earlier run. `runs/index.jsonl` records every run's id, kind,
+commit, model, hours and bug counts, for later analysis.
 
 ### 4. Promotion: from a live moment to a replayable test
 
@@ -210,9 +249,9 @@ re-run live as a (non-deterministic) regression.
 
 ## Build order
 
-0. **Trace and invariants.** Build the trace adapters for decision_bench,
-   session_replay and `replay export`, plus the invariants and the
-   `--invariants` flag. Record pending-say drops and vetoes as `Activity`
+0. **Trace, invariants and bug list.** Build the trace adapters for
+   decision_bench, session_replay and `replay export`, the invariants, the
+   `--invariants` flag, and the run's `bugs.jsonl` and `bugs.md`. Record pending-say drops and vetoes as `Activity`
    (`kind: decision`) so traces see them without scraping logs. Run over all
    existing scenarios and write the baseline. This alone should show the
    turn-taking bugs.
@@ -224,26 +263,17 @@ re-run live as a (non-deterministic) regression.
    in-process result for the same timeline. The differences are the timing
    bugs.
 3. **Claude mind** and persona cards, with 5 hand-written scenes.
-4. **Director** overnight loop and nightly summary.
+4. **Director** loop for `--hours N`, with the per-run bug list and `bugs` merge.
 5. **Promotion** into session_replay and decision_bench.
 6. Later: headless Chromium page, echo leakage, and a perception tier that
    splices recorded clip frames into `frames_raw` for body movements.
 
-## Open questions (for the project owner)
+## Open questions
 
-1. **Answer or redirect?** When the person asks a direct question, which
-   questions must be answered, and which should be validated and then
-   redirected? For example, "What time is it?", "Where is Tom?" (alive and
-   nearby), "Where is my mother?" (deceased), "Can I have some water?" and
-   "Is this my house?". This needs a guideline clause before TT-2 or any
-   `conversation` label can pass or fail.
-2. **Does a direct answer beat the 8 s gap?** Today a reply waits for the
-   gap and can be dropped on a strategy change. HANDOFF rule 3 says one
-   sentence, then 8 s of silence. If an answer to the person may break that,
-   it is a `decision:` change to HANDOFF.md.
-3. **Reply deadline `R`.** 12 s is a guess (8 s gap plus compose and TTS).
-4. **Decision records on the bus.** Is adding `Activity(kind="decision")`
-   acceptable? It means an `events.py` change and an archdoc regeneration.
-   The fallback is parsing agent logs.
-5. **Running time.** Overnight-only batches, or also daytime runs while the
-   Mac is otherwise idle?
+- **Answer or redirect, per question.** Deferred by the owner. TT-2 collects
+  the cases as `review` entries in each run's bug list. The owner decides
+  from those, and the policy then becomes a guideline clause and a TT-2
+  pass rule.
+- **Latency under the 5 s target.** Synchronous LLM calls in the loop may
+  make 5 s unreachable. Phase 0 and phase 2 measure it, before anyone
+  decides whether the agent needs to change.
