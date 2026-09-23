@@ -63,6 +63,7 @@ from nc_shared.events import (
     PersonState,
     PoseDebug,
     RawFrame,
+    ResetSession,
     Say,
     SessionState,
     Show,
@@ -990,6 +991,7 @@ def create_app(
                 elif isinstance(message, dict) and message.get("type") in {
                     "debug_control",
                     "calibrate_bed",
+                    "reset_session",
                 }:
                     kind = message["type"]
                     if not manager.debug_controls_enabled:
@@ -1026,8 +1028,10 @@ def create_app(
                             time_offset_hours=max(-23, min(23, offset)),
                             force_in_bed=forced,
                         )
-                    else:
+                    elif kind == "calibrate_bed":
                         event = CalibrateBed(source=SERVICE_NAME)
+                    else:
+                        event = ResetSession(source=SERVICE_NAME)
                     bus.publish(event, maxlen=100)
                     logger.warning(
                         json.dumps(
