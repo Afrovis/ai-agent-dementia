@@ -314,32 +314,35 @@ Replayed offline with recorded interpretations and latencies
 | `distress_pain-teacher-silence-4`, 0 to 193 s | "Hello Jean, it's night-time." to the first pain statement, escalation on the second, then the same reassurance to every remark | pain acknowledged and escalated on the first statement, two reassurances, then quiet; TT-1 clean |
 | `restroom-wanderer-silentpath-isolate-10`, 35 to 240 s | no reply to any progress remark | one "Good, Jean, take your time.", then `no_reply`; the 2 TT-1 criticals left are remarks made before the restroom goal started (open item 1) |
 
+Also fixed on this branch, after the owner's decisions on the first triage:
+
+| item | change |
+| --- | --- |
+| unmapped intents (finding 1) | `looking_for_person` / `wants_to_leave` get a composed `validate_and_redirect` (name the feeling, redirect gently, never correct; `acknowledge_feeling` in bed). `unclear` gets "Is there something you need, Jean?" once per session. While escalated, "Tom, is that you?" gets "I've let Tom know, Jean, and help is on the way." Replaying `0050-live` conversation scenes: the flagged question is answered in 3.3 s instead of a greeting 30 s later. |
+| silence while escalated (finding 6) | A check-in after 120 s without speech while escalated, if the person is present and not settled. SM-3 allows 150 s for a gap that starts in `ESCALATED`. |
+| clock time in speech | Spoken time rotates night phrases by hour ("the middle of the night", "late in the evening", "nearly morning and still dark"); the screen keeps the hour (AA-02). Composed speech with a clock time falls back to the template. |
+
 Still open, in suggested order:
 
-1. **Unmapped intents still get no answer (finding 1).** `looking_for_person`,
-   `wants_to_leave` and `unclear` have no reply route in `ENGAGED`, so the
-   ladder answers: "Where are the children?" → "Hello Jean, it's
-   night-time."; "I have to pick up the kids from school." → the same; "Tom,
-   is that you?" while escalated → a generic reassurance. This is now the
-   biggest source of TT-1 and TT-2 findings. It needs a decision on what a
-   good answer is for each intent before code.
-2. **Latency (finding 2).** Still 5 to 7.7 s live. Listen's transcript lag
+1. **Latency (finding 2).** Still 5 to 7.7 s live. Listen's transcript lag
    varies most (1.3 to 4.8 s in these runs); interpret and compose are two
-   sequential calls. Re-measure without the contending stack first.
-3. **Composed reassurance makes claims (finding 5).** Live examples: "Tom is
+   sequential calls, and the new `validate_and_redirect` replies add a
+   compose call. Re-measure without the contending stack first.
+2. **Composed replies make claims (finding 5).** Live examples: "Tom is
    nearby and everything is settled", "while you enjoy a photo of the
    garden" with no photo on screen, "your children are fine".
-   `validate_composition` does not check claims about people or the screen.
-4. **Silence while escalated (finding 6).** The reassurance cap makes SM-3
-   silent-gap hits more likely by design. Decide whether a periodic check-in
-   (for example every 2 to 3 minutes while the person is still up) is wanted,
-   then align SM-3.
-5. **Clock time in speech.** `orient_time_place` says "<hour> o'clock at
-   night" unprompted (32 minor WORD hits in `0050-live`). Proposal: say
-   "night-time" unless asked, keep the clock on screen.
-6. **Talk-over (finding 9)** and **restroom goal from the camera
+   `validate_composition` catches clock times, "but" and caregiver-arrival
+   phrases, not reality corrections or other claims; those rest on the
+   prompt. A TT-2 judge pass over a live run would show how often.
+3. **`validate_and_redirect` fallback on the restroom path.** If the
+   composition for "Where is Tom?" on the restroom goal is rejected, the
+   caregiver template ("let's rest now and talk more in the morning") points
+   away from the toilet (TOIL-01).
+4. **Talk-over (finding 9)** and **restroom goal from the camera
    (finding 3)**: unchanged, need live or perceive work.
-7. **Harness.** One director hour does not fit a subscription session window.
-   `compose.sim.yml` sets no `TZ`, so the sim agent speaks UTC hours ("10
-   o'clock at night" at 06:12 local). `plan` calls publish no Activity, so a
-   blocked loop is invisible to TM-1 (the SM-5 minor in `0552-live`).
+5. **Harness.** One director hour does not fit a subscription session window.
+   `compose.sim.yml` sets no `TZ`, so the sim agent's night window and
+   screen clock use UTC. `plan` calls publish no Activity, so a blocked loop
+   is invisible to TM-1 (the SM-5 minor in `0552-live`). `session_replay
+   --llm live` against a busy host Ollama times out every call and silently
+   replays with no model.
