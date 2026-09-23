@@ -178,9 +178,6 @@ async def schedule(
             while now >= next_frame:
                 body.tick(next_frame)
                 next_frame += 0.5
-            if elapsed >= max_scene_s:
-                capped = True
-                break
             while index < len(beats) and beats[index].at <= elapsed:
                 beat = beats[index]
                 if beat.say is not None and getattr(audio, "speaking", False):
@@ -205,7 +202,13 @@ async def schedule(
                     history.append({"kind": "say", "text": beat.say})
                     if on_line:
                         on_line(row)
-            if stopped or elapsed >= stop_at:
+            # Due beats run first: an end beat at exactly the cap is a planned end.
+            if stopped:
+                break
+            if elapsed >= max_scene_s:
+                capped = True
+                break
+            if elapsed >= stop_at:
                 break
             next_beat = beats[index].at if index < len(beats) else stop_at
             delay = min(

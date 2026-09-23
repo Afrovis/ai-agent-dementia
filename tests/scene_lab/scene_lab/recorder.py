@@ -12,7 +12,7 @@ import redis
 from nc_shared.replay import export_history
 
 from .bugs import BugEntry, RunDir, harness_error, results_to_entries
-from .invariants import InvariantResult, check_trace
+from .invariants import InvariantResult, _state, check_trace
 from .trace import from_export
 
 
@@ -103,6 +103,7 @@ def record_scene(
                 window=(run.thresholds.max_scene_s, run.thresholds.max_scene_s),
                 t=run.thresholds.max_scene_s,
                 reason="scene hit 600 s cap",
+                context=_state(trace, run.thresholds.max_scene_s),
                 evidence=["scene hit 600 s cap"],
             )
         )

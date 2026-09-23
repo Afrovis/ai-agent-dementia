@@ -103,6 +103,24 @@ def test_scheduler_cap_and_interrupt():
         )
     )
     assert state["capped"]
+    # An end beat exactly at the cap is a planned end, not a cap stop.
+    clock = Clock()
+    planned = card().model_copy(update={"opening": [{"at": 3, "end": True}], "duration_s": 3})
+    planned = type(planned).model_validate(planned.model_dump())
+    state = asyncio.run(
+        schedule(
+            planned,
+            Body(clock),
+            None,
+            Voice(),
+            Audio(clock),
+            clock=clock,
+            sleep=clock.sleep,
+            tail_s=0,
+            max_scene_s=3,
+        )
+    )
+    assert not state["capped"]
 
     async def interrupt(_seconds):
         raise KeyboardInterrupt
