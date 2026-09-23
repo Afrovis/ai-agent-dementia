@@ -16,7 +16,7 @@ step's events and is the unit tested surface; `run()` is the infinite,
 real-time loop.
 
 `agent.main.run` still dispatches here when `AGENT_FAKE=true` (the demo
-path CLAUDE.md and HANDOFF.md section 8's M0 done criteria reference), so
+path HANDOFF.md section 8's M0 done criteria reference), so
 `docker compose up` can still show the face cycling with nothing else
 running. The real agent is the default; this module is now an explicit
 opt-in rather than the only thing `agent` could ever do.

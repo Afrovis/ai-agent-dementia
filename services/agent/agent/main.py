@@ -48,7 +48,7 @@ outbound structured-text payload is published as `CloudCall` before the SDK
 request so `store` retains it and the caregiver History page shows it.
 
 `AGENT_FAKE=true` dispatches to `agent.fake.run` instead -- the M0 demo
-fixture (HANDOFF.md section 8, CLAUDE.md) that cycles all `Show` states
+fixture (HANDOFF.md section 8) that cycles all `Show` states
 with no perception, LLM, or session machine in the loop. Default is the
 real agent above.
 """

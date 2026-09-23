@@ -1,7 +1,7 @@
 # HANDOFF: building scene_lab
 
 Read [PLAN.md](PLAN.md) first; this is the execution brief. The repository's
-own `HANDOFF.md` and `CLAUDE.md` still apply in full. If a decision below
+own `HANDOFF.md` and `AGENTS.md` still apply in full. If a decision below
 changes, update this file in the same PR.
 
 Last updated: 2026-09-22.

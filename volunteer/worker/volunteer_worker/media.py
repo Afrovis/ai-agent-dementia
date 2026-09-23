@@ -2,7 +2,7 @@
 (HANDOFF.md section 5.8, steps 1-2).
 
 Browser WebM has no duration header, so this always remuxes before
-`video_eval prepare` even touches the file (CLAUDE.md gotcha).
+`video_eval prepare` even touches the file.
 """
 
 from __future__ import annotations

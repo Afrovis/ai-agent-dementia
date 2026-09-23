@@ -179,7 +179,7 @@ trim it there, or leave the knee rule off.
 
 - `perceive.calibrate_bed` (new): segments the bed across frames from Redis
   or a directory, votes the masks, simplifies the outline, stretches it 15%
-  upward and writes only `bed` into `zones.yaml`. See CLAUDE.md Gotchas.
+  upward and writes only `bed` into `zones.yaml`. See services/perceive/AGENTS.md.
 - `PERCEIVE_SITTING_THIGH_RATIO` (new, default `0`, off): an upright person
   whose visible thigh drops less than this fraction of their torso length is
   `sitting_up`, not `standing`. Seated frames measured median 0.11 (p90
