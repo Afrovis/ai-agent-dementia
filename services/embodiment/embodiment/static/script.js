@@ -161,6 +161,7 @@
     hearingUntil: 0, active: {}, speaking: false, audioUnlocked: false,
     audioBlocked: false, events: [], personChanged: Date.now(), pages: [],
     controlsEnabled: false, appliedControl: { time_offset_hours: 0, force_in_bed: false },
+    pendingControl: null, pendingUntil: 0,
     bedZone: null,
   };
   const controlsEl = document.getElementById("debug-controls");
@@ -180,19 +181,31 @@
     return false;
   }
 
+  // Clicks step from the last requested control, not the agent's last echo, so
+  // quick repeated clicks are not lost while the echo is still on its way.
+  function requestedControl() {
+    if (debugState.pendingControl && Date.now() >= debugState.pendingUntil) debugState.pendingControl = null;
+    return debugState.pendingControl || debugState.appliedControl;
+  }
+  function requestControl(control) {
+    if (sendDebug({ type: "debug_control", ...control })) {
+      debugState.pendingControl = control;
+      debugState.pendingUntil = Date.now() + 3000;
+      renderControls();
+    }
+  }
   controlsEl.querySelectorAll("[data-offset]").forEach((button) => {
     button.addEventListener("click", () => {
-      const applied = debugState.appliedControl;
+      const current = requestedControl();
       const step = Number(button.dataset.offset);
-      sendDebug({ type: "debug_control",
-        time_offset_hours: step === 0 ? 0 : Math.max(-23, Math.min(23, applied.time_offset_hours + step)),
-        force_in_bed: applied.force_in_bed });
+      requestControl({
+        time_offset_hours: step === 0 ? 0 : Math.max(-23, Math.min(23, current.time_offset_hours + step)),
+        force_in_bed: current.force_in_bed });
     });
   });
   document.getElementById("force-in-bed").addEventListener("click", () => {
-    const applied = debugState.appliedControl;
-    sendDebug({ type: "debug_control", time_offset_hours: applied.time_offset_hours,
-      force_in_bed: !applied.force_in_bed });
+    const current = requestedControl();
+    requestControl({ time_offset_hours: current.time_offset_hours, force_in_bed: !current.force_in_bed });
   });
   const resetSession = document.getElementById("reset-session");
   let resetDeadline = 0;
@@ -221,12 +234,16 @@
 
   function renderControls() {
     controlsEl.classList.toggle("hidden", !debugState.controlsEnabled);
+    const requested = requestedControl();
+    const waiting = requested !== debugState.appliedControl ? "…" : "";
+    const requestedOffset = requested.time_offset_hours;
+    const suffix = requestedOffset === 0 ? "" : ` (${requestedOffset > 0 ? "+" : "−"}${Math.abs(requestedOffset)}h)`;
+    const agentTime = new Date(Date.now() + requestedOffset * 3600000);
+    document.getElementById("agent-clock").textContent = `Agent clock ${agentTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}${suffix}${waiting}`;
+    document.getElementById("force-in-bed").textContent = `Force in bed: ${requested.force_in_bed ? "ON" : "OFF"}${waiting}`;
+    // The override banner shows what the agent has actually applied.
     const applied = debugState.appliedControl;
     const offset = applied.time_offset_hours;
-    const suffix = offset === 0 ? "" : ` (${offset > 0 ? "+" : "−"}${Math.abs(offset)}h)`;
-    const agentTime = new Date(Date.now() + offset * 3600000);
-    document.getElementById("agent-clock").textContent = `Agent clock ${agentTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}${suffix}`;
-    document.getElementById("force-in-bed").textContent = `Force in bed: ${applied.force_in_bed ? "ON" : "OFF"}`;
     const overrides = [offset !== 0 ? `${offset > 0 ? "+" : "−"}${Math.abs(offset)}h` : "", applied.force_in_bed ? "in bed forced" : ""].filter(Boolean).join(" · ");
     const active = !!overrides;
     const banner = document.getElementById("debug-override-banner");
@@ -660,6 +677,10 @@
       renderControls();
     } else if (msg.type === "debug_state") {
       debugState.appliedControl = msg;
+      const pending = debugState.pendingControl;
+      if (pending && pending.time_offset_hours === msg.time_offset_hours && pending.force_in_bed === msg.force_in_bed) {
+        debugState.pendingControl = null;
+      }
       renderControls();
     } else if (msg.type === "bed_zone") {
       debugState.bedZone = msg;
