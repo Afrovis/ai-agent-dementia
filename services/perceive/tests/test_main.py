@@ -9,11 +9,12 @@ published, including that `on_floor` bypasses hysteresis.
 """
 
 from nc_shared.bus import FakeBus
-from nc_shared.events import Frame, Health, PersonState, PoseDebug
+from nc_shared.events import Frame, Gaze, Health, PersonState, PoseDebug
 from nc_shared.replay import CAPPED_MAXLEN
 
 from perceive.backends import Landmark, PoseResult, ScriptedBackend
 from perceive.classify import ClassifyThresholds, StateTracker
+from perceive.gaze import GazePublishState
 from perceive.main import (
     FRAME_GROUP,
     FRAME_STREAM,
@@ -199,6 +200,31 @@ def test_run_once_acks_the_frame_message():
     run_once(bus, backend, BED_ZONE, tracker, now_fn=lambda: 0.0)
 
     assert bus.pending(FRAME_STREAM, FRAME_GROUP) == []
+
+
+def test_run_once_publishes_gaze_next_to_confirmed_person_state():
+    bus = FakeBus()
+    bus.ensure_group(FRAME_STREAM, FRAME_GROUP)
+    _publish_frame(bus)
+    tracker = StateTracker(thresholds=ClassifyThresholds(), confirm_frames=1)
+    gaze_state = GazePublishState()
+
+    event = run_once(
+        bus,
+        ScriptedBackend([in_bed_pose()]),
+        BED_ZONE,
+        tracker,
+        now_fn=lambda: 0.0,
+        gaze_state=gaze_state,
+    )
+
+    assert event is not None and event.state == "in_bed"
+    gaze = Gaze.model_validate_json(bus._streams["gaze"][0].data)  # noqa: SLF001
+    assert (gaze.target, gaze.x, gaze.y) == ("bed", 0.2, 0.5)
+    assert len(bus._streams["person"]) == len(bus._streams["gaze"]) == 1  # noqa: SLF001
+
+    maybe_emit_person_heartbeat(bus, tracker, None, now=60.0, interval=60.0, gaze_state=gaze_state)
+    assert len(bus._streams["person"]) == len(bus._streams["gaze"]) == 2  # noqa: SLF001
 
 
 def test_run_once_returns_none_while_hysteresis_is_pending():
