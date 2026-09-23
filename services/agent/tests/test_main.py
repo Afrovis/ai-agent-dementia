@@ -1722,3 +1722,47 @@ def test_the_escalation_say_survives_a_recent_ordinary_say():
     assert says[-1].strategy == "escalate_phone"
     assert says[-1].text == "Someone is coming to help."
     assert says[-1].interruptible is False
+
+
+def test_llm_cache_refresh_unloads_once_by_day_and_rewarms_before_night():
+    from datetime import time as dt_time
+
+    from agent.main import LlmCacheRefresh
+
+    calls = []
+    refresh = LlmCacheRefresh(
+        unload=lambda: calls.append("unload") or True,
+        warm_up=lambda: calls.append("warm_up") or True,
+    )
+    session = Session(config=AgentConfig(night_start=dt_time(21, 0), night_end=dt_time(7, 0)))
+    day = datetime(2026, 9, 23, 7, 30)
+
+    assert refresh.step(session, day) == "unload"
+    assert refresh.step(session, day.replace(hour=12)) is None  # once per day
+    assert refresh.step(session, day.replace(hour=20, minute=30)) is None
+    assert refresh.step(session, day.replace(hour=20, minute=46)) == "warm_up"
+    assert refresh.step(session, day.replace(hour=23)) is None  # never at night
+    assert calls == ["unload", "warm_up"]
+
+    # A new day unloads again, but never too close to the night window.
+    late = Session(config=AgentConfig(night_start=dt_time(21, 0), night_end=dt_time(7, 0)))
+    late_refresh = LlmCacheRefresh(unload=lambda: True, warm_up=lambda: True)
+    assert late_refresh.step(late, datetime(2026, 9, 24, 20, 50)) is None
+
+
+def test_llm_cache_refresh_waits_for_idle_and_skips_always_night():
+    from datetime import time as dt_time
+
+    from agent.main import LlmCacheRefresh
+
+    calls = []
+    refresh = LlmCacheRefresh(unload=lambda: calls.append("unload") or True, warm_up=lambda: True)
+    busy = Session(config=AgentConfig(night_start=dt_time(21, 0), night_end=dt_time(7, 0)))
+    busy.phase = Phase.ENGAGED
+    assert refresh.step(busy, datetime(2026, 9, 23, 12, 0)) is None
+
+    # nightsim sets an always-on window (00:00-00:00): the agent never unloads
+    # there; scene_lab resets the model between scenes instead.
+    always = Session(config=AgentConfig(night_start=dt_time(0, 0), night_end=dt_time(0, 0)))
+    assert refresh.step(always, datetime(2026, 9, 23, 12, 0)) is None
+    assert calls == []

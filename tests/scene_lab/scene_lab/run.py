@@ -282,13 +282,17 @@ async def run_live(
         "model": agent_model(REPO_ROOT, stack.env),
         "scene_count": 0,
     }
+    model = agent_model(REPO_ROOT, stack.env)
     try:
+        # Start from an empty Ollama prefix cache (see Stack.unload_llm).
+        run.metadata["llm_reset"] = stack.reset_llm(model)
         if not no_stack_up:
             stack.up()
         await _execute_scene(scene, source, run, stack, preflight, thresholds)
     finally:
         if not keep_stack:
             stack.down()
+            stack.unload_llm(model)
         run.finish("live", preflight.get("commit", "-"), agent_model(REPO_ROOT, stack.env), 0, 1)
     return run.path
 
@@ -433,7 +437,12 @@ async def run_hours(
     (run.path / "coverage.json").write_text(json.dumps(coverage(scenes), indent=2) + "\n")
     deadline = clock() + hours * 3600
     started = False
+    llm_resets: list[dict] = []
+    run.metadata["llm_resets"] = llm_resets
     try:
+        # Ollama's prefix cache grows with every request and is only trimmed
+        # near the whole host's memory (Stack.unload_llm); reset it per scene.
+        stack.unload_llm(model)
         stack.up()
         started = True
         stack.wait_ready()
@@ -488,6 +497,9 @@ async def run_hours(
             )
             mounted_person.write_bytes(profile.read_bytes())
             mounted_strategies.write_bytes(strategies.read_bytes())
+            if scenes:
+                # The first scene follows the agent's own start-up warm-up.
+                llm_resets.append({"scene": scene.id, **stack.reset_llm(model)})
             interrupted = False
             try:
                 if scene_runner is None:
@@ -534,5 +546,6 @@ async def run_hours(
     finally:
         if started and not keep_stack:
             stack.down()
+            stack.unload_llm(model)
         run.finish("live", preflight.get("commit", "-"), model, hours, len(scenes))
     return run.path

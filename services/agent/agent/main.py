@@ -61,7 +61,7 @@ import os
 import time
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import redis
 from nc_shared.bus import Bus
@@ -1406,6 +1406,49 @@ def maybe_emit_health(
     return now
 
 
+LLM_REWARM_LEAD = timedelta(minutes=15)
+
+
+class LlmCacheRefresh:
+    """Once a day, unload the local model while nobody needs it, and load it
+    again shortly before the night window.
+
+    Ollama's MLX runner keeps a prefix cache that grows with every request
+    and is only trimmed near the whole host's memory (see
+    `agent.llm.OllamaLLM.unload`). Unloading frees it. The unload happens
+    only while the session is `IDLE` outside the night window, and the model
+    is loaded again `LLM_REWARM_LEAD` before the window opens, so the first
+    reply of the night is not a 20-second cold start. A backend without
+    `unload` (the OpenAI-compatible server) is left alone.
+    """
+
+    def __init__(self, unload: Callable[[], bool], warm_up: Callable[[], bool]) -> None:
+        self._unload = unload
+        self._warm_up = warm_up
+        self._unloaded_on: date | None = None
+        self._needs_warm_up = False
+
+    def step(self, session: Session, now: datetime) -> str | None:
+        """Unload or warm up if due; returns which, for logging and tests."""
+        if session.phase != Phase.IDLE:
+            return None
+        wall = session.wall_clock(now)
+        in_night = session.config.in_night_window(wall)
+        if self._needs_warm_up and session.config.in_night_window(wall + LLM_REWARM_LEAD):
+            self._needs_warm_up = not self._warm_up()
+            _log("local llm re-warmed before the night window", ok=not self._needs_warm_up)
+            return "warm_up"
+        if in_night or self._unloaded_on == wall.date():
+            return None
+        if session.config.in_night_window(wall + LLM_REWARM_LEAD):
+            return None  # too close to the night to unload now
+        self._unloaded_on = wall.date()
+        ok = self._unload()
+        self._needs_warm_up = True
+        _log("local llm unloaded to free its prefix cache", ok=ok)
+        return "unload"
+
+
 def _log_startup_timezone_check(config: AgentConfig) -> None:
     """Log one structured line naming the configured night window alongside
     the process's actually-resolved local time and zone.
@@ -1491,6 +1534,12 @@ def run() -> None:
 
             cloud_llm = ClaudeLLM(api_key=api_key, on_call=record_cloud_call)
     llm = FallbackLLM(local_llm, cloud_llm)
+    unload = getattr(local_llm, "unload", None)
+    cache_refresh = (
+        LlmCacheRefresh(unload, local_llm.warm_up)
+        if unload is not None and warm_up is not None
+        else None
+    )
 
     last_health_at: float | None = None
     last_heartbeat_at: datetime | None = None
@@ -1504,6 +1553,8 @@ def run() -> None:
                 bus, session, last_heartbeat_at, now, interval=HEARTBEAT_INTERVAL_S
             )
         last_health_at = maybe_emit_health(bus, last_health_at, time.time())
+        if cache_refresh is not None and not published:
+            cache_refresh.step(session, now)
         if not published:
             time.sleep(0.05)
 

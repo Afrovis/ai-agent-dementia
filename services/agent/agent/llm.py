@@ -263,6 +263,17 @@ class OllamaLLM(_LocalLLM):
         self._model = model
         self._timeout_seconds = timeout_seconds
 
+    def unload(self, timeout_seconds: float = 60.0) -> bool:
+        """Unload the model from Ollama, freeing its prefix cache.
+
+        Ollama's MLX runner keeps a prefix cache that grows with every
+        request (about 35 MB each) and is only trimmed near MLX's memory
+        limit, about 16 GiB on a 16 GB Mac. Left alone it fills the host and
+        everything swaps (2026-09-23). `agent.main.LlmCacheRefresh` calls this
+        once a day while the room is quiet. Best effort, like `warm_up`.
+        """
+        return self._keep_alive(0, timeout_seconds)
+
     def warm_up(self, timeout_seconds: float = 60.0) -> bool:
         """Load the model now so the first real call is not a cold start.
 
@@ -270,7 +281,10 @@ class OllamaLLM(_LocalLLM):
         whether it succeeded; failure is harmless, the model loads on the
         first real call instead.
         """
-        body = json.dumps({"model": self._model, "keep_alive": OLLAMA_KEEP_ALIVE}).encode()
+        return self._keep_alive(OLLAMA_KEEP_ALIVE, timeout_seconds)
+
+    def _keep_alive(self, keep_alive: int, timeout_seconds: float) -> bool:
+        body = json.dumps({"model": self._model, "keep_alive": keep_alive}).encode()
         request = Request(
             f"{self._ollama_url}{_OLLAMA_GENERATE_PATH}",
             data=body,
@@ -280,7 +294,7 @@ class OllamaLLM(_LocalLLM):
         try:
             with urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310
                 return response.status == 200
-        except Exception:  # noqa: BLE001 - warm-up is best effort
+        except Exception:  # noqa: BLE001 - load and unload are best effort
             return False
 
     def _call(self, task: str, payload: Mapping[str, Any], output_type: type[_StrictOutput]):

@@ -301,6 +301,23 @@ either change and `embodiment` after a strategy change. Photos and consented
 family voice clips are validated and stored under `data/`, never Redis. The
 System page remains a placeholder.
 
+Host Ollama's MLX runner keeps a prefix cache that grows about 35 MB per
+request and is only trimmed near MLX's memory limit, about 16 GiB on the 16 GB
+Mac mini. Left loaded through a long run it fills the machine and everything
+swaps: requests hang, and a second model load under that pressure
+kernel-panicked the host on 2026-09-23. `curl localhost:11434/api/ps` shows
+the load size, not the cache; the runner logs `held="… GiB"` in
+`~/.ollama/logs/server.log`. The agent unloads the model once a day while idle
+outside the night window and reloads it 15 minutes before the night
+(`LlmCacheRefresh`); `scene_lab` unloads before a batch, resets before each
+director scene and unloads at the end. To free it by hand, unload through the
+API, never by killing Ollama processes (a killed server leaves the old runner
+holding GPU memory):
+
+```sh
+curl -s localhost:11434/api/generate -d '{"model":"gemma4:e4b-mlx","keep_alive":0}'
+```
+
 `capture` needs OpenCV only for `CAPTURE_SOURCE=usb` or `rtsp`. The browser
 MVP source is the default and needs none of it, so the container does not
 install it. Set the source and install the `camera` extra together, or the

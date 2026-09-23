@@ -340,7 +340,11 @@ Still open, in suggested order:
    away from the toilet (TOIL-01).
 4. **Talk-over (finding 9)** and **restroom goal from the camera
    (finding 3)**: unchanged, need live or perceive work.
-5. **Harness.** One director hour does not fit a subscription session window.
+5. **Harness.** Both director hours ran with host Ollama's MLX prefix cache
+   pinned at 16.3 GiB (from 2026-09-22 23:34), so the host was swapping and
+   part of the measured latency is that, not the agent. `scene_lab` now resets
+   the model before each scene; re-measure latency on a fresh run.
+   One director hour does not fit a subscription session window.
    `compose.sim.yml` sets no `TZ`, so the sim agent's night window and
    screen clock use UTC. `plan` calls publish no Activity, so a blocked loop
    is invisible to TM-1 (the SM-5 minor in `0552-live`). `session_replay

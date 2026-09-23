@@ -2,15 +2,36 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 import redis
 
 SERVICES = ("agent", "listen", "embodiment", "store", "light", "notify")
+
+# Host Ollama, as seen from scene_lab on the host (the agent container reaches
+# the same server through host.docker.internal).
+OLLAMA_URL = os.environ.get("SCENE_LAB_OLLAMA_URL", "http://127.0.0.1:11434")
+
+
+def _ollama_keep_alive(model: str, keep_alive: int, timeout: float) -> bool:
+    """A prompt-less generate: keep_alive 0 unloads the model, -1 loads it."""
+    body = json.dumps({"model": model, "keep_alive": keep_alive}).encode()
+    request = Request(
+        f"{OLLAMA_URL}/api/generate",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:  # noqa: S310
+            return response.status == 200
+    except OSError:
+        return False
 
 
 class Stack:
@@ -105,6 +126,28 @@ class Stack:
                 pass
             time.sleep(1)
         raise TimeoutError("nightsim Redis or embodiment did not become ready")
+
+    def unload_llm(self, model: str, timeout: float = 60) -> bool:
+        """Unload the agent's model from host Ollama.
+
+        Ollama's MLX runner keeps a prefix cache that grows about 35 MB per
+        request and only evicts near MLX's memory limit, about 16 GiB on the
+        16 GB host. A night's worth of scenes pushed it there and the host
+        swapped until requests hung (2026-09-23). Unloading frees it all.
+        """
+        return _ollama_keep_alive(model, 0, timeout)
+
+    def reset_llm(self, model: str, timeout: float = 120) -> dict:
+        """Unload and reload the model so a scene starts with an empty prefix
+        cache and no cold start inside the scene (a load takes about 20 s)."""
+        started = time.monotonic()
+        unloaded = self.unload_llm(model)
+        loaded = _ollama_keep_alive(model, -1, timeout)
+        return {
+            "unloaded": unloaded,
+            "loaded": loaded,
+            "seconds": round(time.monotonic() - started, 1),
+        }
 
     def preflight(self) -> dict:
         def output(args):

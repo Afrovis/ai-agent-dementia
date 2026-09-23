@@ -100,6 +100,14 @@ class FakeStack:
     def down(self):
         self.calls.append("down")
 
+    def unload_llm(self, model):
+        self.calls.append("unload")
+        return True
+
+    def reset_llm(self, model):
+        self.calls.append("reset")
+        return {"unloaded": True, "loaded": True, "seconds": 0.0}
+
 
 class FakeDirector:
     def __init__(self):
@@ -132,7 +140,17 @@ def test_hours_deadline_and_index(tmp_path):
     assert director.calls == 2
     assert len(list((path / "scenes").glob("*.yaml"))) == 2
     assert json.loads((tmp_path / "index.jsonl").read_text())["scene_count"] == 2
-    assert FakeStack.instances[-1].calls == ["preflight", "up", "ready", "down"]
+    # Unload before the stack starts, reset Ollama's cache before every scene
+    # after the first, and leave nothing loaded at the end.
+    assert FakeStack.instances[-1].calls == [
+        "preflight",
+        "unload",
+        "up",
+        "ready",
+        "reset",
+        "down",
+        "unload",
+    ]
 
 
 def test_hours_interrupt_finishes(tmp_path):
