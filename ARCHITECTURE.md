@@ -34,6 +34,7 @@ flowchart LR
     q_activity[("activity<br/>Activity")]
     q_audio_in[("audio_in<br/>AudioChunk")]
     q_cloud[("cloud<br/>CloudCall")]
+    q_debug[("debug<br/>BedZoneStatus, CalibrateBed, DebugControl")]
     q_frames[("frames<br/>Frame")]
     q_frames_raw[("frames_raw<br/>RawFrame")]
     q_light[("light<br/>LightCommand")]
@@ -76,12 +77,19 @@ flowchart LR
   s_embodiment --> q_audio_in
   q_audio_in --> s_listen
   s_agent --> q_cloud
+  s_agent --> q_debug
+  s_embodiment --> q_debug
+  s_perceive --> q_debug
+  q_debug --> s_agent
+  q_debug --> s_embodiment
+  q_debug --> s_perceive
   s_capture --> q_frames
   q_frames --> s_dashboard
   q_frames --> s_perceive
   q_frames --> s_perceive
   s_embodiment --> q_frames_raw
   q_frames_raw --> s_capture
+  q_frames_raw --> s_perceive
   s_agent --> q_light
   q_light --> s_light
   s_agent --> q_notify
@@ -142,6 +150,7 @@ flowchart LR
   q_health --> s_store
   q_p_ack[("ack")] --> s_store
   q_p_cloud[("cloud")] --> s_store
+  q_p_debug[("debug")] --> s_store
   q_p_light[("light")] --> s_store
   q_p_notify[("notify")] --> s_store
   q_p_person[("person")] --> s_store
@@ -160,8 +169,9 @@ flowchart LR
 | `activity` | `Activity` | agent, embodiment, listen | embodiment (`embodiment`), listen (`listen-activity`) | yes, 200 |
 | `audio_in` | `AudioChunk` | embodiment | listen (`listen`) | yes, 50 |
 | `cloud` | `CloudCall` | agent | store (`store`) | no |
+| `debug` | `BedZoneStatus`, `CalibrateBed`, `DebugControl` | agent, embodiment, perceive | agent (`agent`), embodiment (`embodiment`), perceive (`perceive`), store (`store`) | no |
 | `frames` | `Frame` | capture | dashboard (`dashboard`), perceive (`perceive`), perceive (`perceive-calibrate`) | yes, 50 |
-| `frames_raw` | `RawFrame` | embodiment | capture (`capture`) | yes, 50 |
+| `frames_raw` | `RawFrame` | embodiment | capture (`capture`), perceive (`perceive-calibrate`) | yes, 50 |
 | `health` | `Health` | agent, capture, embodiment, light, listen, perceive | dashboard (`dashboard-live`), store (`store`) | no |
 | `light` | `LightCommand` | agent | light (`light`), store (`store`) | no |
 | `notify` | `Notify` | agent, embodiment, light, listen, store | dashboard (`dashboard-live`), notify (`notify`), store (`store`) | no |
