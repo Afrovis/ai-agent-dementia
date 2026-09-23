@@ -211,8 +211,10 @@ cancellation from `getUserMedia`.
 The bedside page shows glowing red eyes (design and exact values in
 `docs/EYES_UPGRADE_PLAN.md` and `docs/EYES_UPGRADE_HANDOFF.md`). Embodiment
 picks the expression itself, as a reflex, in `embodiment/eyes.py`: `in_bed`
-is sleeping (with floating z's), `sitting_up` is sleepy, anything else is
-open; `SpeechStarted` means listening until the next `Utterance` or 15 s, and
+and `sitting_up` are sleepy for a 25 s doze (`DOZE_SECONDS`) while the page
+slowly lowers the lids, then sleeping (with floating z's); sitting up from
+lying down, or the end of listening or a face override, restarts the doze;
+anything else is open; `SpeechStarted` means listening until the next `Utterance` or 15 s, and
 `Show.face` listening/speaking overrides posture for at most 15 s. The page
 switches to speaking while speech audio plays. The alert vignette comes on
 when the session enters `ESCALATED` and fades out when the caregiver
