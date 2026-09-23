@@ -74,6 +74,7 @@ from nc_shared.events import (
     LightCommand,
     Notify,
     PersonState,
+    ResetSession,
     Say,
     SessionState,
     Show,
@@ -767,11 +768,25 @@ def run_once(
 
     for msg_id, event in bus.read(DEBUG_STREAM, DEBUG_GROUP, consumer, count=count, block_ms=None):
         bus.ack(DEBUG_STREAM, DEBUG_GROUP, msg_id)
-        if not isinstance(event, DebugControl) or event.source == SERVICE_NAME:
+        if not isinstance(event, (DebugControl, ResetSession)) or event.source == SERVICE_NAME:
             continue
         now = now_fn()
         utc_now = now.astimezone(UTC)
         if (utc_now - event.ts).total_seconds() > 60:
+            continue
+        if isinstance(event, ResetSession):
+            transition = session.reset()
+            published.append(
+                _publish_transition(bus, transition, session, now, profile=profile, llm=llm)
+            )
+            _log("session reset by operator", level=logging.WARNING, event_type="ResetSession")
+            effective = (
+                ("in_bed", "bed")
+                if session.debug_overrides.force_in_bed
+                else session._last_real_person
+            )
+            if effective is not None:
+                _handle_person_state(bus, session, *effective, now, published, profile, llm)
             continue
         overrides = session.debug_overrides
         was_forced = overrides.force_in_bed

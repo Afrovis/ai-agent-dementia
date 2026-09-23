@@ -281,6 +281,29 @@ class Session:
     def __post_init__(self) -> None:
         self._engine = StrategyEngine(self.strategies)
 
+    def reset(self) -> Transition:
+        """Abandon the session while retaining operator controls and perception.
+
+        Keep the last spoken time across the reset so an immediate new session
+        cannot speak over a sentence that is still playing.
+        """
+        overrides = self.debug_overrides
+        real_person = self._last_real_person
+        last_say_at = self._last_say_at
+        fresh = Session(config=self.config, strategies=self.strategies, id_fn=self.id_fn)
+        self.__dict__.clear()
+        self.__dict__.update(fresh.__dict__)
+        self.debug_overrides = overrides
+        self._last_real_person = real_person
+        self._last_say_at = last_say_at
+        return Transition(
+            phase=self.phase,
+            session_id=self.session_id,
+            goal=self.goal,
+            strategy_index=self.strategy_index,
+            reason="operator_reset",
+        )
+
     def wall_clock(self, now: datetime) -> datetime:
         """Shift displayed time and night decisions without moving timer time."""
         return now + timedelta(hours=self.debug_overrides.time_offset_hours)
