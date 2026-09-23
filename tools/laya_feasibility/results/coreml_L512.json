@@ -1,0 +1,354 @@
+{
+  "model": "laya_multilingual_fp16_L512_options32.mlmodelc",
+  "coremltools": "9.0",
+  "tokens_per_question": [
+    178,
+    179,
+    180,
+    181,
+    182,
+    183,
+    184,
+    185,
+    187,
+    343
+  ],
+  "units": {
+    "cpu_and_ne": {
+      "load_s": 6.2,
+      "parity": {
+        "questions": 34,
+        "max_abs_prob_diff": 0.00829,
+        "argmax_agree": 34,
+        "bool_side_agree": "32/32"
+      },
+      "single_question": {
+        "p50_ms": 33.52,
+        "p95_ms": 33.73,
+        "min_ms": 33.43,
+        "reps": 30
+      },
+      "decision_32_bool": {
+        "p50_ms": 1072.83,
+        "p95_ms": 1074.85,
+        "min_ms": 1072.23,
+        "reps": 10
+      },
+      "choice_32_actions": {
+        "p50_ms": 33.52,
+        "p95_ms": 33.79,
+        "min_ms": 33.44,
+        "reps": 30
+      },
+      "per_question": {
+        "phase:IDLE": {
+          "max_abs_diff": 0.00021,
+          "coreml": [
+            0.003100000089034438,
+            0.9970999956130981
+          ]
+        },
+        "phase:OBSERVING": {
+          "max_abs_diff": 5e-05,
+          "coreml": [
+            0.013199999928474426,
+            0.9868000149726868
+          ]
+        },
+        "phase:ENGAGED": {
+          "max_abs_diff": 0.00014,
+          "coreml": [
+            0.0010999999940395355,
+            0.9990000128746033
+          ]
+        },
+        "phase:COOLDOWN": {
+          "max_abs_diff": 0.00032,
+          "coreml": [
+            0.004999999888241291,
+            0.9951000213623047
+          ]
+        },
+        "phase:ESCALATED": {
+          "max_abs_diff": 0.00122,
+          "coreml": [
+            0.06469999998807907,
+            0.9351000189781189
+          ]
+        },
+        "goal:bed": {
+          "max_abs_diff": 1e-05,
+          "coreml": [
+            0.0,
+            1.0
+          ]
+        },
+        "goal:restroom": {
+          "max_abs_diff": 3e-05,
+          "coreml": [
+            0.0,
+            1.0
+          ]
+        },
+        "goal:comfort": {
+          "max_abs_diff": 0.00408,
+          "coreml": [
+            0.17990000545978546,
+            0.8198000192642212
+          ]
+        },
+        "strategy:ambient_orient": {
+          "max_abs_diff": 0.00216,
+          "coreml": [
+            0.3122999966144562,
+            0.6880000233650208
+          ]
+        },
+        "strategy:soft_greeting": {
+          "max_abs_diff": 0.00191,
+          "coreml": [
+            0.29490000009536743,
+            0.7056000232696533
+          ]
+        },
+        "strategy:orient_time_place": {
+          "max_abs_diff": 0.00109,
+          "coreml": [
+            0.05820000171661377,
+            0.9419000148773193
+          ]
+        },
+        "strategy:validate_and_redirect": {
+          "max_abs_diff": 7e-05,
+          "coreml": [
+            9.999999747378752e-05,
+            1.0
+          ]
+        },
+        "strategy:guided_return": {
+          "max_abs_diff": 2e-05,
+          "coreml": [
+            0.0,
+            1.0
+          ]
+        },
+        "strategy:familiar_voice": {
+          "max_abs_diff": 0.00086,
+          "coreml": [
+            0.26510000228881836,
+            0.7354000210762024
+          ]
+        },
+        "strategy:path_light": {
+          "max_abs_diff": 1e-05,
+          "coreml": [
+            0.0,
+            1.0
+          ]
+        },
+        "strategy:escalate_phone": {
+          "max_abs_diff": 0.0001,
+          "coreml": [
+            9.999999747378752e-05,
+            1.0
+          ]
+        },
+        "notify:any": {
+          "max_abs_diff": 0.00018,
+          "coreml": [
+            0.006599999964237213,
+            0.9932000041007996
+          ]
+        },
+        "notify:info": {
+          "max_abs_diff": 0.00047,
+          "coreml": [
+            0.0005000000237487257,
+            0.9990000128746033
+          ]
+        },
+        "notify:attention": {
+          "max_abs_diff": 0.00207,
+          "coreml": [
+            0.17960000038146973,
+            0.8202999830245972
+          ]
+        },
+        "notify:critical": {
+          "max_abs_diff": 0.00103,
+          "coreml": [
+            0.8960000276565552,
+            0.10409999638795853
+          ]
+        },
+        "say:any": {
+          "max_abs_diff": 0.0003,
+          "coreml": [
+            0.0003000000142492354,
+            1.0
+          ]
+        },
+        "say:conjunction_but": {
+          "max_abs_diff": 0.00201,
+          "coreml": [
+            0.043299999088048935,
+            0.9570000171661377
+          ]
+        },
+        "say:avoid_terms": {
+          "max_abs_diff": 0.00225,
+          "coreml": [
+            0.04960000142455101,
+            0.9506999850273132
+          ]
+        },
+        "say:states_clock_time": {
+          "max_abs_diff": 0.00021,
+          "coreml": [
+            0.0027000000700354576,
+            0.9970999956130981
+          ]
+        },
+        "say:invents_proper_noun": {
+          "max_abs_diff": 0.00413,
+          "coreml": [
+            0.548799991607666,
+            0.4507000148296356
+          ]
+        },
+        "say:addresses_by_name": {
+          "max_abs_diff": 0.00477,
+          "coreml": [
+            0.29809999465942383,
+            0.7020999789237976
+          ]
+        },
+        "say:correction_of_reality": {
+          "max_abs_diff": 0.00098,
+          "coreml": [
+            0.3131999969482422,
+            0.6869999766349792
+          ]
+        },
+        "say:memory_question": {
+          "max_abs_diff": 0.00102,
+          "coreml": [
+            0.05260000005364418,
+            0.9473000168800354
+          ]
+        },
+        "say:blunt_refusal": {
+          "max_abs_diff": 0.00604,
+          "coreml": [
+            0.4004000127315521,
+            0.5990999937057495
+          ]
+        },
+        "say:infantilising": {
+          "max_abs_diff": 0.00621,
+          "coreml": [
+            0.6664999723434448,
+            0.3330000042915344
+          ]
+        },
+        "say:invents_directions": {
+          "max_abs_diff": 0.00574,
+          "coreml": [
+            0.7318999767303467,
+            0.26829999685287476
+          ]
+        },
+        "say:unsupported_claim": {
+          "max_abs_diff": 0.00103,
+          "coreml": [
+            0.03060000017285347,
+            0.9696999788284302
+          ]
+        },
+        "choice:strategy": {
+          "max_abs_diff": 0.003,
+          "coreml": [
+            0.0478999987244606,
+            0.0340999998152256,
+            0.09210000187158585,
+            0.2542000114917755,
+            0.07599999755620956,
+            0.4108999967575073,
+            0.04100000113248825,
+            0.0430000014603138
+          ]
+        },
+        "choice:action32": {
+          "max_abs_diff": 0.00829,
+          "coreml": [
+            0.4058000147342682,
+            0.0210999995470047,
+            0.007899999618530273,
+            0.005799999926239252,
+            0.033900000154972076,
+            0.3765000104904175,
+            0.01810000091791153,
+            0.013299999758601189
+          ]
+        }
+      }
+    },
+    "all": {
+      "load_s": 5.2,
+      "parity": {
+        "questions": 34,
+        "max_abs_prob_diff": 0.00965,
+        "argmax_agree": 34,
+        "bool_side_agree": "32/32"
+      },
+      "single_question": {
+        "p50_ms": 34.34,
+        "p95_ms": 34.77,
+        "min_ms": 34.19,
+        "reps": 30
+      },
+      "decision_32_bool": {
+        "p50_ms": 1098.63,
+        "p95_ms": 1100.97,
+        "min_ms": 1097.24,
+        "reps": 10
+      },
+      "choice_32_actions": {
+        "p50_ms": 34.28,
+        "p95_ms": 34.54,
+        "min_ms": 34.19,
+        "reps": 30
+      },
+      "per_question": null
+    },
+    "cpu_only": {
+      "load_s": 0.5,
+      "parity": {
+        "questions": 34,
+        "max_abs_prob_diff": 0.02894,
+        "argmax_agree": 34,
+        "bool_side_agree": "32/32"
+      },
+      "single_question": {
+        "p50_ms": 73.1,
+        "p95_ms": 83.29,
+        "min_ms": 69.36,
+        "reps": 30
+      },
+      "decision_32_bool": {
+        "p50_ms": 2311.01,
+        "p95_ms": 2360.42,
+        "min_ms": 2297.48,
+        "reps": 10
+      },
+      "choice_32_actions": {
+        "p50_ms": 73.81,
+        "p95_ms": 76.95,
+        "min_ms": 70.07,
+        "reps": 30
+      },
+      "per_question": null
+    }
+  },
+  "peak_rss_mb": 4148.6
+}
