@@ -50,7 +50,15 @@ def main(argv: list[str] | None = None) -> int:
         register(sub)
     except ImportError:
         sub.add_parser("promote", help="reserved for phase 5")
+    from .rescore import register as register_rescore
+
+    register_rescore(sub)
     args = parser.parse_args(argv)
+    if args.command == "rescore":
+        from .rescore import rescore
+
+        print(rescore(args.run_dir, args.thresholds))
+        return 0
     if args.command == "bugs":
         root = _default_root()
         paths = [Path(p) if Path(p).exists() else root / p for p in args.runs]
