@@ -114,3 +114,15 @@ def test_status_is_republished_after_thirty_seconds(tmp_path):
     current[0] = 30.0
     job.maybe_publish_status()
     assert [s.calibration for s in statuses(bus)] == ["idle"]
+
+
+def test_example_fallback_bed_is_not_a_configured_bed(tmp_path):
+    bus, job, path = controller(tmp_path)
+    write_bed_zone(tmp_path / "zones.example.yaml", POLYGON)
+    job.zones = load_zones(path)
+    assert job.zones.polygons["bed"] == POLYGON
+    job.publish_status()
+    status = statuses(bus)[0]
+    assert status.has_bed is False
+    assert status.polygon == POLYGON
+    assert "placeholder" in status.detail

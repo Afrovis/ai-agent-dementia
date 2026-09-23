@@ -125,10 +125,15 @@ class BedCalibration:
 
     def publish_status(self, calibration: str = "idle", detail: str | None = None) -> None:
         polygon = self.zones.polygons.get("bed")
+        # load_zones falls back to zones.example.yaml, whose bed is a
+        # placeholder rectangle rather than this room's bed.
+        has_bed = polygon is not None and self.path.exists()
+        if polygon is not None and not has_bed and detail is None:
+            detail = f"placeholder bed from example zones; {self.path.name} is missing"
         self.bus.publish(
             BedZoneStatus(
                 source="perceive",
-                has_bed=polygon is not None,
+                has_bed=has_bed,
                 polygon=polygon,
                 calibration=calibration,
                 detail=detail,
@@ -139,7 +144,7 @@ class BedCalibration:
         _log(
             "published BedZoneStatus",
             calibration=calibration,
-            has_bed=polygon is not None,
+            has_bed=has_bed,
             detail=detail,
         )
 

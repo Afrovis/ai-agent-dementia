@@ -94,7 +94,7 @@
     const detail = document.getElementById("bed-zone-detail");
     const detect = document.getElementById("detect-bed");
     label.textContent = !bed ? "Bed zone: waiting for status" : bed.calibration === "running" ? "Detecting bed zone…" : bed.has_bed ? "Bed zone set" : "No bed zone set";
-    detail.textContent = bed && bed.calibration === "failed" ? (bed.detail || "Bed detection failed") : "";
+    detail.textContent = !bed ? "" : bed.calibration === "failed" ? (bed.detail || "Bed detection failed") : (!bed.has_bed && bed.detail) || "";
     detect.classList.toggle("hidden", !bed || (bed.has_bed && bed.calibration !== "running"));
     if (bed && !bed.has_bed) detect.classList.remove("hidden");
     detect.disabled = !!bed && bed.calibration === "running";
