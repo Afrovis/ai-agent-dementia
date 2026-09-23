@@ -2,7 +2,7 @@
 
 Produces the `PERCEIVE_PHANTOMS_FILE` YAML `perceive.phantom.KnownPhantoms`
 loads at startup. Run this once, with the room known to be empty, then
-restart `perceive` to pick up the result (see CLAUDE.md Gotchas).
+restart `perceive` to pick up the result (see services/perceive/AGENTS.md).
 
 Two frame sources:
 

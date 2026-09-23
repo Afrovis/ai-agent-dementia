@@ -148,5 +148,6 @@ whether something is an emergency.
 - [docs/PERCEIVE_ACCURACY_2026-09-13.md](docs/PERCEIVE_ACCURACY_2026-09-13.md)
   and [docs/FLOOR_DETECTION_HANDOFF.md](docs/FLOOR_DETECTION_HANDOFF.md) —
   the latest accuracy investigations.
-- [CLAUDE.md](CLAUDE.md) — how to run the stack locally, test it without
-  hardware, and set up TLS for the camera/mic bridge.
+- [AGENTS.md](AGENTS.md) — how to run the stack locally and test it without
+  hardware; shared by Claude Code (`CLAUDE.md` imports it) and Codex.
+- [docs/TLS.md](docs/TLS.md) — certificates for the camera/mic bridge.
