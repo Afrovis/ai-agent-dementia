@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from collections import Counter, defaultdict
 from datetime import datetime
@@ -113,7 +114,12 @@ def results_to_entries(
     ]
 
 
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
 def harness_error(run: str, scene: str, message: str) -> BugEntry:
+    # CLI errors (claude, docker) arrive with terminal colour codes.
+    message = _ANSI.sub("", message)
     return BugEntry(
         run=run,
         scene=scene,
