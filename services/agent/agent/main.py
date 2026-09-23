@@ -68,6 +68,7 @@ from nc_shared.bus import Bus
 from nc_shared.events import (
     Activity,
     CloudCall,
+    DebugControl,
     GoalChanged,
     Health,
     LightCommand,
@@ -107,6 +108,8 @@ PERSON_STREAM = "person"
 PERSON_GROUP = "agent"
 UTTERANCE_STREAM = "speech_in"
 UTTERANCE_GROUP = "agent"
+DEBUG_STREAM = "debug"
+DEBUG_GROUP = "agent"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(SERVICE_NAME)
@@ -147,7 +150,7 @@ def veto_context(session: Session, profile: PersonProfile, now: datetime) -> Vet
         person_state=session.last_person_state,
         recent_utterances=session.recent_utterances,
         settled=session.settled,
-        in_night_window=session.config.in_night_window(now),
+        in_night_window=session.config.in_night_window(session.wall_clock(now)),
         things_to_avoid=profile.things_to_avoid,
         restroom_need_resolved=session._restroom_need_resolved,
     )
@@ -334,7 +337,8 @@ def _maybe_publish_say(
         )
         return False
 
-    text = render_template(strategy.say_template, profile, time_words=time_as_words(now))
+    time_words = time_as_words(session.wall_clock(now))
+    text = render_template(strategy.say_template, profile, time_words=time_words)
     compose = llm is not None and (
         strategy.id == "validate_and_redirect"
         or (direct and strategy.id in (REASSURE_WAITING_ID, "orient_time_place"))
@@ -351,7 +355,7 @@ def _maybe_publish_say(
                 # The rendered phrase, so the model never sees a raw placeholder.
                 text,
                 _profile_for_llm(profile),
-                time_as_words(now),
+                time_words,
                 session.last_scene_note,
                 session.recent_utterances[-1] if session.recent_utterances else None,
                 session.goal,
@@ -362,7 +366,7 @@ def _maybe_publish_say(
                     composition_result.accepted
                     and strategy.id == "orient_time_place"
                     and (
-                        time_as_words(now).lower() not in composition.text.lower()
+                        time_words.lower() not in composition.text.lower()
                         or not any(word in composition.text.lower() for word in ("home", "bedroom"))
                     )
                 ):
@@ -644,7 +648,7 @@ def _publish_transition(
     if strategy is None or not _vetoed(
         Proposal("strategy", strategy.id, terminal=strategy.terminal), context
     ):
-        show_event = _show_for_transition(transition, now, profile)
+        show_event = _show_for_transition(transition, session.wall_clock(now), profile)
         spoke = _maybe_publish_say(bus, transition, session, now, profile, llm, context=context)
         if show_event.face == "speaking" and not spoke:
             if (
@@ -690,7 +694,7 @@ def _reply_to_utterance(
         reason="utterance_reply",
         strategy=strategy,
     )
-    show = _show_for_strategy(strategy, session.session_id, now, profile)
+    show = _show_for_strategy(strategy, session.session_id, session.wall_clock(now), profile)
     spoke = _maybe_publish_say(
         bus, transition, session, now, profile, llm, context=context, direct=True
     )
@@ -699,6 +703,41 @@ def _reply_to_utterance(
             session._pending_say = replace(session._pending_say, show=show)
         show = show.model_copy(update={"face": "awake"})
     bus.publish(show)
+
+
+def _publish_debug_state(bus, session: Session) -> None:
+    overrides = session.debug_overrides
+    bus.publish(
+        DebugControl(
+            source=SERVICE_NAME,
+            time_offset_hours=overrides.time_offset_hours,
+            force_in_bed=overrides.force_in_bed,
+        ),
+        maxlen=100,
+    )
+    _log(
+        "published DebugControl",
+        event_type="DebugControl",
+        time_offset_hours=overrides.time_offset_hours,
+        force_in_bed=overrides.force_in_bed,
+    )
+
+
+def _handle_person_state(
+    bus,
+    session: Session,
+    state: str,
+    zone: str,
+    now: datetime,
+    published: list[SessionState],
+    profile: PersonProfile,
+    llm: LLMClient | None,
+) -> None:
+    transition = session.on_person_state(state, zone, now)
+    if transition is not None:
+        published.append(
+            _publish_transition(bus, transition, session, now, profile=profile, llm=llm)
+        )
 
 
 def run_once(
@@ -726,6 +765,31 @@ def run_once(
     """
     published: list[SessionState] = []
 
+    for msg_id, event in bus.read(DEBUG_STREAM, DEBUG_GROUP, consumer, count=count, block_ms=None):
+        bus.ack(DEBUG_STREAM, DEBUG_GROUP, msg_id)
+        if not isinstance(event, DebugControl) or event.source == SERVICE_NAME:
+            continue
+        now = now_fn()
+        utc_now = now.astimezone(UTC)
+        if (utc_now - event.ts).total_seconds() > 60:
+            continue
+        overrides = session.debug_overrides
+        was_forced = overrides.force_in_bed
+        overrides.time_offset_hours = event.time_offset_hours
+        overrides.force_in_bed = event.force_in_bed
+        if was_forced != overrides.force_in_bed:
+            effective = ("in_bed", "bed") if overrides.force_in_bed else session._last_real_person
+            if effective is not None:
+                _handle_person_state(bus, session, *effective, now, published, profile, llm)
+        _publish_debug_state(bus, session)
+        _log(
+            "debug override applied",
+            level=logging.WARNING,
+            event_type="DebugControl",
+            time_offset_hours=overrides.time_offset_hours,
+            force_in_bed=overrides.force_in_bed,
+        )
+
     person_messages = bus.read(
         PERSON_STREAM, PERSON_GROUP, consumer, count=count, block_ms=block_ms
     )
@@ -734,11 +798,11 @@ def run_once(
         assert isinstance(event, PersonState)
         now = now_fn()
         session.record_scene_note(event.scene_note)
-        transition = session.on_person_state(event.state, event.zone, now)
-        if transition is not None:
-            published.append(
-                _publish_transition(bus, transition, session, now, profile=profile, llm=llm)
-            )
+        session._last_real_person = (event.state, event.zone)
+        state, zone = (
+            ("in_bed", "bed") if session.debug_overrides.force_in_bed else session._last_real_person
+        )
+        _handle_person_state(bus, session, state, zone, now, published, profile, llm)
 
     utterance_messages = bus.read(
         UTTERANCE_STREAM, UTTERANCE_GROUP, consumer, count=count, block_ms=None
@@ -989,7 +1053,9 @@ def run() -> None:
     bus = Bus(redis.Redis.from_url(redis_url))
     bus.ensure_group(PERSON_STREAM, PERSON_GROUP)
     bus.ensure_group(UTTERANCE_STREAM, UTTERANCE_GROUP)
+    bus.ensure_group(DEBUG_STREAM, DEBUG_GROUP)
     session = Session(config=config, strategies=strategies)
+    _publish_debug_state(bus, session)
     local_llm = build_local_llm(
         config.llm_backend,
         url=(
