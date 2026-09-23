@@ -893,6 +893,8 @@ class Session:
         target_goal = INTENT_GOALS.get(intent)
         if target_goal is None:
             return None
+        if intent == "need_restroom" and self.last_person_state == "on_floor":
+            return None
         transition = self.propose_goal(target_goal, f"interpreted_{intent}", now)
         if intent == "wants_bed" and self.goal == DEFAULT_GOAL:
             self._restroom_need_resolved = True

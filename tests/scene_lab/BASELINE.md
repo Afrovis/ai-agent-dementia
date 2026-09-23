@@ -286,3 +286,50 @@ lost their beats at the first decision point; the `activity` stream's 200
 cap dropped early playback reports and decision records from end-of-scene
 exports (now a live `StreamTap`); a scripted end at exactly 600 s counted as
 a cap stop; the live-vs-in-process diff paired by time rather than content.
+
+## Triage after the director hours, 2026-09-23
+
+Both director hours re-checked with `scene_lab rescore` at the commit that
+introduced this section. `0050-live` is mostly harness: 27 of its 28 scenes
+are fallback replays of 8 cards with no mind, and 50 of its 76 majors are
+the session-limit harness entries. `0552-live` is the measurement to use:
+18 criticals, all TT-1 "no reply".
+
+Fixed on branch `scene-lab-fixes`:
+
+| finding | change |
+| --- | --- |
+| 5, repeats | While escalated, at most two reassurances per escalation; after that only a direct question or distress 3 is answered. A repeated sentence is swapped for an approved alternative. Deliberate silence publishes a `no_reply` decision, which TT-1 reports as info unless the utterance was a question. |
+| 4, restroom path | The first plain progress remark on a restroom trip gets "Good, take your time."; later ones stay quiet; a question about the way gets the directions again, without a second sentence in the same tick. Distress on the path no longer gets `validate_and_redirect` ("let's rest now"), which contradicted TOIL-01. |
+| pain (new) | "Oh my hip really hurts. I need someone, please." got "Hello Jean, it's night-time." (a `plan` pick), and "Is someone coming? It really does hurt." got nothing. One clear pain statement (intent `pain`, distress ≥ 2) now escalates at once (`pain_reported`, one attention Notify) and says "I'm sorry it hurts, Jean; I'm letting someone know now." Milder pain gets one comfort line with no promise of help. |
+| 8, floor | Veto `no_directions_from_floor` (FALL-01) denies `path_light` while the person is `on_floor`; while escalated the reply is a reassurance instead, and a `need_restroom` reading on the floor no longer moves the goal to `restroom`. |
+
+Still open, in suggested order:
+
+1. **Unmapped intents still get no answer (finding 1).** `looking_for_person`,
+   `wants_to_leave` and `unclear` have no reply route in `ENGAGED`, so the
+   ladder answers: "Where are the children?" → "Hello Jean, it's
+   night-time."; "I have to pick up the kids from school." → the same; "Tom,
+   is that you?" while escalated → a generic reassurance. This is now the
+   biggest source of TT-1 and TT-2 findings. It needs a decision on what a
+   good answer is for each intent before code.
+2. **Latency (finding 2).** Still 5 to 7.7 s live. Listen's transcript lag
+   varies most (1.3 to 4.8 s in these runs); interpret and compose are two
+   sequential calls. Re-measure without the contending stack first.
+3. **Composed reassurance makes claims (finding 5).** Live examples: "Tom is
+   nearby and everything is settled", "while you enjoy a photo of the
+   garden" with no photo on screen, "your children are fine".
+   `validate_composition` does not check claims about people or the screen.
+4. **Silence while escalated (finding 6).** The reassurance cap makes SM-3
+   silent-gap hits more likely by design. Decide whether a periodic check-in
+   (for example every 2 to 3 minutes while the person is still up) is wanted,
+   then align SM-3.
+5. **Clock time in speech.** `orient_time_place` says "<hour> o'clock at
+   night" unprompted (32 minor WORD hits in `0050-live`). Proposal: say
+   "night-time" unless asked, keep the clock on screen.
+6. **Talk-over (finding 9)** and **restroom goal from the camera
+   (finding 3)**: unchanged, need live or perceive work.
+7. **Harness.** One director hour does not fit a subscription session window.
+   `compose.sim.yml` sets no `TZ`, so the sim agent speaks UTC hours ("10
+   o'clock at night" at 06:12 local). `plan` calls publish no Activity, so a
+   blocked loop is invisible to TM-1 (the SM-5 minor in `0552-live`).

@@ -388,6 +388,14 @@ def test_sm5_skip_and_veto():
     assert not [r for r in score(wants_bed, "SM-5") if not r.passed]
 
 
+def test_sm5_flags_path_light_said_to_person_on_floor():
+    trace = baseline(
+        ev(1, "PersonState", state="on_floor", zone="other"),
+        ev(10, "Say", text="The restroom is to the left.", strategy="path_light"),
+    )
+    fail(trace, "SM-5", "critical", "no_directions_from_floor")
+
+
 def test_tm1_tm3():
     good = baseline(ev(2, "Utterance", text="hi"), ev(3, "Say", text="hello", strategy="greet"))
     # A slow reply with no LLM call running is decision timing, not loop lag.

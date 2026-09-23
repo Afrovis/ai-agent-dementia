@@ -29,6 +29,7 @@ from dataclasses import dataclass
 GUIDED_RETURN = "guided_return"
 VALIDATE_AND_REDIRECT = "validate_and_redirect"
 ORIENT_TIME_PLACE = "orient_time_place"
+PATH_LIGHT = "path_light"
 
 
 @dataclass(frozen=True)
@@ -119,6 +120,12 @@ def _deny(rule: str, clause: str, reason: str) -> Verdict:
 
 
 def _check_strategy(strategy: str, context: VetoContext) -> Verdict:
+    if strategy == PATH_LIGHT and context.person_state == "on_floor":
+        return _deny(
+            "no_directions_from_floor",
+            "FALL-01",
+            "path_light to a person who is on the floor",
+        )
     if context.person_state == "in_bed" and strategy in (
         GUIDED_RETURN,
         VALIDATE_AND_REDIRECT,

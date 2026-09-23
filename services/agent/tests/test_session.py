@@ -25,6 +25,17 @@ def make_session(*, strategies=None, **config_kwargs) -> Session:
     return Session(config=config, id_fn=lambda: next(ids))
 
 
+def test_restroom_interpretation_during_floor_escalation_window_keeps_goal():
+    session = make_session(observe_seconds=1, floor_limit_seconds=10)
+    session.on_person_state("standing", "other", NIGHT)
+    session.tick(NIGHT + timedelta(seconds=2))
+    assert session.phase == Phase.ENGAGED
+    session.on_person_state("on_floor", "other", NIGHT + timedelta(seconds=3))
+    assert session.phase == Phase.ENGAGED
+    assert session.on_interpretation("need_restroom", 0, NIGHT + timedelta(seconds=4)) is None
+    assert session.goal == "return_to_bed"
+
+
 def test_no_session_starts_outside_the_night_window():
     session = make_session()
     assert session.on_person_state("standing", "other", DAY) is None

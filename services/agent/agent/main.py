@@ -868,6 +868,8 @@ def _reply_to_utterance(
     if strategy is None:
         return
     context = veto_context(session, profile, now)
+    if _vetoed(bus, Proposal("strategy", strategy.id), context, session_id=session.session_id):
+        return
     if strategy_id == PATH_LIGHT_ID and session.goal != "restroom":
         # Direct guidance does not change the goal. Keep any caregiver alert
         # active while still meeting the stated toilet need.
@@ -880,8 +882,6 @@ def _reply_to_utterance(
         )
         if not _vetoed(bus, Proposal("light", "on"), context, session_id=session.session_id):
             bus.publish(light)
-    if _vetoed(bus, Proposal("strategy", strategy.id), context, session_id=session.session_id):
-        return
     transition = Transition(
         phase=session.phase,
         session_id=session.session_id,
@@ -1112,10 +1112,16 @@ def run_once(
                     elif (
                         session.phase == Phase.ENGAGED
                         and session.goal == "restroom"
-                        and intent != "pain"
+                        and interpretation.distress < 2
+                        and intent in {"need_restroom", "unclear", "fine"}
                         and is_direct_question(event.text)
                     ):
-                        reply_id = PATH_LIGHT_ID
+                        # No directions from the floor, and no "someone is on
+                        # their way" either: nobody has been alerted yet in
+                        # ENGAGED. The on-floor rule escalates shortly.
+                        reply_id = (
+                            None if session.last_person_state == "on_floor" else PATH_LIGHT_ID
+                        )
                     elif intent == "confused_time":
                         explicit_question = is_direct_question(event.text)
                         if explicit_question or not session.recently_said("orient_time_place", now):
@@ -1123,7 +1129,11 @@ def run_once(
                     elif intent == "need_restroom" and (
                         session.phase == Phase.ESCALATED or cooldown_reply
                     ):
-                        reply_id = PATH_LIGHT_ID
+                        reply_id = (
+                            REASSURE_WAITING_ID
+                            if session.last_person_state == "on_floor"
+                            else PATH_LIGHT_ID
+                        )
                     elif session.phase == Phase.ENGAGED and intent == "pain":
                         if not session._pain_acknowledged or is_direct_question(event.text):
                             reply_id = COMFORT_PAIN_ID
@@ -1131,9 +1141,7 @@ def run_once(
                             _intentional_silence(bus, session, event.text, "pain_acknowledged")
                             intentional_silence = True
                     elif session.phase == Phase.ENGAGED and session.goal == "restroom":
-                        if interpretation.distress >= 2:
-                            reply_id = "validate_and_redirect"
-                        elif intent in {"fine", "unclear"}:
+                        if intent in {"fine", "unclear"} and interpretation.distress < 2:
                             if not session._progress_acknowledged:
                                 reply_id = ACKNOWLEDGE_PROGRESS_ID
                             else:
@@ -1145,14 +1153,12 @@ def run_once(
                         reply_id = REASSURE_WAITING_ID
                     elif session.phase == Phase.ESCALATED:
                         reply_id = REASSURE_WAITING_ID
-                    if reply_id is not None and (
-                        session._last_say_at != now
-                        or (
-                            session.phase == Phase.ENGAGED
-                            and reply_id
-                            in {COMFORT_PAIN_ID, ACKNOWLEDGE_PROGRESS_ID, PATH_LIGHT_ID}
-                        )
-                    ):
+                    # A goal or phase transition may already have said or queued
+                    # a sentence this tick. A reply must not add a second one.
+                    reply_scheduled = session._last_say_at == now or (
+                        session._pending_say is not None and session._pending_say.queued_at == now
+                    )
+                    if reply_id is not None and not reply_scheduled:
                         if reply_id == REASSURE_WAITING_ID and session.phase == Phase.ESCALATED:
                             _reassure_or_stay_silent(
                                 bus,

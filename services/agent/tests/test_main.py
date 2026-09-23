@@ -596,7 +596,7 @@ def test_restroom_progress_once_question_and_new_trip():
     assert [event.strategy for _, event in bus.read("say", "test", "c1")] == [
         "path_light",
         "acknowledge_progress",
-        "path_light",
+        "orient_time_place",
     ]
     assert [event.state for _, event in bus.read("light", "test", "c1")] == ["on"]
     decisions = [
@@ -727,7 +727,7 @@ def test_escalated_unavailable_interpretation_obeys_cap():
     ]
 
 
-def test_escalated_restroom_need_keeps_alert_and_guides():
+def test_escalated_restroom_interpretation_on_floor_reassures_without_directions():
     bus = make_bus()
     session = Session(config=AgentConfig())
     now_fn, advance = make_clock(NIGHT)
@@ -740,9 +740,148 @@ def test_escalated_restroom_need_keeps_alert_and_guides():
 
     assert session.phase == Phase.ESCALATED
     assert session.goal == "wait_for_caregiver"
-    assert [event.state for _, event in bus.read("light", "test", "c1")][-1] == "on"
-    assert [event.strategy for _, event in bus.read("say", "test", "c1")][-1] == "path_light"
+    assert bus.read("light", "test", "c1") == []
+    assert [event.strategy for _, event in bus.read("say", "test", "c1")][-1] == "reassure_waiting"
     assert len(bus.read("notify", "test", "c1")) == 1
+
+    llm = FakeLLM(interpretations=[Interpretation(intent=Intent.NEED_RESTROOM, distress=0)] * 2)
+    for text in ("No, no bathroom, I'm on the floor, dear.", "I'm just down here a moment"):
+        advance(9)
+        bus.publish(Utterance(source="listen", text=text, confidence=0.9, duration_s=1))
+        run_once(bus, session, now_fn=now_fn, llm=llm)
+    assert session.reassurance_count == 2
+    assert "path_light" not in [event.strategy for _, event in bus.read("say", "test", "c2")]
+    assert bus.read("light", "test", "c2") == []
+    assert any(
+        json.loads(event.detail).get("decision") == "no_reply"
+        for _, event in bus.read("activity", "test", "c2", count=100)
+        if event.kind == "decision"
+    )
+
+
+def test_cooldown_restroom_interpretation_on_floor_reassures():
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    session.phase = Phase.COOLDOWN
+    session.session_id = "cooldown-session"
+    session._last_person_state = "on_floor"
+    llm = FakeLLM(interpretations=[Interpretation(intent=Intent.NEED_RESTROOM, distress=0)])
+    bus.publish(Utterance(source="listen", text="I need the toilet", confidence=0.9, duration_s=1))
+    run_once(bus, session, now_fn=lambda: NIGHT, llm=llm)
+    assert [event.strategy for _, event in bus.read("say", "test", "c1")] == ["reassure_waiting"]
+    assert bus.read("light", "test", "c1") == []
+
+
+def test_restroom_goal_question_only_guides_for_relevant_intents():
+    bus = make_bus()
+    session = Session(config=AgentConfig(observe_seconds=1))
+    now_fn, advance = make_clock(NIGHT)
+    bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    advance(2)
+    run_once(bus, session, now_fn=now_fn)
+    transition = session.propose_goal("restroom", "test", now_fn())
+    assert transition is not None
+    _publish_transition(bus, transition, session, now_fn())
+    bus.read("say", "test", "question_replies")
+    advance(9)
+    llm = FakeLLM(
+        interpretations=[
+            Interpretation(intent=Intent.LOOKING_FOR_PERSON, distress=0),
+            Interpretation(intent=Intent.UNCLEAR, distress=0),
+        ]
+    )
+    bus.publish(Utterance(source="listen", text="Where is Tom?", confidence=0.9, duration_s=1))
+    run_once(bus, session, now_fn=now_fn, llm=llm)
+    assert bus.read("say", "test", "question_replies") == []
+    advance(9)
+    bus.publish(
+        Utterance(source="listen", text="Where is the toilet?", confidence=0.9, duration_s=1)
+    )
+    run_once(bus, session, now_fn=now_fn, llm=llm)
+    assert [event.strategy for _, event in bus.read("say", "test", "question_replies")] == [
+        "path_light"
+    ]
+
+
+def test_restroom_question_during_floor_escalation_window_gives_no_directions():
+    """On the floor before rule 5 escalates, nobody has been alerted yet, so
+    the agent neither gives directions nor says help is on the way."""
+    bus = make_bus()
+    session = Session(config=AgentConfig(observe_seconds=1, floor_limit_seconds=10))
+    now_fn, advance = make_clock(NIGHT)
+    bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    advance(2)
+    run_once(bus, session, now_fn=now_fn)
+    transition = session.propose_goal("restroom", "test", now_fn())
+    assert transition is not None
+    _publish_transition(bus, transition, session, now_fn())
+    bus.read("say", "test", "floor_question")
+    advance(9)
+    session.on_person_state("on_floor", "other", now_fn())
+    assert session.phase == Phase.ENGAGED
+    llm = FakeLLM(interpretations=[Interpretation(intent=Intent.UNCLEAR, distress=0)])
+    bus.publish(
+        Utterance(source="listen", text="Where is the toilet?", confidence=0.9, duration_s=1)
+    )
+    run_once(bus, session, now_fn=now_fn, llm=llm)
+    assert [event.strategy for _, event in bus.read("say", "test", "floor_question")] == []
+    # Only the light from the restroom goal itself, none from a reply.
+    assert [event.state for _, event in bus.read("light", "test", "c1")] == ["on"]
+
+
+@pytest.mark.parametrize("queue_directions", [False, True])
+def test_restroom_need_transition_says_directions_only_once_in_tick(queue_directions):
+    bus = make_bus()
+    session = Session(config=AgentConfig(observe_seconds=1))
+    now_fn, advance = make_clock(NIGHT)
+    bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    advance(2)
+    run_once(bus, session, now_fn=now_fn)
+    if queue_directions:
+        session._last_say_at = now_fn() - timedelta(seconds=2)
+    llm = FakeLLM(interpretations=[Interpretation(intent=Intent.NEED_RESTROOM, distress=0)])
+    bus.publish(
+        Utterance(source="listen", text="Where is the toilet?", confidence=0.9, duration_s=1)
+    )
+    run_once(bus, session, now_fn=now_fn, llm=llm)
+    says = [event.strategy for _, event in bus.read("say", "test", "c1")]
+    assert says == ([] if queue_directions else ["path_light"])
+    assert (session._pending_say is not None) == queue_directions
+    assert not any(
+        json.loads(event.detail).get("decision") == "pending_say_dropped"
+        for _, event in bus.read("activity", "test", "c1", count=100)
+        if event.kind == "decision"
+    )
+
+
+def test_restroom_distress_does_not_redirect_from_toilet_need():
+    bus = make_bus()
+    session = Session(config=AgentConfig(observe_seconds=1))
+    now_fn, advance = make_clock(NIGHT)
+    bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    advance(2)
+    run_once(bus, session, now_fn=now_fn)
+    transition = session.propose_goal("restroom", "test", now_fn())
+    assert transition is not None
+    _publish_transition(bus, transition, session, now_fn())
+    advance(9)
+    llm = FakeLLM(interpretations=[Interpretation(intent=Intent.UNCLEAR, distress=2)] * 2)
+    for index, text in enumerate(("How will I get there?", "I'm still worried")):
+        bus.publish(Utterance(source="listen", text=text, confidence=0.9, duration_s=1))
+        run_once(bus, session, now_fn=now_fn, llm=llm)
+        if index == 0:
+            assert [event.strategy for _, event in bus.read("say", "test", "first_distress")] == [
+                "path_light"
+            ]
+        advance(9)
+    assert session.phase == Phase.ESCALATED
+    assert "validate_and_redirect" not in [
+        event.strategy for _, event in bus.read("say", "test", "c1")
+    ]
 
 
 def test_time_question_answers_without_advancing_ladder():
@@ -890,7 +1029,9 @@ def test_speaking_face_waits_for_deferred_say():
     advance(8)
     run_once(bus, session, now_fn=now_fn)
     assert [event.face for _, event in bus.read("show", "test", "after")][-1] == "speaking"
-    assert [event.strategy for _, event in bus.read("say", "test", "after")][-1] == "path_light"
+    assert [event.strategy for _, event in bus.read("say", "test", "after")][
+        -1
+    ] == "reassure_waiting"
 
 
 def test_rejected_llm_composition_uses_the_rendered_caregiver_template(caplog):
