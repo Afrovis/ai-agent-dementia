@@ -19,8 +19,20 @@ from agent.strategies import load_strategies
 from nc_shared.bus import FakeBus
 from nc_shared.events import EVENT_TYPES, BaseEvent
 
-INPUTS = {("person", "PersonState"), ("speech_in", "Utterance")}
-OUTPUTS = {"SessionState", "GoalChanged", "Say", "Show", "LightCommand", "Notify"}
+INPUTS = {
+    ("person", "PersonState"),
+    ("speech_in", "Utterance"),
+    ("debug", "DebugControl"),
+    ("debug", "ResetSession"),
+}
+OUTPUTS = {"SessionState", "GoalChanged", "Say", "Show", "LightCommand", "Notify", "DebugControl"}
+
+
+def _is_input(row: dict) -> bool:
+    key = (row.get("stream"), row.get("event_type"))
+    return key in INPUTS and not (
+        key == ("debug", "DebugControl") and row.get("payload", {}).get("source") == "agent"
+    )
 
 
 def parse_ts(value: str) -> datetime:
@@ -48,11 +60,10 @@ def extract(source: str | Path, target: str | Path, *, since=None, until=None) -
     """Keep agent inputs and text-only observed outputs in timestamp order."""
     kept = []
     for row in read_jsonl(source):
-        key = (row.get("stream"), row.get("event_type"))
         observed = (
             row.get("event_type") in OUTPUTS and row.get("payload", {}).get("source") == "agent"
         )
-        if key not in INPUTS and not observed:
+        if not _is_input(row) and not observed:
             continue
         when = parse_ts(row["ts"])
         if (since and when < since) or (until and when > until):
@@ -123,6 +134,8 @@ def _timeline_row(start: datetime, when: datetime, event: BaseEvent) -> dict:
         "state",
         "to_goal",
         "from_goal",
+        "time_offset_hours",
+        "force_in_bed",
     ):
         if key in payload:
             row[key] = payload[key]
@@ -145,11 +158,7 @@ def run_scenario(
     """Step run_once on an exact 0.5 second clock and at each input timestamp."""
     if tail_s < 0:
         raise ValueError("tail_s must be nonnegative")
-    rows = [
-        row
-        for row in read_jsonl(scenario)
-        if (row.get("stream"), row.get("event_type")) in INPUTS and not row.get("observed")
-    ]
+    rows = [row for row in read_jsonl(scenario) if _is_input(row) and not row.get("observed")]
     if not rows:
         raise ValueError("scenario has no agent inputs")
     inputs = sorted(((parse_ts(row["ts"]), row) for row in rows), key=lambda pair: pair[0])
@@ -178,6 +187,7 @@ def run_scenario(
     bus.start = start
     bus.ensure_group("person", "agent")
     bus.ensure_group("speech_in", "agent")
+    bus.ensure_group("debug", "agent")
     if llm_mode == "recorded":
         llm = RecordedLLM((expect or {}).get("interpretations", {}))
     elif llm_mode == "live":
@@ -206,8 +216,15 @@ def run_scenario(
             item["type"] = "IN"
             if row["event_type"] == "Utterance":
                 item["heard"] = event.text
-            else:
+            elif row["event_type"] == "PersonState":
                 item["person"] = {"state": event.state, "zone": event.zone}
+            elif row["event_type"] == "DebugControl":
+                item["debug"] = {
+                    "force_in_bed": event.force_in_bed,
+                    "time_offset_hours": event.time_offset_hours,
+                }
+            else:
+                item["reset_session"] = True
             bus.timeline.append(item)
         run_once(
             bus,
@@ -235,20 +252,37 @@ def run_scenario(
 
 def check_expectations(timeline: list[dict], spec: dict) -> tuple[bool, list[str]]:
     """Check ordered output subsequences in windows following matching inputs."""
+
+    def matches_anchor(row: dict, anchor: dict) -> bool:
+        return all(
+            (
+                isinstance(value, dict)
+                and isinstance(row.get(key), dict)
+                and all(row[key].get(field) == wanted for field, wanted in value.items())
+            )
+            if key == "debug"
+            else row.get(key) == value
+            for key, value in anchor.items()
+            if key != "occurrence"
+        )
+
     reports = []
     passed = True
     for number, item in enumerate(spec.get("expect", []), 1):
         anchor = item.get("after", {})
+        occurrence = anchor.get("occurrence", 1)
+        if not isinstance(occurrence, int) or isinstance(occurrence, bool) or occurrence < 1:
+            raise ValueError("after.occurrence must be a positive integer")
         anchors = [
             i
             for i, row in enumerate(timeline)
-            if row["type"] == "IN" and all(row.get(key) == value for key, value in anchor.items())
+            if row["type"] == "IN" and matches_anchor(row, anchor)
         ]
-        if not anchors:
+        if len(anchors) < occurrence:
             passed = False
             reports.append(f"FAIL expectation {number}: anchor {anchor!r} not found")
             continue
-        start_i = anchors[0]
+        start_i = anchors[occurrence - 1]
         limit = timeline[start_i]["t"] + float(item.get("within_s", float("inf")))
         excerpt = [row for row in timeline[start_i + 1 :] if row["t"] <= limit]
         cursor = 0
@@ -302,11 +336,17 @@ def check_expectations(timeline: list[dict], spec: dict) -> tuple[bool, list[str
 def format_row(row: dict) -> str:
     """Compact human-readable timeline entry."""
     if row["type"] == "IN":
-        detail = (
-            f"heard {json.dumps(row['heard'], ensure_ascii=False)}"
-            if "heard" in row
-            else f"person {row['person']['state']}@{row['person']['zone']}"
-        )
+        if "heard" in row:
+            detail = f"heard {json.dumps(row['heard'], ensure_ascii=False)}"
+        elif "person" in row:
+            detail = f"person {row['person']['state']}@{row['person']['zone']}"
+        elif "debug" in row:
+            debug = row["debug"]
+            detail = (
+                f"debug force_in_bed={debug['force_in_bed']} offset={debug['time_offset_hours']}"
+            )
+        else:
+            detail = "reset_session"
     else:
         detail = (
             row["type"]
@@ -324,6 +364,8 @@ def format_row(row: dict) -> str:
                     "light",
                     "state",
                     "level",
+                    "force_in_bed",
+                    "time_offset_hours",
                 )
                 if key in row
             )

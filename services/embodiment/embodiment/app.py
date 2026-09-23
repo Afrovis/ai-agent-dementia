@@ -63,6 +63,7 @@ from nc_shared.events import (
     PersonState,
     PoseDebug,
     RawFrame,
+    ResetSession,
     Say,
     SessionState,
     Show,
@@ -923,6 +924,15 @@ def create_app(
     app.state.manager = manager
     app.state.bus = bus
 
+    @app.middleware("http")
+    async def revalidate_page(request, call_next):
+        # The bedside page stays open for days; make a plain reload pick up a
+        # redeployed script instead of a heuristically cached one.
+        response = await call_next(request)
+        if request.url.path == "/" or request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/")
@@ -981,6 +991,7 @@ def create_app(
                 elif isinstance(message, dict) and message.get("type") in {
                     "debug_control",
                     "calibrate_bed",
+                    "reset_session",
                 }:
                     kind = message["type"]
                     if not manager.debug_controls_enabled:
@@ -1017,8 +1028,10 @@ def create_app(
                             time_offset_hours=max(-23, min(23, offset)),
                             force_in_bed=forced,
                         )
-                    else:
+                    elif kind == "calibrate_bed":
                         event = CalibrateBed(source=SERVICE_NAME)
+                    else:
+                        event = ResetSession(source=SERVICE_NAME)
                     bus.publish(event, maxlen=100)
                     logger.warning(
                         json.dumps(

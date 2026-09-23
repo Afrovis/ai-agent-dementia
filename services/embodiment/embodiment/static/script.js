@@ -54,7 +54,9 @@
   function sendDebug(message) {
     if (debugState.controlsEnabled && playbackSocket && playbackSocket.readyState === WebSocket.OPEN) {
       playbackSocket.send(JSON.stringify(message));
+      return true;
     }
+    return false;
   }
 
   controlsEl.querySelectorAll("[data-offset]").forEach((button) => {
@@ -70,6 +72,29 @@
     const applied = debugState.appliedControl;
     sendDebug({ type: "debug_control", time_offset_hours: applied.time_offset_hours,
       force_in_bed: !applied.force_in_bed });
+  });
+  const resetSession = document.getElementById("reset-session");
+  let resetDeadline = 0;
+  let resetTimer = null;
+  resetSession.addEventListener("click", () => {
+    if (Date.now() < resetDeadline) {
+      resetDeadline = 0;
+      clearTimeout(resetTimer);
+      if (sendDebug({ type: "reset_session" })) {
+        resetSession.textContent = "Session reset sent";
+        resetTimer = setTimeout(() => { resetSession.textContent = "Reset session"; }, 3000);
+      } else {
+        resetSession.textContent = "Reset session";
+      }
+      return;
+    }
+    clearTimeout(resetTimer);
+    resetDeadline = Date.now() + 3000;
+    resetSession.textContent = "Confirm reset?";
+    resetTimer = setTimeout(() => {
+      resetDeadline = 0;
+      resetSession.textContent = "Reset session";
+    }, 3000);
   });
   document.getElementById("detect-bed").addEventListener("click", () => sendDebug({ type: "calibrate_bed" }));
 

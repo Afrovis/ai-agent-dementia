@@ -272,6 +272,16 @@ class DebugControl(BaseEvent):
     force_in_bed: bool = False
 
 
+class ResetSession(BaseEvent):
+    """Operator request to abandon the current session and return to ``IDLE``.
+
+    Produced by `embodiment` from the bedside debug overlay (only when
+    ``EMBODIMENT_DEBUG_CONTROLS`` is enabled). `agent` keeps its debug
+    overrides and re-applies the latest person reading, so someone already
+    up at night starts a fresh session straight away.
+    """
+
+
 class CalibrateBed(BaseEvent):
     """Request that `perceive` trace the bed zone from live frames and save it.
 
@@ -312,6 +322,7 @@ EVENT_STREAMS: dict[type[BaseEvent], str] = {
     AudioChunk: "audio_in",
     Health: "health",
     DebugControl: "debug",
+    ResetSession: "debug",
     CalibrateBed: "debug",
     BedZoneStatus: "debug",
 }

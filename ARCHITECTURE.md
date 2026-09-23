@@ -34,7 +34,7 @@ flowchart LR
     q_activity[("activity<br/>Activity")]
     q_audio_in[("audio_in<br/>AudioChunk")]
     q_cloud[("cloud<br/>CloudCall")]
-    q_debug[("debug<br/>BedZoneStatus, CalibrateBed, DebugControl")]
+    q_debug[("debug<br/>BedZoneStatus, CalibrateBed, DebugControl, ResetSession")]
     q_frames[("frames<br/>Frame")]
     q_frames_raw[("frames_raw<br/>RawFrame")]
     q_light[("light<br/>LightCommand")]
@@ -169,7 +169,7 @@ flowchart LR
 | `activity` | `Activity` | agent, embodiment, listen | embodiment (`embodiment`), listen (`listen-activity`) | yes, 200 |
 | `audio_in` | `AudioChunk` | embodiment | listen (`listen`) | yes, 50 |
 | `cloud` | `CloudCall` | agent | store (`store`) | no |
-| `debug` | `BedZoneStatus`, `CalibrateBed`, `DebugControl` | agent, embodiment, perceive | agent (`agent`), embodiment (`embodiment`), perceive (`perceive`), store (`store`) | no |
+| `debug` | `BedZoneStatus`, `CalibrateBed`, `DebugControl`, `ResetSession` | agent, embodiment, perceive | agent (`agent`), embodiment (`embodiment`), perceive (`perceive`), store (`store`) | no |
 | `frames` | `Frame` | capture | dashboard (`dashboard`), perceive (`perceive`), perceive (`perceive-calibrate`) | yes, 50 |
 | `frames_raw` | `RawFrame` | embodiment | capture (`capture`), perceive (`perceive-calibrate`) | yes, 50 |
 | `health` | `Health` | agent, capture, embodiment, light, listen, perceive | dashboard (`dashboard-live`), store (`store`) | no |
