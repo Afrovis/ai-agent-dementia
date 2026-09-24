@@ -30,11 +30,10 @@ scenario). It is unrelated.
 - Commit 862537b: the triage patch from run `2026-09-23T1854-live` (fix-list items 1a, 2, 3, 4,
   10 and the TT-3/TT-4 checker fixes).
 
-## In flight when this was written (uncommitted, check first)
+## Round 3: committed and pushed (81a16fd), after this handoff was first written
 
-Two Codex jobs were running in the worktree. Their reports land in `.codex/out-*.md` and their
-briefs are next to them. Check `git status` and `git diff`, review, run the tests, and commit
-if they pass.
+Both jobs below finished and are committed: 775 tests pass, and ruff is clean. The prompt-only
+changes (5a, 7a) have not been checked against the live model yet.
 
 1. `.codex/brief-agent-round3.md` → `.codex/out-agent-round3.md`. Owner decisions, all approved:
    - Tests for 862537b.
