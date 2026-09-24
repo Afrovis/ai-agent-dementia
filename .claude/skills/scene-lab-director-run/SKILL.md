@@ -36,10 +36,19 @@ where scene_lab is installed with its `live` extra (README, top).
 
 1. **Pre-flight.** Check each of these and fix or ask before starting:
    - `docker compose ls`: no other agent stack running. Ask about any you find.
-   - `curl -s localhost:11434/api/ps` shows no model loaded, or unload it
-     through the API.
-   - `memory_pressure | tail -1` shows at least 50% free.
-     `sysctl vm.swapusage` is not near its total.
+   - Flush the model: `curl -s localhost:11434/api/ps` shows no model
+     loaded, or unload it through the API.
+   - Docker disk space. Docker Desktop's VM disk is capped at 24 GiB, and
+     every stack rebuild leaves untagged images behind. A full disk made the
+     sim's Redis refuse writes (MISCONF) and cost the whole
+     2026-09-23T2238-live batch. Check the free space with
+     `docker run --rm alpine df -h / | tail -1`, then always clean up
+     dangling data before a 1 h session:
+     `docker image prune -f` (untagged images only) and
+     `docker builder prune -f` (unused build cache). Never prune volumes,
+     tagged images or other projects' containers, and never use
+     `docker system prune -a`. Leave the VM's disk size and location as they
+     are. If less than ~6 GB is free after the cleanup, stop and ask.
    - A `.env` exists in the checkout. Copy it from the main checkout if
      missing. Set `TZ` to the user's zone (America/New_York), because the sim
      otherwise speaks UTC hours.
@@ -51,11 +60,13 @@ where scene_lab is installed with its `live` extra (README, top).
    `--max-scenes N`, `--no-triage`, and `--triage-no-tests` (analysis only).
    The run folder is the newest `*-live` under
    `../data-ai-agent-dementia/analysis/scene-lab/runs/`.
-3. **Watch without polling hard.** Every ~10 minutes check the log tail, the
-   scenes finished (folders with `report.md`), `memory_pressure`, and swap.
-   If swap climbs past about 80% or memory stays under 10% free, stop the
-   batch with Ctrl-C semantics: `kill -INT` on the `scene_lab` Python process
-   only, never Ollama. Report it.
+3. **Watch without polling hard.** Every ~10 minutes check the log tail and
+   the scenes finished (folders with `report.md`). Don't watch memory or swap
+   during the run: swap growth is normal and not a reason to stop. Memory is
+   handled only by flushing the model at the start (step 1) and the end
+   (step 7). If you must stop a batch for another reason, use Ctrl-C
+   semantics: `kill -INT` on the `scene_lab` Python process only, never
+   Ollama.
 4. **After the batch** the run folder has `bugs.md`, per-scene
    `report.md`/`trace.jsonl`, `director.jsonl`, and `fixes.md` (plus
    `fixes.patch` if the triage edited code in its throwaway worktree). If
@@ -75,8 +86,9 @@ where scene_lab is installed with its `live` extra (README, top).
    director chose versus fallback, and any harness errors. Give the headline
    changes against the previous run and the top fix-list items with their
    evidence. List the owner decisions the list asks for as questions. Then
-   offer to implement the chosen fixes. Put the model back to its normal
-   state (the batch unloads it at the end) and restart any stack you stopped
+   offer to implement the chosen fixes. Flush the model: confirm
+   `curl -s localhost:11434/api/ps` is empty (the batch unloads it at the
+   end; if not, unload it through the API) and restart any stack you stopped
    if the user wants it back.
 
 ## What the triage agent may do

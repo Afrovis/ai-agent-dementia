@@ -207,17 +207,20 @@ def _reassure_or_stay_silent(
     llm,
     *,
     distress: int | None = None,
+    intent: str | None = None,
     preferred_id: str = REASSURE_WAITING_ID,
 ) -> None:
     """Pace all escalated replies together; a person query prefers the alerted wording.
 
     If it was just spoken, use the rotating reassurance phrases instead.
     """
-    # A stated need ("help me up", "so cold") or clear distress is answered
-    # like a question: still at most once a minute after the cap.
+    # A stated need ("help me up", "so cold"), any pain (after a fall "my arm feels
+    # a bit stiff" reads as distress 1) or clear distress is answered like a
+    # question: still at most once a minute after the cap.
     urgent = (
         is_direct_question(text)
         or (distress is not None and distress >= 2)
+        or intent == "pain"
         or veto.states_need(text)
     )
     since_last_say = session.seconds_since_last_say(now)
@@ -1335,6 +1338,14 @@ def run_once(
                     duration_ms=(time.perf_counter() - started) * 1000,
                     detail=f"{model} {outcome}",
                 )
+            # The person may have started speaking during the model call; see it before
+            # this reply goes out so the speech hold applies. Later events join this loop.
+            arrived = bus.read(
+                UTTERANCE_STREAM, UTTERANCE_GROUP, consumer, count=count, block_ms=None
+            )
+            if any(isinstance(item, SpeechStarted) for _, item in arrived):
+                session.speech_started_at = now_fn()
+            utterance_messages.extend(arrived)
             if interpretation is not None:
                 _decision_activity(
                     bus,
@@ -1513,6 +1524,7 @@ def run_once(
                                 profile,
                                 llm,
                                 distress=interpretation.distress,
+                                intent=intent,
                                 preferred_id=reply_id,
                             )
                         else:

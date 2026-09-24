@@ -2028,6 +2028,64 @@ def test_self_echo_does_not_supersede_speech_held_reply():
     assert not any(d.get("reason") == "superseded" for d in decisions(bus))
 
 
+def test_speech_started_during_interpret_holds_the_reply():
+    # 2026-09-23T2238-live fall-poor-hearing-moving-1 at 130.7 s: the person began
+    # speaking again while "Oh, oh dear." was being interpreted; the reply played over it.
+    bus = make_bus()
+    session = Session(config=AgentConfig(floor_limit_seconds=0.0))
+    now_fn, advance = make_clock(NIGHT)
+    bus.publish(PersonState(source="perceive", state="on_floor", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    advance(11)
+    bus.read("say", "test", "during_interpret")
+
+    class SpeakingDuringInterpret(FakeLLM):
+        def interpret(self, *args, **kwargs):
+            bus.publish(SpeechStarted(source="listen"))
+            return super().interpret(*args, **kwargs)
+
+    llm = SpeakingDuringInterpret(
+        interpretations=[Interpretation(intent=Intent.UNCLEAR, distress=1)]
+    )
+    say_to_agent(bus, session, now_fn, llm, "Oh, oh dear.")
+
+    assert not bus.read("say", "test", "during_interpret")
+    assert session._pending_say is not None
+    assert session._pending_say.event.strategy == "reassure_waiting"
+
+
+def test_mild_pain_and_thirst_after_cap_are_answered_once_a_minute():
+    # 2026-09-23T2238-live fall-poor-hearing-moving-1, 145 to 211 s: on the floor, "My arm
+    # feels a bit stiff" (pain, distress 1) and "bring me a drink" got no reply.
+    bus = make_bus()
+    session = Session(config=AgentConfig(floor_limit_seconds=0.0))
+    now_fn, advance = make_clock(NIGHT)
+    bus.publish(PersonState(source="perceive", state="on_floor", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    session._reassurance_reply_count = 2
+    session.record_say(now_fn(), "reassure_waiting", "Someone is on their way.")
+    bus.read("say", "test", "after_cap", count=100)
+    llm = FakeLLM(
+        interpretations=[
+            Interpretation(intent=Intent.FINE, distress=0),
+            Interpretation(intent=Intent.PAIN, distress=1),
+            Interpretation(intent=Intent.UNCLEAR, distress=1),
+            Interpretation(intent=Intent.UNCLEAR, distress=1),
+        ]
+    )
+    advance(61)
+    say_to_agent(bus, session, now_fn, llm, "It's awfully quiet down here.")
+    assert not bus.read("say", "test", "after_cap")
+    say_to_agent(bus, session, now_fn, llm, "My arm feels a bit stiff, but I'm alright.")
+    assert len(bus.read("say", "test", "after_cap")) == 1
+    advance(20)
+    say_to_agent(bus, session, now_fn, llm, "I do wish someone would just bring me a drink.")
+    assert not bus.read("say", "test", "after_cap")
+    advance(45)
+    say_to_agent(bus, session, now_fn, llm, "I do wish someone would just bring me a drink.")
+    assert len(bus.read("say", "test", "after_cap")) == 1
+
+
 @pytest.mark.parametrize(
     "utterance,distress", [("Help me up.", 0), ("So cold.", 0), ("I feel worse.", 2)]
 )

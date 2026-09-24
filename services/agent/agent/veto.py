@@ -86,6 +86,7 @@ _TOILET_RE = re.compile(
 _NEED_RE = re.compile(
     r"\b(?:help|cold|freezing|can't get warm|hurts?|hurting|pain|ache|aching|"
     r"feel (?:strange|sick|ill|unwell|funny)|can't breathe|thirsty|hungry|"
+    r"water|a drink|parched|stiff|sore|"
     r"don't know what to do)\b",
     re.IGNORECASE,
 )
