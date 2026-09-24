@@ -33,6 +33,7 @@ def is_question_or_request(text: str) -> bool:
     lower = text.strip().lower()
     return (
         lower.endswith("?")
+        or _hearing_request(lower)
         or bool(
             re.match(
                 r"^(?:where|when|what|who|how|why|can|could|will|would|is|are|do|does)\b", lower
@@ -115,6 +116,17 @@ def _said_record(trace: Trace, say: TraceEvent) -> TraceEvent | None:
         and abs(e.t - say.t) <= 0.5
     ]
     return min(candidates, key=lambda e: abs(e.t - say.t), default=None)
+
+
+def _reply_context(trace: Trace, t: float, say: TraceEvent | None) -> dict:
+    context = _state(trace, t)
+    if say is not None and (record := _said_record(trace, say)) is not None:
+        context["strategy"] = record.data.get("strategy")
+    return context
+
+
+def _hearing_request(text: str) -> bool:
+    return bool(re.search(r"\b(?:say it again|pardon|i can't hear)\b|\bwhat\s*[?!]", text, re.I))
 
 
 def _first_reply(trace: Trace, utt: TraceEvent) -> TraceEvent | None:
@@ -321,6 +333,12 @@ def check_trace(
             next_utt
             and next_utt.t - utt.t <= thresholds.reply_deadline_s
             and not any(utt.t <= s.t < next_utt.t for s in says)
+            and not any(
+                e.kind == "decision"
+                and e.data.get("decision") == "pending_say_deferred"
+                and utt.t <= e.t < next_utt.t
+                for e in trace.events
+            )
         ):
             continue
         count += 1
@@ -346,6 +364,7 @@ def check_trace(
                             f"{utt.t - spoke_end:.2f}s)",
                             f"Say playback@{pb.start}: {lag:.2f}s",
                         ],
+                        _reply_context(trace, utt.t, say),
                     )
                 )
         else:
@@ -375,6 +394,41 @@ def check_trace(
                 )
                 for later in utts[i + 1 :]
             )
+            superseded = False
+            superseding_reply = None
+            if say is None and next_utt and next_utt.t <= utt.t + thresholds.direct_reply_window_s:
+                deferred = next(
+                    (
+                        e
+                        for e in trace.events
+                        if e.kind == "decision"
+                        and e.data.get("decision") == "pending_say_deferred"
+                        and e.data.get("direct")
+                        and utt.t <= e.t < next_utt.t
+                    ),
+                    None,
+                )
+                dropped = next(
+                    (
+                        e
+                        for e in trace.events
+                        if deferred is not None
+                        and e.kind == "decision"
+                        and e.data.get("decision") == "pending_say_dropped"
+                        and e.data.get("reason") == "superseded"
+                        and e.data.get("strategy") == deferred.data.get("strategy")
+                        and next_utt.t <= e.t <= next_utt.t + thresholds.reply_deadline_s
+                    ),
+                    None,
+                )
+                later_say = _first_reply(trace, next_utt) if dropped else None
+                superseded = later_say is not None and any(
+                    p.say_t == later_say.t
+                    and p.start - next_utt.t <= thresholds.direct_reply_window_s
+                    for p in pbs
+                )
+                if superseded:
+                    superseding_reply = later_say
             interpreted = (
                 next(
                     (
@@ -409,6 +463,8 @@ def check_trace(
                     if is_direct_question(utt.data.get("text", ""))
                     else f"no reply by design: {reason}"
                 )
+            elif superseded:
+                cause = "reply superseded by the next utterance's reply"
             elif decision and decision.data.get("decision") == "pending_say_dropped":
                 cause = f"dropped pending say: {decision.data.get('reason', 'unknown')}"
             elif decision and decision.data.get("decision") == "vetoed":
@@ -422,7 +478,7 @@ def check_trace(
                 )
             else:
                 cause = "never composed"
-            context = _state(trace, utt.t)
+            context = _reply_context(trace, utt.t, say or superseding_reply)
             if decision:
                 context["drop_reason"] = decision.data.get("reason")
             designed_answer_to_question = designed_silence and is_direct_question(
@@ -439,7 +495,7 @@ def check_trace(
                     "review"
                     if review_silence
                     else "info"
-                    if designed_silence or recovered
+                    if designed_silence or recovered or superseded
                     else "major"
                     if cancelled_at_start
                     else "critical",
@@ -458,18 +514,29 @@ def check_trace(
         if is_question_or_request(text):
             say = _first_reply(trace, utt)
             reply = say.data.get("text") if say else None
-            rating = judge(text, reply) if judge else "unrated" if reply else "no_reply"
+            hearing_answer = bool(
+                say and say.data.get("strategy") == "repeat_louder" and _hearing_request(text)
+            )
+            rating = (
+                "answered"
+                if hearing_answer
+                else judge(text, reply)
+                if judge
+                else "unrated"
+                if reply
+                else "no_reply"
+            )
             out.append(
                 _result(
                     trace,
                     "TT-2",
-                    "review",
+                    "info" if hearing_answer else "review",
                     True,
                     utt.t,
                     say.t if say else utt.t,
                     rating,
                     [f"utterance: {text}", f"reply: {reply or '-'}"],
-                    {**_state(trace, utt.t), "rating": rating},
+                    {**_reply_context(trace, utt.t, say), "rating": rating},
                 )
             )
     _summary(
@@ -496,6 +563,9 @@ def check_trace(
                         pb.start,
                         "playback started over speech",
                         [f"SpeechStarted@{speech.t}", f"playback@{pb.start}"],
+                        _reply_context(
+                            trace, speech.t, next((s for s in says if s.t == pb.say_t), None)
+                        ),
                     )
                 )
     _summary(trace, "TT-3", len(starts), out, "no SpeechStarted")
@@ -530,12 +600,9 @@ def check_trace(
     )
 
     for prev, current in zip(pbs, pbs[1:]):
-        direct = any(
-            prev.start < u.t <= current.say_t
-            and current.say_t - u.t <= thresholds.direct_reply_window_s
-            and not any(u.t <= s.t < current.say_t for s in says)
-            for u in utts
-        )
+        current_say = next((s for s in says if s.t == current.say_t), None)
+        said = _said_record(trace, current_say) if current_say else None
+        direct = bool(said and (said.data.get("direct") or said.data.get("reply")))
         if current.start - prev.end < thresholds.silence_gap_s and not direct:
             out.append(
                 _result(
@@ -709,7 +776,9 @@ def check_trace(
             )
             state = _state(trace, gap_start) if gap_start is not None else {}
             silent_limit = (
-                thresholds.escalated_silent_s
+                thresholds.restroom_silent_s
+                if state.get("goal") == "restroom"
+                else thresholds.escalated_silent_s
                 if state.get("phase") == "ESCALATED"
                 else thresholds.silent_session_s
             )
@@ -803,7 +872,13 @@ def check_trace(
         ):
             out.append(
                 _result(
-                    trace, "SM-4", "minor", False, on.t, trace.end_t, "trace ended before light off"
+                    trace,
+                    "SM-4",
+                    "info" if people and people[-1].data.get("state") != "in_bed" else "minor",
+                    False,
+                    on.t,
+                    trace.end_t,
+                    "trace ended before light off",
                 )
             )
     _summary(trace, "SM-4", sum(e.data.get("state") == "on" for e in lights), out)

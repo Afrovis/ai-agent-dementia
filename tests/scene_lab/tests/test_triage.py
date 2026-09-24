@@ -47,6 +47,8 @@ def test_triage_writes_fix_list_and_patch_then_cleans_up(tmp_path):
     assert "MAX_REASSURANCES = 3" in (run / "fixes.patch").read_text()
     assert "TT-1|ENGAGED|restroom" in seen["prompt"] and "probe the path" in seen["prompt"]
     assert "restroom-1" in seen["prompt"]
+    assert str(run.resolve()) in seen["prompt"]
+    assert "do not" in seen["prompt"].lower() and "`.env`" in seen["prompt"]
     assert "Edit" in seen["command"] and not any("docker" in c for c in seen["command"])
     # The real checkout is untouched and the throwaway worktree is gone.
     assert (repo / "services/agent/agent/main.py").read_text() == "MAX_REASSURANCES = 2\n"

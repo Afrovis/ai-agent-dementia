@@ -56,12 +56,20 @@ check means) and tests/decision_bench/guidelines.md (the care guidelines every
 spoken sentence must follow). Separate agent bugs from checker false positives
 and harness problems.
 
+The run directory is `{run_dir}` and is read-only. Use Read, Grep or Glob with
+absolute paths there. Bash permissions cover single commands only: do not
+prefix commands with `cd`, join them with `;` or `&&`, or use Bash to list the
+run directory. Your working directory is the throwaway worktree. Do not read
+`.env` or other local secrets; the example configuration contains the keys.
+If you rescore, first copy the run into {scratch} with `{py} -c` and
+`shutil.copytree`, then rescore that copy. Never rescore the run directory.
+
 Quick tests. When a proposal can be checked cheaply (a few minutes), check it
 in this working directory, which is a throwaway git worktree of the run's
 commit:
 - Run Python only as `{py} ...`, e.g. `{py} -m pytest -q
   services/agent/tests/test_main.py -k name`, `{py} -m scene_lab rescore
-  <run dir>`, `{py} -m scene_lab promote <run dir> --scene S --at T --before B
+  {scratch}/run-copy`, `{py} -m scene_lab promote <run dir> --scene S --at T --before B
   --after A --to session_replay --out-dir {scratch} --no-claude` then
   `{py} -m session_replay run {scratch}/NAME.jsonl --llm recorded
   --llm-latency recorded --invariants --runs-root {scratch}/runs`.
@@ -171,7 +179,7 @@ def build_prompt(run_dir: Path, py: Path, scratch: Path) -> str:
                 rationale.append(f"- {row.get('scene')}: {row['rationale']}")
     scenes = sorted(p.name for p in run_dir.iterdir() if (p / "report.md").exists())
     return (
-        _INSTRUCTIONS.format(py=py, scratch=scratch)
+        _INSTRUCTIONS.format(py=py, scratch=scratch, run_dir=run_dir)
         + f"\nRun id: {run_dir.name}\nRun directory: {run_dir}\n"
         + f"Scenes ({len(scenes)}): {', '.join(scenes)}\n\n"
         + "Director rationale per scene:\n"

@@ -48,7 +48,10 @@ def rescore(source: Path, thresholds_path: Path | None = None) -> Path:
     source = Path(source)
     thresholds = load(thresholds_path)
     target = RunDir(
-        "rescored", path=source.with_name(source.name + "-rescored"), thresholds=thresholds
+        "rescored",
+        root=source.parent,
+        path=source.with_name(source.name + "-rescored"),
+        thresholds=thresholds,
     )
     if (target.path / "bugs.jsonl").exists():
         (target.path / "bugs.jsonl").unlink()

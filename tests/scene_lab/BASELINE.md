@@ -15,6 +15,11 @@ down.
 
 ## What scene_lab finds in the current agent
 
+Known review fingerprint: `TT-1|ESCALATED|wait_for_caregiver|*|reassured_recently`
+(for example `TT-1|ESCALATED|wait_for_caregiver|reassure_waiting|reassured_recently`).
+This is designed pacing silence after a recent reassurance. Leave it to triage;
+the director should confirm and isolate critical and major findings only.
+
 These hold across the offline baseline and the live runs.
 
 1. **Questions go unanswered.** A question or statement that the

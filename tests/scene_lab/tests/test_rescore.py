@@ -7,7 +7,7 @@ from scene_lab.trace import Trace, TraceEvent
 
 
 def test_rescore_rechecks_traces_and_keeps_harness_entries(tmp_path, monkeypatch):
-    monkeypatch.setenv("SCENE_LAB_RUNS", str(tmp_path))
+    monkeypatch.setenv("SCENE_LAB_RUNS", str(tmp_path / "other-root"))
     run = RunDir("live", root=tmp_path)
     trace = Trace(
         id="scene-a",
@@ -29,6 +29,8 @@ def test_rescore_rechecks_traces_and_keeps_harness_entries(tmp_path, monkeypatch
     run.append([harness_error(run.id, "scene-a", "mind failure: example")])
 
     target = rescore(run.path)
+    assert (tmp_path / "index.jsonl").exists()
+    assert not (tmp_path / "other-root").exists()
 
     assert target.name == run.path.name + "-rescored"
     rows = [json.loads(line) for line in (target / "bugs.jsonl").read_text().splitlines()]

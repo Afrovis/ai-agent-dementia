@@ -4,9 +4,14 @@ import asyncio
 import json
 
 from scene_lab.bugs import RunDir, harness_error, merge, render_merge_md
-from scene_lab.director import Director
+from scene_lab.director import PROMPT, Director
 from scene_lab.run import run_hours
 from scene_lab.scene import Scene
+
+
+def test_director_only_isolates_critical_and_major_findings():
+    assert "critical or major finding" in PROMPT
+    assert "Do not chase review findings" in PROMPT
 
 
 def card(n=1):
