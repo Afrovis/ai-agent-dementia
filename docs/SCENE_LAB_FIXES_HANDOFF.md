@@ -24,7 +24,7 @@ scenario). It is unrelated.
   (`Say.emphasis="loud"`, embodiment soft-limit, −18.5 → −13.2 dBFS).
 - Model-written text with quote marks is rejected.
 - Ollama prefix-cache guard: the agent unloads daily while idle and re-warms 15 min before
-  night. scene_lab resets the model per scene. See CLAUDE.md.
+  night. scene_lab resets the model per scene. See AGENTS.md, "Operational gotchas".
 - scene_lab end-of-run triage (`fixes.md`, `fixes.patch`, `scene_lab triage RUN`), plus the
   skill `.claude/skills/scene-lab-director-run/`.
 - Commit 862537b: the triage patch from run `2026-09-23T1854-live` (fix-list items 1a, 2, 3, 4,

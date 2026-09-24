@@ -281,7 +281,7 @@ docker compose up --build
 `localhost` to see the face. The camera and microphone bridge is stricter:
 browsers block `getUserMedia` on any page with a certificate error, so a
 certificate the browser does not already trust leaves the face rendering and
-the bridge dead. `CLAUDE.md` has the Tailscale procedure that works from
+the bridge dead. `docs/TLS.md` has the Tailscale procedure that works from
 other devices, including the macOS sandbox trap and how to verify trust
 without `curl -k`.
 

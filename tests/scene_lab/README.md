@@ -90,7 +90,7 @@ no commits. Its edits are saved as `fixes.patch`. It is skipped when the batch
 hit the usage limit. `--no-triage` turns it off, `--triage-no-tests` makes it
 analysis only, and `python -m scene_lab triage RUN_ID [--no-tests]` runs it on
 a finished run. The batch also unloads the Ollama model before it starts,
-resets it before each scene and unloads it at the end (see `CLAUDE.md`). The
+resets it before each scene and unloads it at the end (see `AGENTS.md`, "Operational gotchas"). The
 project skill `.claude/skills/scene-lab-director-run/` walks through a run
 end to end.
 Ctrl-C finishes the current scene's recording and then ends the batch.

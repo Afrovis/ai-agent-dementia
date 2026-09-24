@@ -10,7 +10,7 @@ agent stack (`nightsim` compose project). An Opus director picks each scene,
 and a Claude "mind" plays the person through real audio. At the end, an Opus
 triage agent writes `fixes.md`: a ranked fix list with proposals, backed by
 quick tests it runs in a throwaway worktree. Background: `tests/scene_lab/README.md`,
-the measured `tests/scene_lab/BASELINE.md`, and the Ollama note in `CLAUDE.md`.
+the measured `tests/scene_lab/BASELINE.md`, and the Ollama note in `AGENTS.md` ("Operational gotchas").
 
 All commands run from the checkout under test, with a Python environment
 where scene_lab is installed with its `live` extra (README, top).
