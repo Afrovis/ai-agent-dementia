@@ -109,7 +109,7 @@ class RecordedLLM:
         self.plans = plans or {}
         self.latest_utterance: str | None = None
 
-    def interpret(self, utterance, turns, profile):  # noqa: ARG002
+    def interpret(self, utterance, turns, profile, person_state=None):  # noqa: ARG002
         self.latest_utterance = utterance
         value = self.interpretations.get(utterance, {"intent": "unclear", "distress": 0})
         return Interpretation(intent=Intent(value["intent"]), distress=value["distress"])

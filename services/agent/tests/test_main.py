@@ -2174,3 +2174,74 @@ def test_cooldown_reassurance_still_uses_composition():
         bus, transition, session, NIGHT, PersonProfile(name="Jean"), llm, direct=True
     )
     assert [name for name, _ in llm.calls] == ["compose"]
+
+
+def _escalated_on_floor():
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    session.phase = Phase.ESCALATED
+    session.session_id = "escalated"
+    session.goal = "wait_for_caregiver"
+    session._last_person_state = "on_floor"
+    return bus, session
+
+
+def test_who_is_coming_while_escalated_names_the_caregiver():
+    # 2026-09-24T1311-live fall-teacher-talks-from-floor-5 at 16.8 s: "Who's coming and
+    # how long will it be?" got "Someone is on their way", with no name.
+    bus, session = _escalated_on_floor()
+    now_fn, _ = make_clock(NIGHT)
+    llm = FakeLLM(interpretations=[Interpretation(intent=Intent.CONFUSED_TIME, distress=1)])
+    profile = PersonProfile(name="Jean", caregiver_name="Tom")
+    bus.publish(
+        Utterance(
+            source="listen",
+            text="Who's coming and how long will it be?",
+            confidence=0.9,
+            duration_s=1,
+        )
+    )
+    run_once(bus, session, now_fn=now_fn, llm=llm, profile=profile)
+    says = [event for _, event in bus.read("say", "test", "who_coming")]
+    assert [event.strategy for event in says] == ["caregiver_alerted"]
+    assert "Tom" in says[0].text
+
+
+def test_confused_time_without_who_keeps_the_waiting_reassurance():
+    bus, session = _escalated_on_floor()
+    now_fn, _ = make_clock(NIGHT)
+    llm = FakeLLM(interpretations=[Interpretation(intent=Intent.CONFUSED_TIME, distress=1)])
+    profile = PersonProfile(name="Jean", caregiver_name="Tom")
+    bus.publish(Utterance(source="listen", text="What time is it?", confidence=0.9, duration_s=1))
+    run_once(bus, session, now_fn=now_fn, llm=llm, profile=profile)
+    says = [event for _, event in bus.read("say", "test", "what_time")]
+    assert [event.strategy for event in says] == ["reassure_waiting"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Oh dear, oh dear I had a little accident, I think.",
+        "I'm cold and a bit wet down here, could someone come quickly?",
+        "I'm still still here on the floor.",
+        "I can't get up.",
+    ],
+)
+def test_waiting_remarks_after_cap_are_urgent(text):
+    # 2026-09-24T1311-live: these got `reassured_enough` silence on the floor.
+    bus, session = _escalated_on_floor()
+    now_fn, advance = make_clock(NIGHT)
+    session._reassurance_reply_count = 2
+    session.record_say(now_fn(), "reassure_waiting", "Someone is on their way.")
+    advance(61)
+    llm = FakeLLM(interpretations=[Interpretation(intent=Intent.CONFUSED_TIME, distress=1)])
+    say_to_agent(bus, session, now_fn, llm, text)
+    assert len(bus.read("say", "test", "waiting_urgent")) == 1
+
+
+def test_interpret_is_told_the_person_is_on_the_floor():
+    bus, session = _escalated_on_floor()
+    now_fn, _ = make_clock(NIGHT)
+    llm = FakeLLM(interpretations=[Interpretation(intent=Intent.UNCLEAR, distress=1)])
+    say_to_agent(bus, session, now_fn, llm, "Oh, I'm down.")
+    assert llm.calls[0][1]["person_state"] == "on_floor"

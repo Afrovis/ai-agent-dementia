@@ -23,9 +23,13 @@ class StubLLM:
         self.plan_result = plan_result
 
     def interpret(
-        self, utterance: str, turns: Sequence[str], profile: Mapping[str, object]
+        self,
+        utterance: str,
+        turns: Sequence[str],
+        profile: Mapping[str, object],
+        person_state: str | None = None,
     ) -> Interpretation | None:
-        del turns, profile
+        del turns, profile, person_state
         if self.interpretation is not None:
             return self.interpretation
         text = utterance.lower()

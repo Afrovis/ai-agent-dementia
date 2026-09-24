@@ -14,7 +14,7 @@ message stays pending until it is acked, so a crashed or slow consumer will
 have it redelivered (by this consumer or another one that claims it).
 
 Two classes share the same public interface (``publish``, ``ensure_group``,
-``read``, ``ack``):
+``read``, ``read_many``, ``ack``):
 
 - :class:`Bus` talks to a real Redis server.
 - :class:`FakeBus` is an in-memory stand-in with no external dependencies,
@@ -91,6 +91,31 @@ class Bus:
         for _stream_name, messages in response or []:
             for msg_id, fields in messages:
                 results.append((_decode(msg_id), _event_from_fields(fields)))
+        return results
+
+    def read_many(
+        self,
+        streams: list[str],
+        group: str,
+        consumer: str,
+        count: int = 10,
+        block_ms: int | None = 1000,
+    ) -> dict[str, list[tuple[str, BaseEvent]]]:
+        """Read new messages from several streams in one blocking call.
+
+        One `XREADGROUP` over all `streams`: it returns as soon as any of them
+        has a message, instead of waiting out a block on each stream in turn.
+        `count` applies per stream. Returns `{stream: [(msg_id, event), ...]}`
+        with only the streams that had messages.
+        """
+        response = self._client.xreadgroup(
+            group, consumer, {stream: ">" for stream in streams}, count=count, block=block_ms
+        )
+        results: dict[str, list[tuple[str, BaseEvent]]] = {}
+        for stream_name, messages in response or []:
+            results[_decode(stream_name)] = [
+                (_decode(msg_id), _event_from_fields(fields)) for msg_id, fields in messages
+            ]
         return results
 
     def ack(self, stream: str, group: str, msg_id: str) -> None:
@@ -193,6 +218,22 @@ class FakeBus:
             state.pending[entry.msg_id] = entry
             event_cls = EVENT_TYPES[entry.event_type]
             results.append((entry.msg_id, event_cls.model_validate_json(entry.data)))
+        return results
+
+    def read_many(
+        self,
+        streams: list[str],
+        group: str,
+        consumer: str,
+        count: int = 10,
+        block_ms: int | None = 1000,
+    ) -> dict[str, list[tuple[str, BaseEvent]]]:
+        """Return new messages per stream, like `Bus.read_many`, without blocking."""
+        results = {}
+        for stream in streams:
+            messages = self.read(stream, group, consumer, count=count, block_ms=block_ms)
+            if messages:
+                results[stream] = messages
         return results
 
     def ack(self, stream: str, group: str, msg_id: str) -> None:

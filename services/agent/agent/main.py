@@ -58,6 +58,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from collections.abc import Callable
 from dataclasses import replace
@@ -198,6 +199,12 @@ def _decision_activity(bus, session_id: str | None, detail: dict[str, object]) -
         _log("failed to publish decision Activity", level=logging.WARNING, error=type(exc).__name__)
 
 
+def _asks_who_is_coming(text: str, profile: PersonProfile) -> bool:
+    lowered = text.lower()
+    name = profile.caregiver_name.lower()
+    return bool(re.search(r"\bwho\b", lowered)) or (name != "your caregiver" and name in lowered)
+
+
 def _reassure_or_stay_silent(
     bus,
     session: Session,
@@ -222,6 +229,7 @@ def _reassure_or_stay_silent(
         or (distress is not None and distress >= 2)
         or intent == "pain"
         or veto.states_need(text)
+        or veto.urgent_while_waiting(text)
     )
     since_last_say = session.seconds_since_last_say(now)
     if session.reassurance_count < MAX_REASSURANCES or (
@@ -1323,7 +1331,12 @@ def run_once(
             interpretation = None
             outcome = "unavailable"
             try:
-                interpretation = llm.interpret(event.text, prior_turns, _profile_for_llm(profile))
+                interpretation = llm.interpret(
+                    event.text,
+                    prior_turns,
+                    _profile_for_llm(profile),
+                    person_state=session.last_person_state,
+                )
                 outcome = "ok" if interpretation is not None else "unavailable"
             except Exception:
                 outcome = "error"
@@ -1425,7 +1438,13 @@ def run_once(
                             for word in ("where", "home", "house", "room", "bed")
                         )
                     ):
-                        reply_id = REASSURE_WAITING_ID
+                        # "Who's coming?" gets the wording that names the caregiver,
+                        # never an arrival time (2026-09-24T1311-live).
+                        reply_id = (
+                            CAREGIVER_ALERTED_ID
+                            if _asks_who_is_coming(event.text, profile)
+                            else REASSURE_WAITING_ID
+                        )
                     elif intent == "confused_time":
                         explicit_question = is_direct_question(event.text)
                         if explicit_question or not session.recently_said("orient_time_place", now):

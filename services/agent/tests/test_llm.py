@@ -304,3 +304,12 @@ def test_interpret_prompt_keeps_restroom_progress_and_place_guidance():
         assert phrase in _INTERPRET_TASK
     assert "Questions about where they are, whose house or room this is" in _INTERPRET_TASK
     assert "whether this is home" in _INTERPRET_TASK
+
+
+def test_on_floor_note_is_added_only_on_the_floor():
+    from agent.llm import _INTERPRET_TASK, _interpret_task
+
+    assert _interpret_task(None) == _INTERPRET_TASK
+    assert _interpret_task("standing") == _INTERPRET_TASK
+    assert "on the floor" in _interpret_task("on_floor")
+    assert "not need_restroom" in _interpret_task("on_floor")

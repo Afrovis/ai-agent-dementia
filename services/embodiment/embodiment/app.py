@@ -631,16 +631,19 @@ async def broadcast_loop(
             ("activity", _debug_to_message),
             ("debug", None),
         )
+        # One blocking read over every stream: it wakes on the first message
+        # anywhere. Reading them in turn, each blocking 100 ms, held a
+        # SpeechStarted or Say for up to 0.9 s (TT-4, 2026-09-24T1311-live).
+        batch = await asyncio.to_thread(
+            bus.read_many,
+            [stream for stream, _ in streams],
+            GROUP,
+            consumer,
+            count=count,
+            block_ms=block_ms,
+        )
         for stream, to_message in streams:
-            messages = await asyncio.to_thread(
-                bus.read,
-                stream,
-                GROUP,
-                consumer,
-                count=count,
-                # Rare operator events; never add a block wait to speech latency.
-                block_ms=None if stream == "debug" else block_ms,
-            )
+            messages = batch.get(stream, [])
             for msg_id, event in messages:
                 if stream == "debug":
                     if isinstance(event, DebugControl) and event.source == "agent":
