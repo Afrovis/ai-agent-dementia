@@ -114,7 +114,7 @@ HEARTBEAT_INTERVAL_S = 60.0
 PENDING_SAY_MAX_AGE_S = 30.0
 MAX_REASSURANCES = 2
 ESCALATED_CHECKIN_S = 120.0
-# After the cap, a direct question or distress 3 is answered at most once
+# After the cap, a direct question, a stated need or distress 2+ is answered at most once
 # per this many seconds: a frightened person on the floor may ask "can you
 # hear me?" every 15 s, and a sentence each time is the repetition the cap
 # exists to stop.
@@ -211,7 +211,13 @@ def _reassure_or_stay_silent(
 
     If it was just spoken, use the rotating reassurance phrases instead.
     """
-    urgent = is_direct_question(text) or distress == 3
+    # A stated need ("help me up", "so cold") or clear distress is answered
+    # like a question: still at most once a minute after the cap.
+    urgent = (
+        is_direct_question(text)
+        or (distress is not None and distress >= 2)
+        or veto.states_need(text)
+    )
     since_last_say = session.seconds_since_last_say(now)
     if session.reassurance_count < MAX_REASSURANCES or (
         urgent and (since_last_say is None or since_last_say >= REASSURE_AFTER_CAP_INTERVAL_S)
@@ -451,7 +457,10 @@ def _maybe_publish_say(
     text = render_template(strategy.say_template, profile, time_words=time_words)
     compose = llm is not None and (
         strategy.id in ("validate_and_redirect", ACKNOWLEDGE_FEELING_ID)
-        or (direct and strategy.id in (REASSURE_WAITING_ID, "orient_time_place"))
+        or (direct and strategy.id == "orient_time_place")
+        # While escalated the approved phrasings rotate instead: composition
+        # added about 2.4 s and was rejected 12 of 14 times in 2026-09-23T1854-live.
+        or (direct and strategy.id == REASSURE_WAITING_ID and session.phase != Phase.ESCALATED)
     )
     if compose:
         model = _llm_model_name(llm)
@@ -1225,9 +1234,24 @@ def run_once(
                     reply_id = None
                     if cooldown_reply and interpretation.distress >= 2:
                         reply_id = REASSURE_WAITING_ID
-                    elif intent == "wants_bed" and (
-                        goal_before_interpretation == "return_to_bed"
-                        or session.phase == Phase.ESCALATED
+                    elif (
+                        session.phase == Phase.ENGAGED
+                        and session.last_person_state == "in_bed"
+                        and intent in {"wants_bed", "fine"}
+                        and not is_direct_question(event.text)
+                    ):
+                        # "Goodnight, that's all I need." from bed: let them
+                        # settle (NICE-05) rather than "take your time getting
+                        # back to bed".
+                        _intentional_silence(bus, session, event.text, "settling_in_bed")
+                        intentional_silence = True
+                    elif (
+                        intent == "wants_bed"
+                        and session.last_person_state != "on_floor"
+                        and (
+                            goal_before_interpretation == "return_to_bed"
+                            or session.phase == Phase.ESCALATED
+                        )
                     ):
                         reply_id = "acknowledge_return"
                     elif (
@@ -1247,13 +1271,20 @@ def run_once(
                         explicit_question = is_direct_question(event.text)
                         if explicit_question or not session.recently_said("orient_time_place", now):
                             reply_id = "orient_time_place"
+                        else:
+                            _intentional_silence(bus, session, event.text, "oriented_recently")
+                            intentional_silence = True
                     elif intent == "need_restroom" and (
                         session.phase == Phase.ESCALATED or cooldown_reply
                     ):
+                        # Directions only for a named toilet need: "pressing a bit
+                        # more now" from a person with chest pain read as
+                        # need_restroom and got directions (2026-09-23T1854-live).
                         reply_id = (
-                            REASSURE_WAITING_ID
-                            if session.last_person_state == "on_floor"
-                            else PATH_LIGHT_ID
+                            PATH_LIGHT_ID
+                            if session.last_person_state != "on_floor"
+                            and veto.mentions_toilet(event.text)
+                            else REASSURE_WAITING_ID
                         )
                     elif session.phase == Phase.ENGAGED and intent == "pain":
                         if not session._pain_acknowledged or is_direct_question(event.text):

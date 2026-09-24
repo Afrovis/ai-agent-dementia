@@ -720,8 +720,9 @@ def test_escalated_speech_is_interpreted_and_reassured_after_gap():
     assert session.goal == "wait_for_caregiver"
     reassurances = [event for _, event in bus.read("say", "test", "c1")]
     assert reassurances[-1].strategy == "reassure_waiting"
-    assert reassurances[-1].text == "Help is on the way."
-    assert [name for name, _ in llm.calls] == ["interpret", "compose"]
+    # While escalated the approved phrasings are used, never a composition.
+    assert reassurances[-1].text == "Someone is on their way, and you're safe here."
+    assert [name for name, _ in llm.calls] == ["interpret"]
     assert len(bus.read("notify", "test", "c1")) == 1
 
 
@@ -905,7 +906,7 @@ def test_escalated_reassurance_cap_questions_distress_and_varied_composition():
     ]
     assert len(reassurances) == 4
     assert session.reassurance_count == 4
-    assert reassurances[0].text == "Help is on the way."
+    assert all(name != "compose" for name, _ in llm.calls)
     assert reassurances[1].text != reassurances[0].text
     assert len({event.text.lower() for event in reassurances}) == 4
     decisions = [
@@ -1009,15 +1010,7 @@ def test_escalated_unavailable_interpretation_obeys_cap():
         bus.publish(Utterance(source="listen", text=utterance, confidence=0.9, duration_s=1))
         run_once(bus, session, now_fn=now_fn, llm=llm)
     assert session.reassurance_count == 3
-    assert [name for name, _ in llm.calls] == [
-        "interpret",
-        "compose",
-        "interpret",
-        "compose",
-        "interpret",
-        "interpret",
-        "compose",
-    ]
+    assert [name for name, _ in llm.calls] == ["interpret"] * 4
 
 
 def test_escalated_restroom_interpretation_on_floor_reassures_without_directions():

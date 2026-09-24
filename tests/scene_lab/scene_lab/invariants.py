@@ -407,10 +407,12 @@ def check_trace(
 
     starts = trace.of_type("SpeechStarted")
     for speech in starts:
+        # Speech ends when listen starts transcribing, not when the transcript
+        # arrives: live transcription takes 1 to 5 s, longer than the grace.
+        next_utt = next((u for u in utts if u.t >= speech.t), None)
         end = (
-            next((u.t for u in utts if u.t >= speech.t), speech.t + 30)
-            + thresholds.talk_over_grace_s
-        )
+            _speech_end(trace, next_utt) if next_utt else speech.t + 30
+        ) + thresholds.talk_over_grace_s
         for pb in pbs:
             if speech.t <= pb.start <= end:
                 out.append(
@@ -434,7 +436,8 @@ def check_trace(
         if not pb.estimated and pb.interruptible and pb.start <= speech.t < pb.end
     ]
     for speech, pb in real_active:
-        if not pb.interrupted or pb.end - speech.t > thresholds.barge_in_s:
+        # A sentence that ends on its own within the deadline needs no barge-in.
+        if pb.end - speech.t > thresholds.barge_in_s:
             out.append(
                 _result(
                     trace,
