@@ -260,7 +260,7 @@ def test_unclear_asks_need_once_then_answers_question():
     say_to_agent(bus, session, now_fn, llm, "Can you help me?")
     assert [event.strategy for _, event in bus.read("say", "test", "reply_say")] == [
         "ask_need",
-        "validate_and_redirect",
+        "caregiver_alerted",
     ]
     recorded = decisions(bus)
     assert any(d.get("reason") == "need_asked" for d in recorded), recorded
@@ -719,11 +719,11 @@ def test_escalated_speech_is_interpreted_and_reassured_after_gap():
     assert session.phase == Phase.ESCALATED
     assert session.goal == "wait_for_caregiver"
     reassurances = [event for _, event in bus.read("say", "test", "c1")]
-    assert reassurances[-1].strategy == "reassure_waiting"
+    assert reassurances[-1].strategy == "caregiver_alerted"
     # While escalated the approved phrasings are used, never a composition.
-    assert reassurances[-1].text == "Someone is on their way, and you're safe here."
+    assert reassurances[-1].text == "I've let your caregiver know, and help is on the way."
     assert [name for name, _ in llm.calls] == ["interpret"]
-    assert len(bus.read("notify", "test", "c1")) == 1
+    assert len(bus.read("notify", "test", "c1")) == 2
 
 
 def test_severe_pain_escalates_with_pain_reply_and_skips_planner_speech():
@@ -744,7 +744,8 @@ def test_severe_pain_escalates_with_pain_reply_and_skips_planner_speech():
     assert session.reassurance_count == 0
     notify = [event for _, event in bus.read("notify", "test", "c1")]
     assert [(event.level, event.title, event.body) for event in notify] == [
-        ("attention", "Pain reported", "They said they are in pain; please check in.")
+        ("attention", "Pain reported", "They said they are in pain; please check in."),
+        ("attention", "Update: pain worse", "They said their pain is worse."),
     ]
     says = [event for _, event in bus.read("say", "test", "c1")]
     assert [(event.strategy, event.text) for event in says] == [
@@ -887,7 +888,7 @@ def test_escalated_reassurance_cap_questions_distress_and_varied_composition():
         ],
         compositions=[Composition(text="Help is on the way.") for _ in range(4)],
     )
-    # After the cap, a question or distress 3 is answered at most once a minute.
+    # After the cap, questions are paced, while a help request alerts the caregiver.
     for delay, utterance in (
         (9, "I am here"),
         (9, "I am still here"),
@@ -902,7 +903,7 @@ def test_escalated_reassurance_cap_questions_distress_and_varied_composition():
     reassurances = [
         event
         for _, event in bus.read("say", "test", "c1", count=20)
-        if event.strategy == "reassure_waiting"
+        if event.strategy in {"reassure_waiting", "caregiver_alerted"}
     ]
     assert len(reassurances) == 4
     assert session.reassurance_count == 4
@@ -982,15 +983,15 @@ def test_escalated_questions_after_cap_are_answered_at_most_once_a_minute():
         for _, event in bus.read("say", "test", "c1", count=20)
         if event.strategy == "reassure_waiting"
     ]
-    # Two under the cap, then one question 60 s after the last sentence.
-    assert len(reassurances) == 3
-    assert len(set(reassurances)) == 3
+    # Two under the cap, then one question every 30 s.
+    assert len(reassurances) == 4
+    assert len(set(reassurances)) == 4
     reasons = [
         json.loads(event.detail)["reason"]
         for _, event in bus.read("activity", "test", "c1", count=100)
         if event.kind == "decision" and json.loads(event.detail)["decision"] == "no_reply"
     ]
-    assert reasons == ["reassured_recently"] * 3
+    assert reasons == ["reassured_recently"] * 2
 
 
 def test_escalated_unavailable_interpretation_obeys_cap():
@@ -1028,7 +1029,7 @@ def test_escalated_restroom_interpretation_on_floor_reassures_without_directions
     assert session.goal == "wait_for_caregiver"
     assert bus.read("light", "test", "c1") == []
     assert [event.strategy for _, event in bus.read("say", "test", "c1")][-1] == "reassure_waiting"
-    assert len(bus.read("notify", "test", "c1")) == 1
+    assert len(bus.read("notify", "test", "c1")) == 2
 
     llm = FakeLLM(interpretations=[Interpretation(intent=Intent.NEED_RESTROOM, distress=0)] * 2)
     for text in ("No, no bathroom, I'm on the floor, dear.", "I'm just down here a moment"):
@@ -1290,7 +1291,7 @@ def test_cooldown_up_answers_time_question_without_changing_session():
     assert session.strategy_index == 4
     assert session._cooldown_since == NIGHT
     assert session.recent_utterances == ("What time is it?",)
-    assert [name for name, _ in llm.calls] == ["interpret", "compose"]
+    assert [name for name, _ in llm.calls] == ["interpret"]
     assert llm.calls[0][1]["last_turns"] == []
     assert bus.read("notify", "test", "c1") == []
 
@@ -1316,7 +1317,7 @@ def test_cooldown_in_bed_ignores_speech():
     [
         (Intent.NEED_RESTROOM, 0, "I need the toilet", "path_light"),
         (Intent.LOOKING_FOR_PERSON, 0, "Where is my daughter?", "reassure_waiting"),
-        (Intent.UNCLEAR, 2, "Help me", "reassure_waiting"),
+        (Intent.UNCLEAR, 2, "Help me", "caregiver_alerted"),
         (Intent.FINE, 0, "I'm fine", None),
         (Intent.UNCLEAR, 0, "Hmm", None),
     ],
@@ -2099,11 +2100,13 @@ def test_escalated_stated_need_after_cap_is_paced(utterance, distress):
     session.record_say(NIGHT, "reassure_waiting", "Someone is on their way, and you're safe here.")
     llm = FakeLLM(interpretations=[Interpretation(intent=Intent.UNCLEAR, distress=distress)] * 2)
     bus.publish(Utterance(source="listen", text=utterance, confidence=0.9, duration_s=1))
-    run_once(bus, session, now_fn=lambda: NIGHT + timedelta(seconds=30), llm=llm)
+    run_once(bus, session, now_fn=lambda: NIGHT + timedelta(seconds=20), llm=llm)
     assert not bus.read("say", "test", "early")
     bus.publish(Utterance(source="listen", text=utterance, confidence=0.9, duration_s=1))
-    run_once(bus, session, now_fn=lambda: NIGHT + timedelta(seconds=61), llm=llm)
-    assert [event.strategy for _, event in bus.read("say", "test", "late")] == ["reassure_waiting"]
+    run_once(bus, session, now_fn=lambda: NIGHT + timedelta(seconds=31), llm=llm)
+    assert [event.strategy for _, event in bus.read("say", "test", "late")] == [
+        "caregiver_alerted" if utterance == "Help me up." else "reassure_waiting"
+    ]
 
 
 @pytest.mark.parametrize(
@@ -2215,7 +2218,7 @@ def test_confused_time_without_who_keeps_the_waiting_reassurance():
     bus.publish(Utterance(source="listen", text="What time is it?", confidence=0.9, duration_s=1))
     run_once(bus, session, now_fn=now_fn, llm=llm, profile=profile)
     says = [event for _, event in bus.read("say", "test", "what_time")]
-    assert [event.strategy for event in says] == ["reassure_waiting"]
+    assert [event.strategy for event in says] == ["orient_time_place"]
 
 
 @pytest.mark.parametrize(
@@ -2245,3 +2248,233 @@ def test_interpret_is_told_the_person_is_on_the_floor():
     llm = FakeLLM(interpretations=[Interpretation(intent=Intent.UNCLEAR, distress=1)])
     say_to_agent(bus, session, now_fn, llm, "Oh, I'm down.")
     assert llm.calls[0][1]["person_state"] == "on_floor"
+
+
+def test_speech_started_after_utterance_in_same_batch_holds_reply():
+    bus, session, now_fn, _ = engaged_for_reply()
+    bus.publish(Utterance(source="listen", text="What time is it?", confidence=0.9, duration_s=1))
+    bus.publish(SpeechStarted(source="listen"))
+    llm = FakeLLM(interpretations=[Interpretation(intent=Intent.CONFUSED_TIME, distress=0)])
+    run_once(bus, session, now_fn=now_fn, llm=llm)
+    assert bus.read("say", "test", "batch_speech") == []
+    assert session._pending_say is not None
+    assert session._pending_say.event.strategy == "orient_time_place"
+
+
+def test_speech_started_during_compose_holds_reply():
+    bus, session, now_fn, _ = engaged_for_reply()
+
+    class SpeakingDuringCompose(FakeLLM):
+        def compose(self, *args, **kwargs):
+            bus.publish(SpeechStarted(source="listen"))
+            return super().compose(*args, **kwargs)
+
+    llm = SpeakingDuringCompose(
+        interpretations=[Interpretation(intent=Intent.LOOKING_FOR_PERSON, distress=0)],
+        compositions=[Composition(text="I can hear you, and I'm here with you.")],
+    )
+    say_to_agent(bus, session, now_fn, llm, "Where are the children?")
+    assert bus.read("say", "test", "during_compose") == []
+    assert session._pending_say is not None
+    assert session._pending_say.event.strategy == "validate_and_redirect"
+
+
+def test_distress_escalation_speech_waits_and_can_be_interrupted():
+    bus, session, now_fn, _ = engaged_for_reply()
+    session.speech_started_at = now_fn()
+    terminal = next(s for s in DEFAULT_STRATEGIES if s.id == ESCALATE_PHONE_ID)
+    transition = Transition(
+        Phase.ESCALATED,
+        session.session_id,
+        session.goal,
+        session.strategy_index,
+        "distress_detected_twice",
+        strategy=terminal,
+    )
+    _publish_transition(bus, transition, session, now_fn())
+    assert bus.read("say", "test", "distress_hold") == []
+    assert session._pending_say is not None
+    assert session._pending_say.event.interruptible
+
+
+def test_family_worry_twice_stays_engaged_and_names_feeling():
+    bus, session, now_fn, advance = engaged_for_reply()
+    llm = FakeLLM(
+        interpretations=[Interpretation(intent=Intent.LOOKING_FOR_PERSON, distress=2)] * 2,
+    )
+    for text in ("Where are the children?", "Are they home?"):
+        say_to_agent(bus, session, now_fn, llm, text)
+        advance(15)
+    assert session.phase == Phase.ENGAGED
+    says = [event for _, event in bus.read("say", "test", "family_worry")]
+    assert says
+    assert all(event.text.startswith("You're worried about them") for event in says)
+    assert not bus.read("notify", "test", "family_worry")
+
+
+def test_reported_fall_with_family_worry_keeps_distress_escalation():
+    bus, session, now_fn, advance = engaged_for_reply()
+    llm = FakeLLM(
+        interpretations=[Interpretation(intent=Intent.LOOKING_FOR_PERSON, distress=2)] * 2,
+    )
+    say_to_agent(bus, session, now_fn, llm, "I fell, where is my daughter?")
+    advance(15)
+    say_to_agent(bus, session, now_fn, llm, "I fell and I need her.")
+    assert session.phase == Phase.ESCALATED
+
+
+def test_help_request_with_family_worry_keeps_distress_escalation():
+    bus, session, now_fn, advance = engaged_for_reply()
+    llm = FakeLLM(
+        interpretations=[Interpretation(intent=Intent.LOOKING_FOR_PERSON, distress=2)] * 2,
+    )
+    say_to_agent(bus, session, now_fn, llm, "Where is my daughter? I need help.")
+    advance(15)
+    say_to_agent(bus, session, now_fn, llm, "Please, I need some help.")
+    assert session.phase == Phase.ESCALATED
+
+
+def test_help_request_notifies_once_in_five_minutes():
+    bus, session, now_fn, advance = engaged_for_reply()
+    session.goal = "restroom"
+    llm = FakeLLM(interpretations=[Interpretation(intent=Intent.NEED_RESTROOM, distress=0)] * 2)
+    say_to_agent(bus, session, now_fn, llm, "Could someone help me?")
+    advance(40)
+    say_to_agent(bus, session, now_fn, llm, "I need some help.")
+    alerts = [event for _, event in bus.read("notify", "test", "help_once")]
+    assert [(event.title, event.body) for event in alerts] == [
+        ("Asking for help", "They asked for help on the way to the toilet.")
+    ]
+    says = [event for _, event in bus.read("say", "test", "help_once")]
+    assert says and says[0].strategy == "caregiver_alerted"
+
+
+def test_escalated_updates_once_per_category_without_transcript():
+    bus, session = _escalated_on_floor()
+    now_fn, advance = make_clock(NIGHT)
+    llm = FakeLLM(interpretations=[Interpretation(intent=Intent.UNCLEAR, distress=0)] * 5)
+    for text in ("Cold.", "Still cold.", "I had an accident.", "My hip is worse.", "Stay with me."):
+        say_to_agent(bus, session, now_fn, llm, text)
+        advance(31)
+    alerts = [event for _, event in bus.read("notify", "test", "need_updates", count=20)]
+    assert [event.title for event in alerts] == [
+        "Update: cold",
+        "Update: toilet or wet",
+        "Update: pain worse",
+        "Update: wants company",
+    ]
+    assert all(not event.repeat_until_ack for event in alerts)
+    assert all("hip" not in event.body.lower() for event in alerts)
+
+
+def test_escalated_presence_and_apology_lines_and_thirty_second_pacing():
+    bus, session = _escalated_on_floor()
+    now_fn, advance = make_clock(NIGHT)
+    session._reassurance_reply_count = 2
+    session.record_say(now_fn(), "reassure_waiting", "Help is coming.")
+    llm = FakeLLM(interpretations=[Interpretation(intent=Intent.UNCLEAR, distress=0)] * 3)
+    advance(20)
+    say_to_agent(bus, session, now_fn, llm, "Talk to me.")
+    assert bus.read("say", "test", "before_30") == []
+    advance(11)
+    say_to_agent(bus, session, now_fn, llm, "Stay with me.")
+    presence = [e for _, e in bus.read("say", "test", "presence")]
+    assert presence[-1].text == "I'm here with you."
+    advance(15)
+    say_to_agent(bus, session, now_fn, llm, "I'm sorry about the accident.")
+    apology = [e for _, e in bus.read("say", "test", "apology")]
+    assert apology[-1].text == "It's alright; there's nothing to be sorry about."
+
+
+def test_escalated_family_request_names_feeling_once():
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    session.phase = Phase.ESCALATED
+    session.session_id = "family-wait"
+    session._last_person_state = "standing"
+    now_fn, advance = make_clock(NIGHT)
+    profile = PersonProfile(name="Jean", caregiver_name="Tom")
+    llm = FakeLLM(
+        interpretations=[Interpretation(intent=Intent.LOOKING_FOR_PERSON, distress=1)] * 2
+    )
+    bus.publish(
+        Utterance(source="listen", text="Where are the children?", confidence=0.9, duration_s=1)
+    )
+    run_once(bus, session, now_fn=now_fn, llm=llm, profile=profile)
+    advance(31)
+    bus.publish(Utterance(source="listen", text="Are they home?", confidence=0.9, duration_s=1))
+    run_once(bus, session, now_fn=now_fn, llm=llm, profile=profile)
+    says = [event for _, event in bus.read("say", "test", "family_wait")]
+    assert says[0].text == "You're worried about them, Jean; I've let Tom know."
+    assert says[1].text != says[0].text
+
+
+def test_light_question_off_bed_uses_path_light():
+    bus, session, now_fn, _ = engaged_for_reply()
+    session._last_real_person = ("standing", "bathroom_path")
+    llm = FakeLLM(interpretations=[Interpretation(intent=Intent.CONFUSED_TIME, distress=0)])
+    say_to_agent(bus, session, now_fn, llm, "Where has the light gone?")
+    says = [event for _, event in bus.read("say", "test", "light_question")]
+    assert says and says[-1].strategy == "path_light"
+    assert [event.state for _, event in bus.read("light", "test", "light_question")] == ["on"]
+
+
+def test_severe_distress_and_worsening_pain_bypass_thirty_second_cap():
+    bus, session = _escalated_on_floor()
+    now_fn, advance = make_clock(NIGHT)
+    session._reassurance_reply_count = 2
+    session.record_say(now_fn(), "reassure_waiting", "Help is coming.")
+    llm = FakeLLM(
+        interpretations=[
+            Interpretation(intent=Intent.UNCLEAR, distress=3),
+            Interpretation(intent=Intent.UNCLEAR, distress=1),
+        ]
+    )
+    advance(10)
+    say_to_agent(bus, session, now_fn, llm, "It hurts so much.")
+    advance(10)
+    say_to_agent(bus, session, now_fn, llm, "My hip is really bad now.")
+    assert len(bus.read("say", "test", "pain_bypass")) == 2
+
+
+def test_orientation_reply_uses_template_without_compose():
+    bus, session, now_fn, _ = engaged_for_reply()
+    llm = FakeLLM(
+        interpretations=[Interpretation(intent=Intent.CONFUSED_TIME, distress=0)],
+        compositions=[Composition(text="Unexpected composed orientation.")],
+    )
+    say_to_agent(bus, session, now_fn, llm, "What time is it?")
+    says = [event for _, event in bus.read("say", "test", "orient_template")]
+    assert says and says[-1].strategy == "orient_time_place"
+    assert all(name != "compose" for name, _ in llm.calls)
+
+
+def test_say_clock_includes_compose_elapsed_time(monkeypatch):
+    bus, session, now_fn, _ = engaged_for_reply()
+    strategy = next(s for s in DEFAULT_STRATEGIES if s.id == "validate_and_redirect")
+    transition = Transition(
+        Phase.ENGAGED,
+        session.session_id,
+        session.goal,
+        session.strategy_index,
+        "utterance_reply",
+        strategy=strategy,
+    )
+    ticks = iter((100.0, 103.0, 103.0))
+    monkeypatch.setattr("agent.main.time.perf_counter", lambda: next(ticks))
+    llm = FakeLLM(compositions=[Composition(text="I hear you; let's take our time.")])
+    assert _maybe_publish_say(bus, transition, session, now_fn(), PersonProfile(), llm, direct=True)
+    assert session._last_say_at == NIGHT + timedelta(seconds=2 + 3)
+
+
+def test_say_clock_refreshes_after_interpret():
+    bus, session, now_fn, advance = engaged_for_reply()
+
+    class SlowInterpret(FakeLLM):
+        def interpret(self, *args, **kwargs):
+            advance(3)
+            return super().interpret(*args, **kwargs)
+
+    llm = SlowInterpret(interpretations=[Interpretation(intent=Intent.CONFUSED_TIME, distress=0)])
+    say_to_agent(bus, session, now_fn, llm, "What time is it?")
+    assert session._last_say_at == NIGHT + timedelta(seconds=5)

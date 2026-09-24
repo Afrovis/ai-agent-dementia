@@ -5,11 +5,11 @@ interpretations:
 expect:
   # The strategy ladder ran out while the person sat at the desk, so the
   # session is ESCALATED by the time they speak. Waiting for the caregiver
-  # must not mean ignoring them: a time question gets paced reassurance.
+  # must not mean ignoring them: their own time question gets the orientation template.
   - after: {heard: "Hey, what time is it?"}
     within_s: 15
     events:
-      - {type: Say, strategy: reassure_waiting, text: "Someone is on their way, Jean, and you're safe here."}
+      - {type: Say, strategy: orient_time_place, text: "You are home in your bedroom, and it is night-time."}
   # A stated toilet need while escalated still lights the path and guides.
   - after: {heard: "I need to go to the restroom."}
     within_s: 15

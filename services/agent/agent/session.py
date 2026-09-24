@@ -259,6 +259,11 @@ class Session:
     _last_validation_at: datetime | None = field(default=None, init=False, repr=False)
     _pending_say: PendingSay | None = field(default=None, init=False, repr=False)
     speech_started_at: datetime | None = field(default=None, init=False)
+    poll_speech: Callable[[], bool] | None = field(default=None, init=False, repr=False)
+    _notified_needs: set[str] = field(default_factory=set, init=False, repr=False)
+    _last_help_notify_at: datetime | None = field(default=None, init=False, repr=False)
+    _family_waiting_replied: bool = field(default=False, init=False, repr=False)
+    _apology_replied: bool = field(default=False, init=False, repr=False)
     _compliance_until: datetime | None = field(default=None, init=False, repr=False)
     _say_history: list[tuple[datetime, str, str]] = field(
         default_factory=list, init=False, repr=False
@@ -431,6 +436,9 @@ class Session:
             # A new escalation gets its own speech budget and wording history.
             self._reassurance_texts.clear()
             self._reassurance_reply_count = 0
+            self._notified_needs.clear()
+            self._family_waiting_replied = False
+            self._apology_replied = False
             self._escalated_since = now if target == Phase.ESCALATED else None
             self._distress_since_escalation = 0
             self._distress_followup_sent = False
@@ -509,6 +517,10 @@ class Session:
         self._reassurance_texts.clear()
         self._last_reassurance_strategy_id = None
         self._reassurance_reply_count = 0
+        self._notified_needs.clear()
+        self._last_help_notify_at = None
+        self._family_waiting_replied = False
+        self._apology_replied = False
         self._spoken_time_variant = 0
         self._pain_acknowledged = False
         self._progress_acknowledged = False
@@ -880,7 +892,9 @@ class Session:
             strategy=strategy,
         )
 
-    def on_interpretation(self, intent: str, distress: int, now: datetime) -> Transition | None:
+    def on_interpretation(
+        self, intent: str, distress: int, now: datetime, *, worried_about_others: bool = False
+    ) -> Transition | None:
         """Apply the deterministic consequences of one LLM interpretation.
 
         The caller owns the LLM call; this method only receives its compact
@@ -900,8 +914,11 @@ class Session:
                 self._compliance_until = None
             # Keep tracking distress, but never issue a second escalation or
             # let speech undo the caregiver alert.
-            self._consecutive_distress = self._consecutive_distress + 1 if distress >= 2 else 0
-            if distress >= 2:
+            significant_distress = distress >= 2 and not worried_about_others
+            self._consecutive_distress = (
+                self._consecutive_distress + 1 if significant_distress else 0
+            )
+            if significant_distress:
                 self._distress_since_escalation += 1
                 if (
                     not self._distress_followup_sent
@@ -931,7 +948,7 @@ class Session:
             self._consecutive_distress = 0
             return None
 
-        if distress >= 2:
+        if distress >= 2 and not worried_about_others:
             self._consecutive_distress += 1
         else:
             self._consecutive_distress = 0

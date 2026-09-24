@@ -90,7 +90,7 @@ from agent.llm import ClaudeLLM, FallbackLLM, LLMClient
 from agent.llm import local_llm as build_local_llm
 from agent.profile import DEFAULT_PROFILE, PersonProfile, load_profile
 from agent.questions import is_direct_question, is_hearing_request
-from agent.rules import Phase, RuleResult, validate_composition, validate_say
+from agent.rules import Phase, validate_composition, validate_say
 from agent.session import PendingSay, Session, Transition
 from agent.strategies import (
     ACKNOWLEDGE_FEELING_ID,
@@ -117,11 +117,38 @@ PENDING_SAY_MAX_AGE_S = 30.0
 SPEECH_STARTED_MAX_AGE_S = 15.0
 MAX_REASSURANCES = 2
 ESCALATED_CHECKIN_S = 120.0
-# After the cap, a direct question, a stated need or distress 2+ is answered at most once
-# per this many seconds: a frightened person on the floor may ask "can you
-# hear me?" every 15 s, and a sentence each time is the repetition the cap
-# exists to stop.
-REASSURE_AFTER_CAP_INTERVAL_S = 60.0
+# After the cap, ordinary urgent questions and stated needs are answered at
+# most once per this many seconds. Severe distress and worsening pain bypass
+# this interval while the normal reply gap still applies.
+REASSURE_AFTER_CAP_INTERVAL_S = 30.0
+PRESENCE_LINE = "I'm here with you{name_vocative}."
+APOLOGY_LINE = "It's alright{name_vocative}; there's nothing to be sorry about."
+WORRIED_LINE = "You're worried about them{name_vocative}; that's a caring thing to feel."
+WORRIED_ALERTED_LINE = "You're worried about them{name_vocative}; I've let {caregiver_name} know."
+_PRESENCE_RE = re.compile(
+    r"\b(?:talk to me|stay with me|are you (?:still )?there|anyone there|"
+    r"don't (?:go|leave)|alone|go quiet)\b",
+    re.IGNORECASE,
+)
+_APOLOGY_RE = re.compile(r"\b(?:accident|sorry|wet|fuss)\b", re.IGNORECASE)
+_HELP_RE = re.compile(
+    r"\b(?:help me|(?:someone|somebody) (?:could|to|come) help|"
+    r"can'?t manage|need (?:some )?help)\b",
+    re.IGNORECASE,
+)
+_WORSE_RE = re.compile(r"\b(?:worse|bad|sore now|really)\b", re.IGNORECASE)
+_PAIN_RE = re.compile(r"\b(?:pain|hurt|sore|hip|arm)\b", re.IGNORECASE)
+_DANGER_RE = re.compile(
+    r"\b(?:fall|fell|fallen|floor|pain|hurt|sore|can't get up|help me)\b", re.IGNORECASE
+)
+_OWN_PLACE_TIME_RE = re.compile(
+    r"\b(?:where am i|is this (?:my|the)|what time|my (?:room|house|home|bed))\b",
+    re.IGNORECASE,
+)
+_OTHERS_RE = re.compile(
+    r"\b(?:they|them|the children|children|family|son|daughter|husband|wife|mother|father)\b",
+    re.IGNORECASE,
+)
 REASSURANCE_FALLBACKS = (
     "Help is on the way{name_vocative}; you can rest where you are.",
     "I've let someone know{name_vocative}, and they're coming to you.",
@@ -205,6 +232,72 @@ def _asks_who_is_coming(text: str, profile: PersonProfile) -> bool:
     return bool(re.search(r"\bwho\b", lowered)) or (name != "your caregiver" and name in lowered)
 
 
+def _worried_about_others(intent: str, text: str, profile: PersonProfile) -> bool:
+    if _DANGER_RE.search(text) or _HELP_RE.search(text):
+        return False
+    return intent == "looking_for_person" or (
+        intent == "confused_time"
+        and (
+            bool(_OTHERS_RE.search(text))
+            or profile.caregiver_name != "your caregiver"
+            and bool(re.search(rf"\b{re.escape(profile.caregiver_name)}\b", text, re.IGNORECASE))
+        )
+    )
+
+
+def _notify_need_updates(bus, session: Session, text: str, intent: str | None) -> None:
+    categories = []
+    if re.search(r"\bcold\b", text, re.IGNORECASE):
+        categories.append(("cold", "They said they are cold."))
+    if veto.mentions_toilet(text) or re.search(r"\b(?:accident|wet)\b", text, re.IGNORECASE):
+        categories.append(("toilet or wet", "They said they need the toilet or are wet."))
+    if intent == "pain" or _PAIN_RE.search(text) and _WORSE_RE.search(text):
+        categories.append(("pain worse", "They said their pain is worse."))
+    if _PRESENCE_RE.search(text):
+        categories.append(("wants company", "They asked for company."))
+    for category, body in categories:
+        if category in session._notified_needs:
+            continue
+        bus.publish(
+            Notify(
+                source=SERVICE_NAME,
+                session_id=session.session_id,
+                level="attention",
+                title=f"Update: {category}",
+                body=body,
+                repeat_until_ack=False,
+            )
+        )
+        session._notified_needs.add(category)
+
+
+def _notify_help(bus, session: Session, now: datetime) -> None:
+    if (
+        session._last_help_notify_at is not None
+        and (now - session._last_help_notify_at).total_seconds() < 300
+    ):
+        return
+    context = (
+        "on the way to the toilet"
+        if session.goal == "restroom"
+        or session.last_person_state in {"standing", "walking"}
+        and session._last_real_person is not None
+        and session._last_real_person[1] == "bathroom_path"
+        else "during the night"
+    )
+    bus.publish(
+        Notify(
+            source=SERVICE_NAME,
+            session_id=session.session_id,
+            level="attention",
+            title="Asking for help",
+            body=f"They asked for help {context}.",
+            repeat_until_ack=False,
+        )
+    )
+    session._last_help_notify_at = now
+
+
 def _reassure_or_stay_silent(
     bus,
     session: Session,
@@ -216,6 +309,7 @@ def _reassure_or_stay_silent(
     distress: int | None = None,
     intent: str | None = None,
     preferred_id: str = REASSURE_WAITING_ID,
+    text_override: str | None = None,
 ) -> None:
     """Pace all escalated replies together; a person query prefers the alerted wording.
 
@@ -223,24 +317,45 @@ def _reassure_or_stay_silent(
     """
     # A stated need ("help me up", "so cold"), any pain (after a fall "my arm feels
     # a bit stiff" reads as distress 1) or clear distress is answered like a
-    # question: still at most once a minute after the cap.
+    # question, with ordinary urgent requests paced after the cap.
+    presence = bool(_PRESENCE_RE.search(text))
+    pain_worse = intent == "pain" or bool(_PAIN_RE.search(text) and _WORSE_RE.search(text))
     urgent = (
         is_direct_question(text)
         or (distress is not None and distress >= 2)
-        or intent == "pain"
+        or pain_worse
+        or presence
+        or (_APOLOGY_RE.search(text) and not session._apology_replied)
         or veto.states_need(text)
         or veto.urgent_while_waiting(text)
     )
     since_last_say = session.seconds_since_last_say(now)
     if session.reassurance_count < MAX_REASSURANCES or (
-        urgent and (since_last_say is None or since_last_say >= REASSURE_AFTER_CAP_INTERVAL_S)
+        urgent
+        and (
+            distress == 3
+            or pain_worse
+            or text_override == WORRIED_ALERTED_LINE
+            or (_APOLOGY_RE.search(text) and not session._apology_replied)
+            or since_last_say is None
+            or since_last_say >= REASSURE_AFTER_CAP_INTERVAL_S
+        )
     ):
+        if presence and text_override is None:
+            text_override = PRESENCE_LINE
+        elif text_override is None and _APOLOGY_RE.search(text) and not session._apology_replied:
+            text_override = APOLOGY_LINE
+            session._apology_replied = True
+        if text_override == WORRIED_ALERTED_LINE:
+            session._family_waiting_replied = True
         if (
             preferred_id == CAREGIVER_ALERTED_ID
             and session._last_reassurance_strategy_id == CAREGIVER_ALERTED_ID
         ):
             preferred_id = REASSURE_WAITING_ID
-        _reply_to_utterance(bus, session, preferred_id, now, profile, llm)
+        _reply_to_utterance(
+            bus, session, preferred_id, now, profile, llm, text_override=text_override
+        )
         return
     detail = {
         "decision": "no_reply",
@@ -438,6 +553,7 @@ def _maybe_publish_say(
     *,
     context: VetoContext | None = None,
     direct: bool = False,
+    text_override: str | None = None,
 ) -> bool:
     """Publish a `Say` for `transition.strategy`, if it has a
     `say_template`, after passing it through `agent.rules.validate_say`
@@ -475,13 +591,16 @@ def _maybe_publish_say(
         return False
 
     time_words = spoken_time_words(session.wall_clock(now), session._spoken_time_variant)
-    text = render_template(strategy.say_template, profile, time_words=time_words)
-    compose = llm is not None and (
-        strategy.id in ("validate_and_redirect", ACKNOWLEDGE_FEELING_ID)
-        or (direct and strategy.id == "orient_time_place")
-        # While escalated the approved phrasings rotate instead: composition
-        # added about 2.4 s and was rejected 12 of 14 times in 2026-09-23T1854-live.
-        or (direct and strategy.id == REASSURE_WAITING_ID and session.phase != Phase.ESCALATED)
+    text = render_template(text_override or strategy.say_template, profile, time_words=time_words)
+    compose = (
+        text_override is None
+        and llm is not None
+        and (
+            strategy.id in ("validate_and_redirect", ACKNOWLEDGE_FEELING_ID)
+            # While escalated the approved phrasings rotate instead: composition
+            # added about 2.4 s and was rejected 12 of 14 times in 2026-09-23T1854-live.
+            or (direct and strategy.id == REASSURE_WAITING_ID and session.phase != Phase.ESCALATED)
+        )
     )
     if compose:
         model = _llm_model_name(llm)
@@ -502,15 +621,6 @@ def _maybe_publish_say(
             )
             if composition is not None:
                 composition_result = validate_composition(composition.text, profile)
-                if (
-                    composition_result.accepted
-                    and strategy.id == "orient_time_place"
-                    and (
-                        time_words.lower() not in composition.text.lower()
-                        or not any(word in composition.text.lower() for word in ("home", "bedroom"))
-                    )
-                ):
-                    composition_result = RuleResult(False, "orientation lacks local time or place")
                 outcome = "ok" if composition_result.accepted else "rejected"
         except Exception:
             outcome = "error"
@@ -541,7 +651,13 @@ def _maybe_publish_say(
                 )
             else:
                 text = composition.text
-    if strategy.id == REASSURE_WAITING_ID and session.phase == Phase.ESCALATED:
+        now += timedelta(seconds=time.perf_counter() - started)
+    newer_utterance = direct and session.poll_speech is not None and session.poll_speech()
+    if (
+        strategy.id == REASSURE_WAITING_ID
+        and session.phase == Phase.ESCALATED
+        and text_override is None
+    ):
         # Prefer the caregiver's template, then approved alternatives when
         # composition or a fixed fallback repeats something already spoken.
         # Once every phrasing has been used, the one said longest ago wins.
@@ -561,15 +677,15 @@ def _maybe_publish_say(
 
             text = min(candidates, key=_last_said)
     # The minimum-silence gap paces ordinary strategy speech, one sentence
-    # then quiet. A terminal strategy (`escalate_phone`) is not ordinary
-    # speech: it is the single sentence telling a person who may be on the
-    # floor that help is coming, published in the same breath as the
-    # critical `Notify` that summons it. If an ordinary strategy happened
-    # to speak in the seconds before the escalation, the gap check would
-    # drop that sentence and leave them with a silent screen, so the
-    # terminal strategy is exempt from this one check. Every other rule 3
-    # check -- one sentence, no forbidden phrasing, no question -- still
-    # applies to it exactly as before.
+    # then quiet. The terminal escalation sentence is exempt so it can
+    # announce an alert immediately after another strategy spoke. Speech
+    # onset still holds that sentence unless the person is on the floor or
+    # absent; the caregiver Notify is sent at the transition either way.
+    floor_or_absent_escalation = strategy.id == ESCALATE_PHONE_ID and (
+        session.last_person_state in {"on_floor", "absent"}
+        or "floor" in transition.reason
+        or "absent" in transition.reason
+    )
     seconds_since_last_say = (
         None
         if terminal_reply
@@ -618,14 +734,14 @@ def _maybe_publish_say(
         session_id=transition.session_id,
         text=text,
         strategy=strategy.id,
-        # `escalate_phone` must not be interrupted by barge-in the way an
-        # ordinary strategy's speech can be (HANDOFF.md section 7:
-        # `listen`'s barge-in) -- there is nothing left to redirect to.
-        interruptible=not terminal_reply,
+        # Distress escalation speech can be interrupted; floor and absence
+        # escalations keep the immediate, non-interruptible safety sentence.
+        interruptible=not terminal_reply
+        or (strategy.id == ESCALATE_PHONE_ID and not floor_or_absent_escalation),
         clip_id=strategy.clip_id,
     )
     speech_active = _speech_in_progress(session, now)
-    hold_for_speech = speech_active and strategy.id != ESCALATE_PHONE_ID
+    hold_for_speech = (speech_active or newer_utterance) and not floor_or_absent_escalation
     if gap_only or hold_for_speech:
         session._pending_say = PendingSay(
             say_event,
@@ -832,7 +948,7 @@ def _flush_pending_say(bus, session: Session, now: datetime, profile: PersonProf
         if pending.direct
         else session.config.say_min_gap_seconds
     )
-    if age > PENDING_SAY_MAX_AGE_S:
+    if age > (15.0 if pending.event.strategy == ESCALATE_PHONE_ID else PENDING_SAY_MAX_AGE_S):
         _drop_pending_say(bus, session, "max_age", now)
     elif session.session_id != pending.event.session_id:
         _drop_pending_say(bus, session, "session_changed", now)
@@ -1053,13 +1169,18 @@ def _publish_transition(
 
 
 def _reply_to_utterance(
-    bus, session: Session, strategy_id: str, now: datetime, profile: PersonProfile, llm
+    bus,
+    session: Session,
+    strategy_id: str,
+    now: datetime,
+    profile: PersonProfile,
+    llm,
+    *,
+    text_override: str | None = None,
 ) -> None:
     """Answer once without selecting a ladder rung or changing the session goal."""
     strategy = next((item for item in session.strategies if item.id == strategy_id), None)
     if strategy is None:
-        return
-    if strategy_id == CAREGIVER_ALERTED_ID and session.phase != Phase.ESCALATED:
         return
     context = veto_context(session, profile, now)
     if _vetoed(bus, Proposal("strategy", strategy.id), context, session_id=session.session_id):
@@ -1086,7 +1207,15 @@ def _reply_to_utterance(
     )
     show = _show_for_strategy(strategy, session.session_id, session.wall_clock(now), profile)
     spoke = _maybe_publish_say(
-        bus, transition, session, now, profile, llm, context=context, direct=True
+        bus,
+        transition,
+        session,
+        now,
+        profile,
+        llm,
+        context=context,
+        direct=True,
+        text_override=text_override,
     )
     if show.face == "speaking" and not spoke:
         if session._pending_say is not None and session._pending_say.event.strategy == strategy.id:
@@ -1286,7 +1415,15 @@ def run_once(
         )
         _handle_person_state(bus, session, state, zone, now, published, profile, llm)
 
-    for msg_id, event in utterance_messages:
+    def poll_speech() -> bool:
+        arrived = bus.read(UTTERANCE_STREAM, UTTERANCE_GROUP, consumer, count=count, block_ms=None)
+        if any(isinstance(item, SpeechStarted) for _, item in arrived):
+            session.speech_started_at = now_fn()
+        utterance_messages.extend(arrived)
+        return any(isinstance(item, Utterance) for _, item in arrived)
+
+    session.poll_speech = poll_speech
+    for i, (msg_id, event) in enumerate(utterance_messages):
         bus.ack(UTTERANCE_STREAM, UTTERANCE_GROUP, msg_id)
         if isinstance(event, SpeechStarted):
             session.speech_started_at = now_fn()
@@ -1294,7 +1431,8 @@ def run_once(
         if not isinstance(event, Utterance):
             continue
         now = now_fn()
-        session.speech_started_at = None
+        if not any(isinstance(item, SpeechStarted) for _, item in utterance_messages[i + 1 :]):
+            session.speech_started_at = None
         if session.is_self_echo(event.text, now):
             _log(
                 "ignored self-echo Utterance", event_type="Utterance", session_id=session.session_id
@@ -1323,6 +1461,13 @@ def run_once(
             published.append(
                 _publish_transition(bus, transition, session, now, profile=profile, llm=llm)
             )
+
+        if session.phase == Phase.ESCALATED:
+            _notify_need_updates(bus, session, event.text, None)
+
+        asking_for_help = bool(_HELP_RE.search(event.text))
+        if asking_for_help and session.phase in (Phase.OBSERVING, Phase.ENGAGED, Phase.ESCALATED):
+            _notify_help(bus, session, now)
 
         if llm is not None and llm_active:
             model = _llm_model_name(llm)
@@ -1353,12 +1498,8 @@ def run_once(
                 )
             # The person may have started speaking during the model call; see it before
             # this reply goes out so the speech hold applies. Later events join this loop.
-            arrived = bus.read(
-                UTTERANCE_STREAM, UTTERANCE_GROUP, consumer, count=count, block_ms=None
-            )
-            if any(isinstance(item, SpeechStarted) for _, item in arrived):
-                session.speech_started_at = now_fn()
-            utterance_messages.extend(arrived)
+            poll_speech()
+            now = now_fn()
             if interpretation is not None:
                 _decision_activity(
                     bus,
@@ -1375,7 +1516,12 @@ def run_once(
                 goal_before_interpretation = session.goal
                 if not cooldown_reply:
                     interpreted = session.on_interpretation(
-                        interpretation.intent.value, interpretation.distress, now
+                        interpretation.intent.value,
+                        interpretation.distress,
+                        now,
+                        worried_about_others=_worried_about_others(
+                            interpretation.intent.value, event.text, profile
+                        ),
                     )
                     if interpreted is not None:
                         published.append(
@@ -1392,11 +1538,46 @@ def run_once(
                     continue
 
                 intent = interpretation.intent.value
+                worried_about_others = _worried_about_others(intent, event.text, profile)
+                if session.phase == Phase.ESCALATED:
+                    _notify_need_updates(bus, session, event.text, intent)
                 intentional_silence = False
                 if session.phase in (Phase.ENGAGED, Phase.ESCALATED) or cooldown_reply:
                     reply_id = None
-                    if cooldown_reply and interpretation.distress >= 2:
+                    text_override = None
+                    if asking_for_help:
+                        reply_id = CAREGIVER_ALERTED_ID
+                    elif (
+                        session.phase == Phase.ESCALATED
+                        and _APOLOGY_RE.search(event.text)
+                        and not session._apology_replied
+                    ):
                         reply_id = REASSURE_WAITING_ID
+                    elif (
+                        session.phase == Phase.ENGAGED
+                        and worried_about_others
+                        and interpretation.distress >= 1
+                    ):
+                        reply_id = "validate_and_redirect"
+                        text_override = WORRIED_LINE
+                    elif (
+                        session.phase == Phase.ESCALATED
+                        and session.last_person_state != "on_floor"
+                        and not session._family_waiting_replied
+                        and intent in {"looking_for_person", "wants_to_leave"}
+                    ):
+                        reply_id = CAREGIVER_ALERTED_ID
+                        text_override = WORRIED_ALERTED_LINE
+                    elif cooldown_reply and interpretation.distress >= 2:
+                        reply_id = REASSURE_WAITING_ID
+                    elif (
+                        session.phase == Phase.ENGAGED
+                        and session.last_person_state in {"standing", "walking"}
+                        and session._last_real_person is not None
+                        and session._last_real_person[1] != "bed"
+                        and re.search(r"\b(?:light|dark)\b", event.text, re.IGNORECASE)
+                    ):
+                        reply_id = PATH_LIGHT_ID
                     elif (
                         session.phase == Phase.ENGAGED
                         and session.last_person_state == "in_bed"
@@ -1433,10 +1614,7 @@ def run_once(
                     elif (
                         intent == "confused_time"
                         and session.phase == Phase.ESCALATED
-                        and not any(
-                            word in event.text.lower()
-                            for word in ("where", "home", "house", "room", "bed")
-                        )
+                        and not _OWN_PLACE_TIME_RE.search(event.text)
                     ):
                         # "Who's coming?" gets the wording that names the caregiver,
                         # never an arrival time (2026-09-24T1311-live).
@@ -1527,8 +1705,10 @@ def run_once(
                         )
                     # A goal or phase transition may already have said or queued
                     # a sentence this tick. A reply must not add a second one.
-                    reply_scheduled = session._last_say_at == now or (
-                        session._pending_say is not None and session._pending_say.queued_at == now
+                    reply_scheduled = (
+                        session._last_say_at is not None and session._last_say_at >= now
+                    ) or (
+                        session._pending_say is not None and session._pending_say.queued_at >= now
                     )
                     if reply_id is not None and not reply_scheduled:
                         if (
@@ -1545,9 +1725,18 @@ def run_once(
                                 distress=interpretation.distress,
                                 intent=intent,
                                 preferred_id=reply_id,
+                                text_override=text_override,
                             )
                         else:
-                            _reply_to_utterance(bus, session, reply_id, now, profile, llm)
+                            _reply_to_utterance(
+                                bus,
+                                session,
+                                reply_id,
+                                now,
+                                profile,
+                                llm,
+                                text_override=text_override,
+                            )
             elif session.phase in (Phase.ENGAGED, Phase.ESCALATED) or cooldown_reply:
                 if is_hearing_request(event.text) and _repeat_louder(bus, session, now, profile):
                     continue
@@ -1567,9 +1756,9 @@ def run_once(
                 and (interpretation is None or interpretation.intent.value != "confused_time")
                 else None
             )
-            reply_scheduled = session._last_say_at == now or (
-                session._pending_say is not None and session._pending_say.queued_at == now
-            )
+            reply_scheduled = (
+                session._last_say_at is not None and session._last_say_at >= now
+            ) or (session._pending_say is not None and session._pending_say.queued_at >= now)
             if (
                 plan is not None
                 and not reply_scheduled
@@ -1604,6 +1793,9 @@ def run_once(
                             strategy=plan.next_strategy,
                         )
         elif session.phase in (Phase.ENGAGED, Phase.ESCALATED) or cooldown_reply:
+            if asking_for_help:
+                _reply_to_utterance(bus, session, CAREGIVER_ALERTED_ID, now, profile, None)
+                continue
             if is_hearing_request(event.text) and _repeat_louder(bus, session, now, profile):
                 continue
             if session.phase == Phase.ESCALATED and session._last_say_at != now:
@@ -1611,6 +1803,7 @@ def run_once(
             elif cooldown_reply and session._last_say_at != now:
                 _reply_to_utterance(bus, session, REASSURE_WAITING_ID, now, profile, None)
 
+    session.poll_speech = None
     now = now_fn()
     transition = session.tick(now)
     if transition is not None:

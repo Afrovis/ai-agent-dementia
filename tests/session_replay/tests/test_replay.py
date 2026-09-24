@@ -86,7 +86,7 @@ def test_recorded_latency_blocks_input_and_uses_kind_durations(tmp_path):
     first = Utterance(
         source="listen",
         ts=at + timedelta(seconds=53),
-        text="What time is it?",
+        text="I have to pick up the kids",
         confidence=1,
         duration_s=1,
     )
@@ -115,7 +115,11 @@ def test_recorded_latency_blocks_input_and_uses_kind_durations(tmp_path):
         rows.append(_line(activity, "activity", observed=True))
     path = tmp_path / "scene.jsonl"
     _write(path, rows)
-    spec = {"interpretations": {"What time is it?": {"intent": "confused_time", "distress": 0}}}
+    spec = {
+        "interpretations": {
+            "I have to pick up the kids": {"intent": "wants_to_leave", "distress": 0}
+        }
+    }
     with pytest.warns(UserWarning, match="missing recorded plan duration"):
         timeline = run_scenario(
             path, expect=spec, llm_mode="recorded", llm_latency="recorded", tail_s=60
@@ -129,10 +133,12 @@ def test_recorded_latency_blocks_input_and_uses_kind_durations(tmp_path):
     say = next(
         row
         for row in timeline
-        if row["type"] == "Say" and row.get("strategy") == "orient_time_place"
+        if row["type"] == "Say" and row.get("strategy") == "validate_and_redirect"
     )
     assert compose["duration_ms"] == 3000
-    assert compose["t"] == late["t"] == 57
+    assert compose["t"] == 57
+    # This reply also plans; the missing recorded plan duration uses the 2.5 s fallback.
+    assert late["t"] == 59.5
     assert say["t"] >= 57
 
 

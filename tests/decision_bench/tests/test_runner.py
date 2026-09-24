@@ -36,7 +36,18 @@ def test_fixed_latency_blocks_next_utterance_and_times_compose():
     scenario = scenario.model_copy(
         update={
             "timeline": (
-                *scenario.timeline,
+                *(
+                    event.model_copy(
+                        update={
+                            "utterance": UtteranceInput(
+                                text="I have to pick up the kids", duration_s=1.3
+                            )
+                        }
+                    )
+                    if event.utterance is not None
+                    else event
+                    for event in scenario.timeline
+                ),
                 TimelineEvent(t=56, utterance=UtteranceInput(text="Hello again", duration_s=1)),
             )
         }
@@ -51,9 +62,13 @@ def test_fixed_latency_blocks_next_utterance_and_times_compose():
         e for e in trace.entries if e.kind == "Utterance" and e.data["text"] == "Hello again"
     )
     say = next(
-        e for e in trace.entries if e.kind == "Say" and e.data["strategy"] == "orient_time_place"
+        e
+        for e in trace.entries
+        if e.kind == "Say" and e.data["strategy"] == "validate_and_redirect"
     )
-    assert compose_end.t == late_input.t == say.t == 58
+    assert compose_end.t == say.t == 58
+    # Planning after the reply consumes another fixed 2.5 s before the input arrives.
+    assert late_input.t == 60.5
     assert compose_end.data["duration_ms"] == 2500
     assert say.data["ts"] == "2026-01-01T02:20:58Z"
 

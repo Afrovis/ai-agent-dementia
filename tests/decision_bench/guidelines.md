@@ -419,7 +419,8 @@ expert panel.* J Am Geriatr Soc 2014;62(4):762–769.
 - **Implies:** A night trip to the toilet is a moment of raised fall risk,
   which supports lighting the path (`path_light`) rather than leaving the
   person to walk in the dark. It does not justify notifying the caregiver
-  for every toilet trip.
+  for every toilet trip. A spoken request for help always allows a caregiver
+  notification, including during a toilet trip.
 - **Checked:** [X]
 
 ## Sources considered, not yet used
