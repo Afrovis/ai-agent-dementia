@@ -62,6 +62,56 @@ def test_director_valid_retry_and_prompt(tmp_path):
     assert "cover repetition" in (run.path / "director.jsonl").read_text()
 
 
+def test_director_splits_a_beat_that_moves_and_talks(tmp_path):
+    # 2026-09-23T2238-live: 12 of 37 director cards were rejected for beats like this.
+    run = RunDir("live", root=tmp_path)
+    opening = [
+        {"at": 0, "move": {"state": "sitting_up", "zone": "bed", "over_s": 2}},
+        {
+            "at": 4,
+            "move": {"state": "walking", "zone": "door", "over_s": 6},
+            "say": "Where is the loo?",
+            "style": "mumble",
+        },
+        {"at": 12, "say": "Hello?", "wait": 5},
+        {"at": 30, "end": True},
+    ]
+    answers = [{"scene": {**card(), "opening": opening}, "rationale": "walk and talk"}]
+
+    def runner(system, prompt, schema, model, effort):
+        assert "the same at" in prompt
+        return {"structured_output": answers.pop(0)}
+
+    state = {"run": run, "time_left_s": 900, "scenes": [], "bugs": {}}
+    result = Director(runner=runner).next_scene(state)
+    beats = [
+        (b.at, b.move.state if b.move else None, b.say, b.style, b.wait) for b in result.opening
+    ]
+    assert beats[1:4] == [
+        (4, "walking", None, "normal", None),
+        (4, None, "Where is the loo?", "mumble", None),
+        (12, None, "Hello?", "normal", None),
+    ]
+    assert beats[4] == (12, None, None, "normal", 5)
+    assert "error" not in (run.path / "director.jsonl").read_text()
+
+
+def test_director_rejects_more_than_four_opening_times(tmp_path):
+    run = RunDir("live", root=tmp_path)
+    opening = [{"at": t, "wait": 1} for t in (0, 5, 10, 15, 20)]
+    answers = [
+        {"scene": {**card(), "opening": opening}, "rationale": "too many"},
+        {"scene": card(), "rationale": "fixed"},
+    ]
+
+    def runner(system, prompt, schema, model, effort):
+        return {"structured_output": answers.pop(0)}
+
+    state = {"run": run, "time_left_s": 900, "scenes": [], "bugs": {}}
+    Director(runner=runner).next_scene(state)
+    assert "distinct times" in (run.path / "director.jsonl").read_text()
+
+
 def test_director_fallback_logs_harness(tmp_path):
     run = RunDir("live", root=tmp_path)
     result = Director(runner=lambda *_: {"structured_output": {"bad": True}}).next_scene(
