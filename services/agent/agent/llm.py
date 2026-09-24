@@ -164,16 +164,19 @@ _COMPOSE_TASK = (
     "will check on them. Do not describe what the person is doing or feeling unless "
     "latest_utterance or scene_note says so. Only state facts found in the input: never "
     "invent people, "
-    "places, times or plans. Mention the time only if latest_utterance is about it. Do not "
+    "places, times or plans. Mention the time of night only if latest_utterance is about it; "
+    "never state an exact clock time. Do not "
     "use 'but', which cancels the acknowledgement. Never correct what they believe, never "
     "ask a question or test memory, and never say 'no', 'you can't', or 'you're wrong'."
 )
 
 _INTERPRET_TASK = (
     "Classify the latest utterance's intent and distress (0 calm through 3 severe). "
-    "Use wants_bed for agreement or intention to go back to bed, including "
-    "'Okay, I'll go to bed' and 'I'll go back to bed', or when they say they are "
-    "finished with or back from the restroom. Use need_restroom when they need to go there."
+    "Use wants_bed only for going back to bed or being finished with or back from the restroom. "
+    "Agreement with directions or remarks about getting there ('left, all right', "
+    "'almost there', 'through the door now', 'nearly there') are need_restroom, not wants_bed. "
+    "Questions about where they are, whose house or room this is, or whether this is home "
+    "are confused_time. Use need_restroom when they need to go there."
 )
 
 
@@ -262,6 +265,17 @@ class OllamaLLM(_LocalLLM):
         self._model = model
         self._timeout_seconds = timeout_seconds
 
+    def unload(self, timeout_seconds: float = 60.0) -> bool:
+        """Unload the model from Ollama, freeing its prefix cache.
+
+        Ollama's MLX runner keeps a prefix cache that grows with every
+        request (about 35 MB each) and is only trimmed near MLX's memory
+        limit, about 16 GiB on a 16 GB Mac. Left alone it fills the host and
+        everything swaps (2026-09-23). `agent.main.LlmCacheRefresh` calls this
+        once a day while the room is quiet. Best effort, like `warm_up`.
+        """
+        return self._keep_alive(0, timeout_seconds)
+
     def warm_up(self, timeout_seconds: float = 60.0) -> bool:
         """Load the model now so the first real call is not a cold start.
 
@@ -269,7 +283,10 @@ class OllamaLLM(_LocalLLM):
         whether it succeeded; failure is harmless, the model loads on the
         first real call instead.
         """
-        body = json.dumps({"model": self._model, "keep_alive": OLLAMA_KEEP_ALIVE}).encode()
+        return self._keep_alive(OLLAMA_KEEP_ALIVE, timeout_seconds)
+
+    def _keep_alive(self, keep_alive: int, timeout_seconds: float) -> bool:
+        body = json.dumps({"model": self._model, "keep_alive": keep_alive}).encode()
         request = Request(
             f"{self._ollama_url}{_OLLAMA_GENERATE_PATH}",
             data=body,
@@ -279,7 +296,7 @@ class OllamaLLM(_LocalLLM):
         try:
             with urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310
                 return response.status == 200
-        except Exception:  # noqa: BLE001 - warm-up is best effort
+        except Exception:  # noqa: BLE001 - load and unload are best effort
             return False
 
     def _call(self, task: str, payload: Mapping[str, Any], output_type: type[_StrictOutput]):

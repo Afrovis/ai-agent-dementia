@@ -52,6 +52,19 @@ def test_return_to_bed_strategies_are_vetoed_in_bed(strategy):
     assert check(proposal, context(person_state="sitting_up")).allowed
 
 
+def test_path_light_is_vetoed_on_floor_but_light_command_is_allowed():
+    facts = context(person_state="on_floor", phase="ESCALATED", goal="wait_for_caregiver")
+    verdict = check(Proposal("strategy", "path_light"), facts)
+    assert (verdict.allowed, verdict.rule, verdict.clause, verdict.reason) == (
+        False,
+        "no_directions_from_floor",
+        "FALL-01",
+        "path_light to a person who is on the floor",
+    )
+    assert check(Proposal("light", "on"), facts).allowed
+    assert check(Proposal("strategy", "path_light"), context(goal="restroom")).allowed
+
+
 def test_cooldown_orientation_depends_on_person_state_and_settling():
     proposal = Proposal("strategy", "orient_time_place")
     assert check(proposal, context(phase="COOLDOWN", person_state="sitting_up")).allowed
@@ -323,3 +336,13 @@ def test_allowed_strategy_publishes_show_and_say():
         len([event for _, event in bus.read("show", "test", "c1") if isinstance(event, Show)]) == 1
     )
     assert len([event for _, event in bus.read("say", "test", "c1") if isinstance(event, Say)]) == 1
+
+
+@pytest.mark.parametrize("strategy", ["guided_return", "acknowledge_return"])
+def test_floor_veto_blocks_return_prompts(strategy):
+    verdict = check(Proposal("strategy", strategy), context(person_state="on_floor"))
+    assert (verdict.allowed, verdict.rule, verdict.clause) == (
+        False,
+        "no_return_prompt_from_floor",
+        "FALL-01",
+    )

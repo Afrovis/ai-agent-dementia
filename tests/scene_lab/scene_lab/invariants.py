@@ -9,6 +9,8 @@ from collections.abc import Callable
 from statistics import median
 from typing import Literal
 
+from agent.questions import is_direct_question
+from agent.veto import states_need
 from pydantic import BaseModel
 
 from .thresholds import Thresholds
@@ -231,6 +233,38 @@ def _speech_end(trace: Trace, utt: TraceEvent) -> float:
     return start.t if start else utt.t
 
 
+def _cancelled_at_start(trace: Trace, say: TraceEvent) -> bool:
+    """A playback request stopped by barge-in before anything became audible."""
+    next_say = next((e.t for e in trace.of_type("Say") if e.t > say.t), math.inf)
+    reports = [
+        e
+        for e in trace.of_type("Activity")
+        if e.data.get("kind") == "playback" and say.t <= e.t < next_say
+    ]
+    requests = [
+        e
+        for e in reports
+        if e.data.get("phase") == "start" and e.data.get("detail") in {"received", "requested"}
+    ]
+    if not requests:
+        return False
+    start = requests[0]
+    if any(
+        e.data.get("phase") == "end"
+        and (e.data.get("detail") == "barge-in" or e.data.get("reason") == "barge-in")
+        and 0 <= e.t - start.t <= 1.0
+        for e in reports
+    ):
+        return True
+    requested = next((e for e in requests if e.data.get("detail") == "requested"), start)
+    return any(
+        speech.t <= requested.t < _speech_end(trace, next_utt)
+        for speech in trace.of_type("SpeechStarted")
+        if (next_utt := next((u for u in trace.of_type("Utterance") if u.t > speech.t), None))
+        is not None
+    )
+
+
 def _utterance_times(trace: Trace) -> list[float]:
     """When the agent registered each utterance.
 
@@ -318,18 +352,63 @@ def check_trace(
             limit = min(
                 next_utt.t if next_utt else float("inf"), utt.t + thresholds.direct_reply_window_s
             )
-            decision = next(
-                (
-                    e
-                    for e in trace.events
-                    if e.kind == "decision"
-                    and e.data.get("decision") in {"pending_say_dropped", "vetoed"}
-                    and utt.t <= e.t <= limit
-                ),
-                None,
+            decisions = [
+                e
+                for e in trace.events
+                if e.kind == "decision"
+                and e.data.get("decision") in {"pending_say_dropped", "vetoed", "no_reply"}
+                and utt.t <= e.t <= limit
+            ]
+            decision = next((e for e in decisions if e.data.get("decision") == "no_reply"), None)
+            if decision is None:
+                decision = next(iter(decisions), None)
+            designed_silence = (
+                say is None and decision is not None and decision.data.get("decision") == "no_reply"
+            )
+            cancelled_at_start = say is not None and pb is None and _cancelled_at_start(trace, say)
+            recovered = cancelled_at_start and any(
+                utt.t < later.t <= utt.t + thresholds.direct_reply_window_s
+                and (later_say := _first_reply(trace, later)) is not None
+                and any(
+                    p.say_t == later_say.t and p.start - later.t <= thresholds.direct_reply_window_s
+                    for p in pbs
+                )
+                for later in utts[i + 1 :]
+            )
+            interpreted = (
+                next(
+                    (
+                        e
+                        for e in reversed(trace.events)
+                        if e.kind == "decision"
+                        and e.data.get("decision") == "interpreted"
+                        and e.data.get("text") == utt.data.get("text")
+                        and utt.t <= e.t <= decision.t
+                    ),
+                    None,
+                )
+                if designed_silence
+                else None
+            )
+            urgent_silence = designed_silence and (
+                (interpreted is not None and (interpreted.data.get("distress") or 0) >= 2)
+                or states_need(utt.data.get("text", ""))
             )
             if say is not None and pb is None:
-                cause = "reply composed but never played"
+                cause = (
+                    "reply cancelled at start by barge-in"
+                    if cancelled_at_start
+                    else "reply composed but never played"
+                )
+            elif designed_silence:
+                reason = decision.data.get("reason", "unknown")
+                cause = (
+                    f"no reply by design to distress: {reason}"
+                    if urgent_silence
+                    else f"no reply by design to a question: {reason}"
+                    if is_direct_question(utt.data.get("text", ""))
+                    else f"no reply by design: {reason}"
+                )
             elif decision and decision.data.get("decision") == "pending_say_dropped":
                 cause = f"dropped pending say: {decision.data.get('reason', 'unknown')}"
             elif decision and decision.data.get("decision") == "vetoed":
@@ -346,15 +425,28 @@ def check_trace(
             context = _state(trace, utt.t)
             if decision:
                 context["drop_reason"] = decision.data.get("reason")
+            designed_answer_to_question = designed_silence and is_direct_question(
+                utt.data.get("text", "")
+            )
+            review_silence = urgent_silence or designed_answer_to_question
             out.append(
                 _result(
                     trace,
                     "TT-1",
-                    "critical",
-                    False,
+                    # Deliberate silence to a question is a judgement call
+                    # (the agent paces its answers while escalated), so it
+                    # goes to review rather than counting as a missed reply.
+                    "review"
+                    if review_silence
+                    else "info"
+                    if designed_silence or recovered
+                    else "major"
+                    if cancelled_at_start
+                    else "critical",
+                    designed_silence and not review_silence,
                     utt.t,
                     limit,
-                    f"no reply: {cause}",
+                    cause if designed_silence else f"no reply: {cause}",
                     [f"Utterance@{utt.t}: {utt.data.get('text')}", cause],
                     context,
                 )
@@ -386,10 +478,12 @@ def check_trace(
 
     starts = trace.of_type("SpeechStarted")
     for speech in starts:
+        # Speech ends when listen starts transcribing, not when the transcript
+        # arrives: live transcription takes 1 to 5 s, longer than the grace.
+        next_utt = next((u for u in utts if u.t >= speech.t), None)
         end = (
-            next((u.t for u in utts if u.t >= speech.t), speech.t + 30)
-            + thresholds.talk_over_grace_s
-        )
+            _speech_end(trace, next_utt) if next_utt else speech.t + 30
+        ) + thresholds.talk_over_grace_s
         for pb in pbs:
             if speech.t <= pb.start <= end:
                 out.append(
@@ -413,7 +507,8 @@ def check_trace(
         if not pb.estimated and pb.interruptible and pb.start <= speech.t < pb.end
     ]
     for speech, pb in real_active:
-        if not pb.interrupted or pb.end - speech.t > thresholds.barge_in_s:
+        # A sentence that ends on its own within the deadline needs no barge-in.
+        if pb.end - speech.t > thresholds.barge_in_s:
             out.append(
                 _result(
                     trace,
@@ -612,12 +707,13 @@ def check_trace(
                 or event.type == "Say"
                 or event.data.get("state") in {"in_bed", "absent"}
             )
-            if (
-                closes_gap
-                and gap_start is not None
-                and at - gap_start > thresholds.silent_session_s
-            ):
-                state = _state(trace, gap_start)
+            state = _state(trace, gap_start) if gap_start is not None else {}
+            silent_limit = (
+                thresholds.escalated_silent_s
+                if state.get("phase") == "ESCALATED"
+                else thresholds.silent_session_s
+            )
+            if closes_gap and gap_start is not None and at - gap_start > silent_limit:
                 last_say = _latest(trace, "Say", gap_start)
                 reading = _latest(trace, "PersonState", at)
                 out.append(

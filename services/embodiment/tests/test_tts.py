@@ -1,8 +1,12 @@
 """Piper TTS tests with a fake voice: no model weights or audio hardware."""
 
 import wave
+from dataclasses import dataclass
+from datetime import datetime
 
+import numpy as np
 import pytest
+from agent.strategies import spoken_time_words
 
 from embodiment.tts import PiperSpeech, load_prerender_phrases
 
@@ -37,6 +41,40 @@ def test_synthesize_writes_valid_wav_and_reuses_cache(tmp_path):
         assert wav_file.getnchannels() == 1
 
 
+def test_loud_render_uses_separate_cache_slower_pace_and_soft_gain(tmp_path):
+    @dataclass
+    class Config:
+        length_scale: float = 1.2
+
+    class WaveVoice(FakeVoice):
+        def synthesize_wav(self, text, wav_file, *, syn_config):
+            self.calls.append((text, syn_config))
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(16000)
+            wav_file.writeframes(np.array([0, 2000, -2000, 12000, -12000], dtype="<i2").tobytes())
+
+    voice = WaveVoice()
+    config = Config()
+    speech = PiperSpeech(voice, config, tmp_path, cache_namespace="voice")
+    normal_id = speech.synthesize("Hello.")
+    loud_id = speech.synthesize("Hello.", loud=True)
+    assert normal_id != loud_id
+    assert voice.calls[0][1] is config
+    assert voice.calls[1][1].length_scale == pytest.approx(1.2 * 1.15)
+
+    def samples(audio_id):
+        with wave.open(str(speech.resolve(audio_id)), "rb") as wav_file:
+            return np.frombuffer(wav_file.readframes(wav_file.getnframes()), dtype="<i2")
+
+    normal, loud = samples(normal_id), samples(loud_id)
+    assert np.array_equal(normal, [0, 2000, -2000, 12000, -12000])
+    assert np.mean(loud.astype(float) ** 2) > np.mean(normal.astype(float) ** 2)
+    assert loud.min() >= -32768 and loud.max() <= 32767
+    assert speech.synthesize("Hello.", loud=True) == loud_id
+    assert len(voice.calls) == 2
+
+
 def test_from_model_converts_point_85_speed_to_piper_length_scale(tmp_path, monkeypatch):
     import piper
 
@@ -68,7 +106,7 @@ def test_pre_render_deduplicates_phrases(tmp_path):
     assert [call[0] for call in voice.calls] == ["Hello.", "Rest now."]
 
 
-def test_load_prerender_phrases_expands_all_greeting_hours(tmp_path):
+def test_load_prerender_phrases_expands_spoken_time_variants(tmp_path):
     strategies = tmp_path / "strategies.yaml"
     strategies.write_text(
         "strategies:\n"
@@ -85,9 +123,19 @@ def test_load_prerender_phrases_expands_all_greeting_hours(tmp_path):
 
     phrases = load_prerender_phrases(strategies, person)
 
-    assert len(phrases) == 12
-    assert "Hello Jean, it is 1 o'clock at night." in phrases
-    assert "Hello Jean, it is 12 o'clock at night." in phrases
+    assert len(phrases) == 7
+    assert "Hello Jean, it is late in the evening." in phrases
+    assert "Hello Jean, it is the middle of the night." in phrases
+    assert "Hello Jean, it is very early in the morning." in phrases
+    assert all("o'clock" not in phrase for phrase in phrases)
+    expected = {
+        spoken_time_words(datetime(2026, 1, 1, hour), variant)
+        for hour in range(24)
+        for variant in range(3)
+    }
+    assert {
+        phrase.removeprefix("Hello Jean, it is ").removesuffix(".") for phrase in phrases
+    } == expected
     assert all("Do not warm this" not in phrase for phrase in phrases)
 
 

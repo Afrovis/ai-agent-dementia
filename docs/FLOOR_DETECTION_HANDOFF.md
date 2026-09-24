@@ -167,8 +167,9 @@ of them. That is a zone-drawing issue, not a ratio issue.
   input it rises to 18-20 of 35 (section 6).
 - Frames mid-descent already read low: clip 01 at 119.0-119.5 s is
   labelled upright with ratio 0.46-0.48. Combined with `on_floor`
-  bypassing hysteresis and `AGENT_FLOOR_LIMIT_SECONDS=0`, a person
-  bending to pick something up could raise a critical alert. None of the
+  bypassing hysteresis and the then-current `AGENT_FLOOR_LIMIT_SECONDS=0`, a person
+  bending to pick something up could raise a critical alert. The current default
+  waits 10 continuous seconds. None of the
   555 non-floor frames triggered it here, but these clips contain almost
   no crouching; see section 9.
 

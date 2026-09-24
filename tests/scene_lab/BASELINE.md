@@ -286,3 +286,100 @@ lost their beats at the first decision point; the `activity` stream's 200
 cap dropped early playback reports and decision records from end-of-scene
 exports (now a live `StreamTap`); a scripted end at exactly 600 s counted as
 a cap stop; the live-vs-in-process diff paired by time rather than content.
+
+## Triage after the director hours, 2026-09-23
+
+Both director hours re-checked with `scene_lab rescore` at the commit that
+introduced this section. `0050-live` is mostly harness: 27 of its 28 scenes
+are fallback replays of 8 cards with no mind, and 50 of its 76 majors are
+the session-limit harness entries. `0552-live` is the measurement to use:
+18 criticals, all TT-1 "no reply".
+
+Fixed on branch `scene-lab-fixes`:
+
+| finding | change |
+| --- | --- |
+| 5, repeats | While escalated, two reassurances per escalation; after that only a direct question or distress 3 is answered, at most once a minute. A repeated sentence is swapped for the approved phrasing said longest ago. Deliberate silence publishes a `no_reply` decision; TT-1 reports it as info, or as review when the utterance was a question. |
+| 4, restroom path | The first plain progress remark on a restroom trip gets "Good, take your time."; later ones stay quiet; a question about the way gets the directions again, without a second sentence in the same tick. Distress on the path no longer gets `validate_and_redirect` ("let's rest now"), which contradicted TOIL-01. |
+| pain (new) | "Oh my hip really hurts. I need someone, please." got "Hello Jean, it's night-time." (a `plan` pick), and "Is someone coming? It really does hurt." got nothing. One clear pain statement (intent `pain`, distress ≥ 2) now escalates at once (`pain_reported`, one attention Notify) and says "I'm sorry it hurts, Jean; I'm letting someone know now." Milder pain gets one comfort line with no promise of help. |
+| 8, floor | Veto `no_directions_from_floor` (FALL-01) denies `path_light` while the person is `on_floor`; while escalated the reply is a reassurance instead, and a `need_restroom` reading on the floor no longer moves the goal to `restroom`. |
+
+Replayed offline with recorded interpretations and latencies
+(`scene_lab promote` then `session_replay run --invariants`), windows from
+`0552-live`:
+
+| scene | main | this branch |
+| --- | --- | --- |
+| `fall-poor-hearing-1`, 45 to 425 s | 33 Says, 32 of them "Someone is on their way, Jean, and you're safe here." | 7 Says, six phrasings rotated; TT-1: 7 review (paced answers to repeated questions), no critical |
+| `distress_pain-teacher-silence-4`, 0 to 193 s | "Hello Jean, it's night-time." to the first pain statement, escalation on the second, then the same reassurance to every remark | pain acknowledged and escalated on the first statement, two reassurances, then quiet; TT-1 clean |
+| `restroom-wanderer-silentpath-isolate-10`, 35 to 240 s | no reply to any progress remark | one "Good, Jean, take your time.", then `no_reply`; the 2 TT-1 criticals left are remarks made before the restroom goal started (open item 1) |
+
+Also fixed on this branch, after the owner's decisions on the first triage:
+
+| item | change |
+| --- | --- |
+| unmapped intents (finding 1) | `looking_for_person` / `wants_to_leave` get a composed `validate_and_redirect` (name the feeling, redirect gently, never correct; `acknowledge_feeling` in bed). `unclear` gets "Is there something you need, Jean?" once per session. While escalated, "Tom, is that you?" gets "I've let Tom know, Jean, and help is on the way." Replaying `0050-live` conversation scenes: the flagged question is answered in 3.3 s instead of a greeting 30 s later. |
+| silence while escalated (finding 6) | A check-in after 120 s without speech while escalated, if the person is present and not settled. SM-3 allows 150 s for a gap that starts in `ESCALATED`. |
+| clock time in speech | Spoken time rotates night phrases by hour ("the middle of the night", "late in the evening", "nearly morning and still dark"); the screen keeps the hour (AA-02). Composed speech with a clock time falls back to the template. |
+
+Still open, in suggested order:
+
+1. **Latency (finding 2).** Still 5 to 7.7 s live. Listen's transcript lag
+   varies most (1.3 to 4.8 s in these runs); interpret and compose are two
+   sequential calls, and the new `validate_and_redirect` replies add a
+   compose call. Re-measure without the contending stack first.
+2. **Composed replies make claims (finding 5).** Live examples: "Tom is
+   nearby and everything is settled", "while you enjoy a photo of the
+   garden" with no photo on screen, "your children are fine".
+   `validate_composition` catches clock times, "but" and caregiver-arrival
+   phrases, not reality corrections or other claims; those rest on the
+   prompt. A TT-2 judge pass over a live run would show how often.
+3. **`validate_and_redirect` fallback on the restroom path.** If the
+   composition for "Where is Tom?" on the restroom goal is rejected, the
+   caregiver template ("let's rest now and talk more in the morning") points
+   away from the toilet (TOIL-01).
+4. **Talk-over (finding 9)**: speech hold added after `1854-live` (see
+   below), not yet measured live. **Restroom goal from the camera
+   (finding 3)**: unchanged, needs perceive work.
+5. **Harness.** Both director hours ran with host Ollama's MLX prefix cache
+   pinned at 16.3 GiB (from 2026-09-22 23:34), so the host was swapping and
+   part of the measured latency is that, not the agent. `scene_lab` now resets
+   the model before each scene; re-measure latency on a fresh run.
+   One director hour does not fit a subscription session window.
+   `compose.sim.yml` sets no `TZ`, so the sim agent's night window and
+   screen clock use UTC. `plan` calls publish no Activity, so a blocked loop
+   is invisible to TM-1 (the SM-5 minor in `0552-live`). `session_replay
+   --llm live` against a busy host Ollama times out every call and silently
+   replays with no model.
+
+### Third director hour, `2026-09-23T1854-live`
+
+13 director-chosen scenes (three falls, three pain, three false alarms, three
+restroom trips, one disorientation), gemma4 on host Ollama, and this time
+**no contending stack** (`contention: false`). `bugs.md`: 7 critical,
+29 major, 37 review. The worst harm was in the wait after an escalation:
+worsening chest pain, a numb arm and "Please someone come now" got three
+minutes of silence and the caregiver alert stayed at `attention`. The fix
+list with evidence links is `runs/2026-09-23T1854-live/fixes.md`. Status of
+its items on this branch:
+
+| item | status |
+| --- | --- |
+| 1. Worsening pain while escalated gets silence and no second alert | Fixed. (a) Distress ≥ 2 or a stated need is urgent under the escalated cap, still paced once a minute (862537b). (b) One extra `critical` Notify when distress ≥ 2 comes twice more, at least 60 s into the escalation (81a16fd). |
+| 2. On the floor, told to "take your time getting back to bed" | Fixed: veto `no_return_prompt_from_floor` (FALL-01) (862537b). |
+| 3. Composed reassurances while escalated (slow, made both claims) | Fixed: no composition while `ESCALATED`; the approved phrasings rotate (862537b). |
+| 4. Chest pain read as a toilet need gets directions and the light | Fixed: escalated directions only when the words name a toilet (862537b). |
+| 5. Remarks on the way to the toilet end the trip, light off | Fixed (81a16fd): agreeing with directions is not `wants_bed` (prompt, not yet checked on the live model); after a spoken return the light stays on until the camera sees the bed zone or `in_bed`. |
+| 6. "Speak up" not answered by repeating | Fixed: the last sentence is repeated louder and slower, with its text on screen (b2a89ca). |
+| 7. Place and "how long" questions get the wrong content | Fixed (81a16fd): place questions are `confused_time` (prompt, not yet checked live); while escalated, "how much longer" gets a reassurance. |
+| 8. Scheduled steps start over the person's speech | Fixed, offline only: the agent records `SpeechStarted` and holds any sentence except `escalate_phone` until the Utterance arrives or 15 s pass (`pending_say_deferred speech_in_progress`); a queued reply is dropped as `superseded` by the newer utterance. Recorded replays carry no `SpeechStarted` timing, so only a live run can show it. |
+| 9. Replies wait behind the 8 s gap after a timed step | Fixed: a direct reply waits 2 s after the previous sentence's estimated end (`AGENT_REPLY_GAP_SECONDS`) (81a16fd). |
+| 10. Silence without a record; "get back to bed" to someone in bed | Fixed: `no_reply settling_in_bed` and `no_reply oriented_recently` (862537b). |
+| 11. A 1.5 s false `on_floor` reading pages as critical | Fixed: `AGENT_FLOOR_LIMIT_SECONDS=10`; a shorter floor episode sends one `info` "Brief floor reading" (81a16fd). |
+| checker: TT-3 speech end, TT-4 self-ended playback | Fixed (862537b). |
+| checker: TT-1 barge-in cancel label, urgent designed silence | Fixed (81a16fd). Rescore of this run: critical 7 → 6, major 29 → 27, review 37 → 73 (the new review class). |
+| harness: real speech dropped as self-echo | Fixed in the agent: the self-echo check ignores stopwords and needs ≥ 3 matching content words and ≥ 0.6 overlap; "There, through the door now." passes. |
+
+Not yet verified by a live run: everything above. The next director hour is
+the first with "speak up", the floor timing and the talk-over hold; watch
+the poor-hearing and pain scenes.

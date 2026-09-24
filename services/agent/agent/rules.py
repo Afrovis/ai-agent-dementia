@@ -139,6 +139,13 @@ _CAREGIVER_CLAIM_PHRASES = (
     r"stays\s+with\s+you",
 )
 
+# Keep this explicit clock-reading pattern aligned with dialogue_bench's
+# states_clock_time check. Spoken day-parts are allowed; exact times are not.
+_CLOCK_TIME_RE = re.compile(
+    r"\bo'?clock\b|\b\d{1,2}[:.]\d{2}\b|\b\d{1,2}\s*(?:a\.?m\.?|p\.?m\.?)\b|\bmidnight\b|\bnoon\b",
+    re.IGNORECASE,
+)
+
 
 class Phase(StrEnum):
     """The five session phases from HANDOFF.md section 6."""
@@ -254,9 +261,9 @@ def validate_composition(text: str, profile: PersonProfile) -> RuleResult:
     This gate is deliberately narrower than `validate_say`: it applies only
     to the text returned by `LLMClient.compose`, before `agent.main` decides
     whether to use that text or the caregiver's fixed fallback template.
-    It rejects the whole word "but", whose contrast can cancel an attempted
-    acknowledgement, and a caregiver name followed within four intervening
-    words by one of `_CAREGIVER_CLAIM_PHRASES`.
+    It rejects quoted template text, the whole word "but", whose contrast can
+    cancel an attempted acknowledgement, and a caregiver name followed within
+    four intervening words by one of `_CAREGIVER_CLAIM_PHRASES`.
 
     The caregiver check is an explicit proxy for common model failures, not
     a general natural-language entailment system. In particular, it permits
@@ -270,6 +277,12 @@ def validate_composition(text: str, profile: PersonProfile) -> RuleResult:
     speech may contain private utterance-derived material that must not be
     copied into logs.
     """
+    if any(mark in text for mark in ('"', "“", "”")) or re.search(
+        r"(?<!\w)'[^'\n]*\s+[^'\n]*'(?!\w)", text
+    ):
+        return RuleResult(accepted=False, reason="composition quotes text instead of speaking it")
+    if _CLOCK_TIME_RE.search(text):
+        return RuleResult(accepted=False, reason="composition states an exact clock time")
     if re.search(r"\bbut\b", text, flags=re.IGNORECASE):
         return RuleResult(accepted=False, reason="composition contains the word 'but'")
 
@@ -311,7 +324,8 @@ def validate_say(
        against "no", "you can't", "you're wrong" (HANDOFF.md rule 3,
        verbatim).
     4. **No question that tests memory** -- *the honest scope of this
-       check*: it rejects text that is a question in *form* only, either
+       check*: apart from the one approved present-need prompt, it rejects
+       text that is a question in *form* only, either
        ending in `?` or opening with a small, fixed list of interrogative
        starters ("who", "what", "remember", "do you", ...). This is a
        conservative syntactic filter, not a semantic one: it will reject
@@ -345,7 +359,9 @@ def validate_say(
         if re.search(rf"\b{re.escape(phrase)}\b", lowered):
             return RuleResult(accepted=False, reason=f"forbidden phrase {phrase!r} in {text!r}")
 
-    if stripped.endswith("?") or lowered.startswith(_QUESTION_STARTERS):
+    # The approved need check asks about the present need, not memory.
+    ask_need = re.fullmatch(r"Is there something you need(?:, [^,.!?]+)?\?", stripped)
+    if (stripped.endswith("?") or lowered.startswith(_QUESTION_STARTERS)) and not ask_need:
         return RuleResult(
             accepted=False,
             reason=f"looks like a question, not allowed by rule 3: {text!r}",

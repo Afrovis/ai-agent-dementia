@@ -91,10 +91,12 @@ from agent.config import AgentConfig
 from agent.goals import COMFORT_GOAL, RESTROOM_GOAL, ROOT_GOAL, WAIT_FOR_CAREGIVER_GOAL
 from agent.rules import Phase, validate, validate_goal
 from agent.strategies import (
+    CAREGIVER_ALERTED_ID,
     DEFAULT_STRATEGIES,
     ESCALATE_PHONE_ID,
     GUIDED_RETURN_ID,
     PATH_LIGHT_ID,
+    REASSURE_WAITING_ID,
     StrategyDef,
     StrategyEngine,
 )
@@ -119,11 +121,12 @@ def _new_session_id() -> str:
 @dataclass(frozen=True)
 class NotifySpec:
     """What `agent.main` should publish as `Notify` alongside a `Transition`
-    into `ESCALATED`. `None` on every other transition."""
+    for an escalation or a later caregiver update."""
 
     level: str
     title: str
     body: str
+    repeat_until_ack: bool = True
 
 
 @dataclass(frozen=True)
@@ -141,7 +144,7 @@ class GoalChangeResult:
 
 @dataclass(frozen=True)
 class PendingSay:
-    """A validated sentence awaiting only the minimum silence gap."""
+    """A validated sentence awaiting quiet speech and/or the minimum gap."""
 
     event: Say
     goal: str
@@ -216,6 +219,7 @@ class Session:
     # Rule 5's timers: when the current unbroken run of `on_floor`/`absent`
     # began, or `None` while the person is in neither state right now.
     _on_floor_since: datetime | None = field(default=None, init=False, repr=False)
+    _brief_floor_notice: NotifySpec | None = field(default=None, init=False, repr=False)
     _absent_since: datetime | None = field(default=None, init=False, repr=False)
 
     # `OBSERVING`'s 20 s timer.
@@ -243,16 +247,32 @@ class Session:
     # `IDLE`, `_reset_timers`), which that check treats as "no minimum gap
     # to enforce yet".
     _last_say_at: datetime | None = field(default=None, init=False, repr=False)
+    _last_say_end_at: datetime | None = field(default=None, init=False, repr=False)
+    hallway_light_awaiting_bed: bool = field(default=False, init=False)
+    _reassurance_texts: list[str] = field(default_factory=list, init=False, repr=False)
+    _last_reassurance_strategy_id: str | None = field(default=None, init=False, repr=False)
+    _reassurance_reply_count: int = field(default=0, init=False, repr=False)
+    _spoken_time_variant: int = field(default=0, init=False, repr=False)
+    _pain_acknowledged: bool = field(default=False, init=False, repr=False)
+    _progress_acknowledged: bool = field(default=False, init=False, repr=False)
+    _need_asked: bool = field(default=False, init=False, repr=False)
+    _last_validation_at: datetime | None = field(default=None, init=False, repr=False)
     _pending_say: PendingSay | None = field(default=None, init=False, repr=False)
+    speech_started_at: datetime | None = field(default=None, init=False)
     _compliance_until: datetime | None = field(default=None, init=False, repr=False)
     _say_history: list[tuple[datetime, str, str]] = field(
         default_factory=list, init=False, repr=False
     )
+    _repeat_text: str | None = field(default=None, init=False, repr=False)
+    _repeat_count: int = field(default=0, init=False, repr=False)
 
     # The LLM is deliberately kept out of this state machine.  `main`
     # passes its already-validated interpretation here and this small
     # counter makes the "distress detected twice" rule deterministic.
     _consecutive_distress: int = field(default=0, init=False, repr=False)
+    _escalated_since: datetime | None = field(default=None, init=False, repr=False)
+    _distress_since_escalation: int = field(default=0, init=False, repr=False)
+    _distress_followup_sent: bool = field(default=False, init=False, repr=False)
     _recent_utterances: list[str] = field(default_factory=list, init=False, repr=False)
     _last_scene_note: str | None = field(default=None, init=False, repr=False)
 
@@ -363,6 +383,8 @@ class Session:
             return None
         old_goal = self.goal
         self.goal = target_goal
+        if target_goal == RESTROOM_GOAL:
+            self._progress_acknowledged = False
         return GoalChangeResult(
             session_id=self.session_id, from_goal=old_goal, to_goal=target_goal, reason=reason
         )
@@ -405,6 +427,13 @@ class Session:
         else:
             session_id = self.session_id
 
+        if self.phase != target and (self.phase == Phase.ESCALATED or target == Phase.ESCALATED):
+            # A new escalation gets its own speech budget and wording history.
+            self._reassurance_texts.clear()
+            self._reassurance_reply_count = 0
+            self._escalated_since = now if target == Phase.ESCALATED else None
+            self._distress_since_escalation = 0
+            self._distress_followup_sent = False
         self.phase = target
         self.session_id = session_id
 
@@ -475,8 +504,20 @@ class Session:
         self._pending_zone = None
         self._pending_zone_count = 0
         self._last_say_at = None
+        self._last_say_end_at = None
+        self.hallway_light_awaiting_bed = False
+        self._reassurance_texts.clear()
+        self._last_reassurance_strategy_id = None
+        self._reassurance_reply_count = 0
+        self._spoken_time_variant = 0
+        self._pain_acknowledged = False
+        self._progress_acknowledged = False
+        self._need_asked = False
+        self._last_validation_at = None
         self._compliance_until = None
         self._say_history.clear()
+        self._repeat_text = None
+        self._repeat_count = 0
         self._consecutive_distress = 0
         self._recent_utterances.clear()
         self._last_scene_note = None
@@ -632,8 +673,25 @@ class Session:
                 self._lay_down_at = now
         else:
             self._lay_down_at = None
+        if self._on_floor_since is not None and state != "on_floor":
+            duration = (now - self._on_floor_since).total_seconds()
+            if duration < self.config.floor_limit_seconds:
+                self._brief_floor_notice = NotifySpec(
+                    level="info",
+                    title="Brief floor reading",
+                    body=f"The camera saw them on the floor for {duration:g} s; they are up again.",
+                    repeat_until_ack=False,
+                )
+        floor_escalation = None
+        if self._on_floor_since is not None and state != "on_floor":
+            # Evaluate the completed interval before clearing its timer. A
+            # slow camera update may be the first event after the deadline.
+            floor_escalation = self._rule5_transition(now)
         self._last_person_state = state
         self._update_rule5_timers(state, now)
+
+        if floor_escalation is not None:
+            return floor_escalation
 
         rule5 = self._rule5_transition(now)
         if rule5 is not None:
@@ -843,6 +901,31 @@ class Session:
             # Keep tracking distress, but never issue a second escalation or
             # let speech undo the caregiver alert.
             self._consecutive_distress = self._consecutive_distress + 1 if distress >= 2 else 0
+            if distress >= 2:
+                self._distress_since_escalation += 1
+                if (
+                    not self._distress_followup_sent
+                    and self._distress_since_escalation >= 2
+                    and self._escalated_since is not None
+                    and (now - self._escalated_since).total_seconds() >= 60
+                ):
+                    self._distress_followup_sent = True
+                    return Transition(
+                        phase=self.phase,
+                        session_id=self.session_id,
+                        goal=self.goal,
+                        strategy_index=self.strategy_index,
+                        reason="persistent_distress",
+                        notify=NotifySpec(
+                            level="critical",
+                            title="Still in distress",
+                            body=(
+                                "They are still reporting distress "
+                                f"({self._distress_since_escalation} times since the first alert); "
+                                "please check now."
+                            ),
+                        ),
+                    )
             return None
         if self.phase != Phase.ENGAGED:
             self._consecutive_distress = 0
@@ -852,6 +935,18 @@ class Session:
             self._consecutive_distress += 1
         else:
             self._consecutive_distress = 0
+
+        if intent == "pain" and distress >= 2:
+            return self._apply(
+                Phase.ESCALATED,
+                reason="pain_reported",
+                now=now,
+                notify=NotifySpec(
+                    level="attention",
+                    title="Pain reported",
+                    body="They said they are in pain; please check in.",
+                ),
+            )
 
         if self._consecutive_distress >= 2:
             return self._apply(
@@ -868,6 +963,8 @@ class Session:
         was_returning_to_bed = self.goal == DEFAULT_GOAL
         target_goal = INTENT_GOALS.get(intent)
         if target_goal is None:
+            return None
+        if intent == "need_restroom" and self.last_person_state == "on_floor":
             return None
         transition = self.propose_goal(target_goal, f"interpreted_{intent}", now)
         if intent == "wants_bed" and self.goal == DEFAULT_GOAL:
@@ -894,18 +991,52 @@ class Session:
     def is_self_echo(self, text: str, now: datetime) -> bool:
         import re
 
-        tokens = re.findall(r"[a-z0-9]+", text.lower())
-        if not tokens:
+        stopwords = {
+            "the",
+            "a",
+            "an",
+            "and",
+            "to",
+            "of",
+            "is",
+            "it",
+            "you",
+            "i",
+            "now",
+            "there",
+            "here",
+            "that",
+            "this",
+            "on",
+            "in",
+            "at",
+            "for",
+            "with",
+            "be",
+            "are",
+            "was",
+            "just",
+            "so",
+            "oh",
+            "well",
+            "yes",
+            "no",
+            "dear",
+            "please",
+            "okay",
+            "ok",
+            "right",
+            "all",
+        }
+        tokens = set(re.findall(r"[a-z0-9]+", text.lower())) - stopwords
+        if len(tokens) < 2:
             return False
         for at, _, said in self._say_history:
             if not 0 <= (now - at).total_seconds() <= 20:
                 continue
-            own = re.findall(r"[a-z0-9]+", said.lower())
-            if len(tokens) <= 3 and any(
-                own[i : i + len(tokens)] == tokens for i in range(len(own))
-            ):
-                return True
-            if len(set(tokens) & set(own)) / len(set(tokens)) >= 0.6:
+            own = set(re.findall(r"[a-z0-9]+", said.lower())) - stopwords
+            matches = len(tokens & own)
+            if matches >= 3 and matches / len(tokens) >= 0.6:
                 return True
         return False
 
@@ -1030,13 +1161,42 @@ class Session:
             )
         return None
 
-    def record_say(self, now: datetime, strategy_id: str = "", text: str = "") -> None:
+    def record_say(
+        self, now: datetime, strategy_id: str = "", text: str = "", *, trigger: str | None = None
+    ) -> None:
         """Record that a `Say` was just published, for `agent.rules.
         validate_say`'s minimum-gap check on the next one. Called by
         `agent.main` only after a `Say` actually passes validation and is
         published -- a rejected `Say` must not reset this clock, since
         nothing was actually said."""
         self._last_say_at = now
+        self._last_say_end_at = now + timedelta(seconds=max(1.0, len(text.split()) / 2.5))
+        if strategy_id == "repeat_louder":
+            self._repeat_count = self._repeat_count + 1 if self._repeat_text == text else 1
+            self._repeat_text = text
+        elif text != self._repeat_text:
+            self._repeat_text = None
+            self._repeat_count = 0
+        if strategy_id == "comfort_pain":
+            self._pain_acknowledged = True
+        elif strategy_id == "acknowledge_progress":
+            self._progress_acknowledged = True
+        elif strategy_id == "ask_need":
+            self._need_asked = True
+        elif strategy_id in {"validate_and_redirect", "acknowledge_feeling"}:
+            self._last_validation_at = now
+        if self.phase == Phase.ESCALATED and strategy_id in {
+            REASSURE_WAITING_ID,
+            CAREGIVER_ALERTED_ID,
+        }:
+            self._reassurance_texts.append(text)
+            self._last_reassurance_strategy_id = strategy_id
+            # Scheduled check-ins share wording history but never use the
+            # two-reply budget reserved for the person's utterances.
+            if trigger != "escalated_checkin":
+                self._reassurance_reply_count += 1
+        if strategy_id == "orient_time_place":
+            self._spoken_time_variant += 1
         if strategy_id:
             self._say_history.append((now, strategy_id, text))
             self._say_history = [
@@ -1045,6 +1205,16 @@ class Session:
                 if (now - entry[0]).total_seconds() <= max(120, self.config.repeat_window_seconds)
             ]
 
+    @property
+    def reassurance_count(self) -> int:
+        """Count utterance reassurances, excluding scheduled check-ins."""
+        return self._reassurance_reply_count
+
+    @property
+    def reassurance_texts(self) -> tuple[str, ...]:
+        """Keep wording history for variation beyond the initial two replies."""
+        return tuple(self._reassurance_texts)
+
     def seconds_since_last_say(self, now: datetime) -> float | None:
         """`None` before any `Say` has been published this session (also
         after a return to `IDLE`, `_reset_timers`), which `agent.rules.
@@ -1052,6 +1222,11 @@ class Session:
         if self._last_say_at is None:
             return None
         return (now - self._last_say_at).total_seconds()
+
+    def seconds_since_last_say_end(self, now: datetime) -> float | None:
+        if self._last_say_end_at is None:
+            return None
+        return (now - self._last_say_end_at).total_seconds()
 
     def _track_in_bed_stability(self, state: str, now: datetime) -> Transition | None:
         """From `ENGAGED` or `ESCALATED`, `in_bed` held unbroken for

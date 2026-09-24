@@ -530,6 +530,7 @@ def _say_to_message(
         "text": event.text,
         "strategy": event.strategy,
         "interruptible": event.interruptible,
+        "emphasis": event.emphasis,
         "session_id": event.session_id,
     }
     if audio_url is not None:
@@ -717,7 +718,9 @@ async def broadcast_loop(
                     started = time.perf_counter()
                     ok = True
                     try:
-                        audio_id = await asyncio.to_thread(speech.synthesize, event.text)
+                        audio_id = await asyncio.to_thread(
+                            speech.synthesize, event.text, loud=event.emphasis == "loud"
+                        )
                         message = _say_to_message(event, audio_id)
                     except Exception:  # noqa: BLE001 - keep the calm visual fallback alive
                         ok = False

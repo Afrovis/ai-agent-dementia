@@ -60,6 +60,12 @@ STRATEGIES = frozenset(
         "path_light",
         "reassure_waiting",
         "acknowledge_return",
+        "acknowledge_pain",
+        "comfort_pain",
+        "acknowledge_progress",
+        "acknowledge_feeling",
+        "ask_need",
+        "caregiver_alerted",
         "escalate_phone",
     }
 )

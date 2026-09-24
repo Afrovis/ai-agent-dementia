@@ -12,6 +12,18 @@ from .thresholds import load
 from .trace import Trace, from_agent_log, from_export
 
 
+def _run_commit(run_dir: Path) -> str | None:
+    """The commit a run was recorded at, from its row in the runs index."""
+    index = run_dir.parent / "index.jsonl"
+    if not index.exists():
+        return None
+    for line in index.read_text().splitlines():
+        row = json.loads(line)
+        if row.get("id") == run_dir.name and row.get("commit") not in (None, "-"):
+            return row["commit"]
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="scene_lab")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -30,6 +42,18 @@ def main(argv: list[str] | None = None) -> int:
     live.add_argument("--keep-stack", action="store_true")
     live.add_argument("--runs-root", type=Path)
     live.add_argument("--run-dir", type=Path)
+    live.add_argument(
+        "--no-triage", action="store_true", help="skip the end-of-run fix list (--hours only)"
+    )
+    live.add_argument(
+        "--triage-no-tests",
+        action="store_true",
+        help="fix list from analysis only, without quick tests in a throwaway worktree",
+    )
+    fixes = sub.add_parser("triage", help="write fixes.md for a finished run")
+    fixes.add_argument("run_dir", type=Path)
+    fixes.add_argument("--no-tests", action="store_true")
+    fixes.add_argument("--commit", help="commit to test against (default: the run's commit)")
     frombench = sub.add_parser("from-bench")
     frombench.add_argument("scenario")
     frombench.add_argument("--out", type=Path, default=Path("tests/scene_lab/scenes"))
@@ -54,6 +78,14 @@ def main(argv: list[str] | None = None) -> int:
 
     register_rescore(sub)
     args = parser.parse_args(argv)
+    if args.command == "triage":
+        from .run import REPO_ROOT
+        from .triage import triage
+
+        run_dir = args.run_dir if args.run_dir.exists() else _default_root() / args.run_dir
+        commit = args.commit or _run_commit(run_dir) or "HEAD"
+        print(triage(run_dir, REPO_ROOT, commit, quick_tests=not args.no_tests))
+        return 0
     if args.command == "rescore":
         from .rescore import rescore
 
@@ -79,6 +111,8 @@ def main(argv: list[str] | None = None) -> int:
                         runs_root=args.runs_root,
                         keep_stack=args.keep_stack,
                         max_scenes=args.max_scenes,
+                        triage_after=not args.no_triage,
+                        triage_quick_tests=not args.triage_no_tests,
                     )
                 )
             )

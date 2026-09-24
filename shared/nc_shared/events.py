@@ -221,11 +221,13 @@ class Say(BaseEvent):
     When ``clip_id`` is set, embodiment plays that caregiver-uploaded,
     consented voice clip instead of synthesising ``text``; ``text`` is still
     shown on screen.
+    loud: a repeat for someone who could not hear; embodiment renders it louder and slower.
     """
 
     text: str
     strategy: str
     interruptible: bool
+    emphasis: Literal["normal", "loud"] = "normal"
     clip_id: str | None = None
 
 

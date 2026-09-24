@@ -114,7 +114,6 @@ def test_wants_bed_returns_from_restroom_with_zone_exit_effects():
         if isinstance(event, LightCommand)
     ] == [
         ("on", "restroom_goal_started"),
-        ("off", "restroom_goal_ended"),
     ]
     assert [
         event.headline for _, event in bus.read("show", "test", "c1") if isinstance(event, Show)
@@ -126,6 +125,13 @@ def test_wants_bed_returns_from_restroom_with_zone_exit_effects():
     assert [
         event.strategy for _, event in bus.read("say", "test", "c2") if isinstance(event, Say)
     ] == ["guided_return"]
+    # A spoken return keeps the light on for the walk back. The camera
+    # confirms arrival before it is switched off.
+    bus.publish(PersonState(source="perceive", state="in_bed", confidence=0.9, zone="bed"))
+    run_once(bus, session, now_fn=lambda: NIGHT + timedelta(seconds=10), llm=llm)
+    assert [(event.state, event.reason) for _, event in bus.read("light", "test", "c2")] == [
+        ("off", "returned_to_bed")
+    ]
 
 
 def test_wants_bed_on_return_goal_preserves_strategy_and_distress_rule():

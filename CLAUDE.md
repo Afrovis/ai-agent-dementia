@@ -11,6 +11,8 @@ Project skills in `.claude/skills/` (keep this list in sync with the directory):
   tear it down. Use it before claiming a dashboard or embodiment change works.
 - `decision-bench-annotate`: label decision_bench scenarios with the isolated
   Opus annotator, hand flagged ones to the human, apply reviewed labels.
+- `scene-lab-director-run`: run a scene_lab director batch safely on the Mac
+  mini and report it with the generated fix list (`fixes.md`).
 - `demo-creation-video`: polished 30 fps demo clips from the bedroom recordings
   (not the 2 fps `tools/video_eval` review renders).
 

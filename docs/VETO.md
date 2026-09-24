@@ -23,6 +23,8 @@ device and this is not a general safety system.
 | `no_redirect_from_toilet_need` | `guided_return` | the goal is `restroom`, or a recent utterance names a toilet need or an accident ("loo", "pee", "wet myself", ...) that has not been resolved by a return to bed | TOIL-01 |
 | `no_redirect_from_stated_need` | `guided_return` | a recent utterance states another need: cold, pain, feeling unwell, a call for help | NICE-01 |
 | `no_return_prompt_in_bed` | `guided_return`, `validate_and_redirect` | the latest person reading is `in_bed`; both strategies' fixed phrases direct the person toward bed | NICE-05 |
+| `no_directions_from_floor` | `path_light` | the latest person reading is `on_floor` | FALL-01 |
+| `no_return_prompt_from_floor` | `guided_return`, `acknowledge_return` | the latest person reading is `on_floor` | FALL-01 |
 | `no_orienting_a_settling_person` | `orient_time_place` | the person is in bed or has settled | NICE-05 |
 | `no_night_orientation_by_day` | `orient_time_place` | outside the configured night window (its sentence says it is night-time) | AA-03 |
 | `silence_when_settled` | any `Say` except the escalation sentence | the person is in bed and has not spoken since lying down | NICE-05 |
@@ -36,7 +38,8 @@ is `in_bed`, and no utterance has arrived since the person lay down.
 
 In `ESCALATED`, `validate_goal` forbids changing `wait_for_caregiver` to
 `restroom`. A stated toilet need therefore keeps the caregiver alert and goal
-active while the path light and `path_light` guidance are published (TOIL-01).
+active while the path light and `path_light` guidance are published (TOIL-01),
+unless the person is on the floor; then the agent reassures them while help comes.
 
 Each denial is logged as one WARNING line on the `agent` service's stdout, for
 example
@@ -49,7 +52,7 @@ The proposed sentence is never logged: it may paraphrase private speech.
   "you can't" or "you're wrong", and nothing in the form of a question.
 - `agent.rules.validate_composition`: no "but", no invented caregiver
   presence claims, for model-composed text.
-- The state machine: phase transitions, rule 5 escalation on `on_floor` or a
+- The state machine: phase transitions, rule 5 escalation after 10 seconds `on_floor` or a
   long absence, and every escalation deadline and `Notify` level.
 - A confirmed wish to return to bed receives a short acknowledgement and
   pauses ordinary ladder advances for the configured grace period; stated

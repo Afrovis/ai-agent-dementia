@@ -180,7 +180,7 @@ def test_validate_composition_rejects_contrast_or_invented_caregiver_claims(text
 @pytest.mark.parametrize(
     "text",
     [
-        "Jean, it is 12 o'clock, so let's rest while Tom stays nearby for you.",
+        "Jean, it is night-time, so let's rest while Tom stays nearby for you.",
         "Jean, I hear you need comfort; Tom is near, and everything is settled for a rest.",
         "Butterflies can be calming while Tom is nearby.",
     ],
@@ -191,9 +191,35 @@ def test_validate_composition_allows_nearby_without_strengthening_it(text):
     assert result.reason is None
 
 
+@pytest.mark.parametrize("clock", ["4 o'clock", "3 a.m.", "3:00", "midnight", "noon"])
+def test_validate_composition_rejects_exact_clock_time(clock):
+    result = validate_composition(f"It is {clock}.", PersonProfile())
+    assert result.accepted is False
+    assert result.reason == "composition states an exact clock time"
+
+
 def test_validate_composition_skips_caregiver_claim_check_for_an_empty_name():
     result = validate_composition("Someone is here with you.", PersonProfile(caregiver_name=""))
     assert result.accepted is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Wait for Tom; 'Tom is nearby and everything is settled' is here to help Jean.",
+        'Tom says "rest now".',
+        "Tom says “rest now”.",
+    ],
+)
+def test_validate_composition_rejects_quoted_template(text):
+    result = validate_composition(text, PersonProfile(caregiver_name="Tom"))
+    assert result.reason == "composition quotes text instead of speaking it"
+
+
+def test_validate_composition_allows_contractions():
+    assert validate_composition(
+        "You're safe, and Tom's nearby; let's rest.", PersonProfile()
+    ).accepted
 
 
 # --- validate_say (issue #14, HANDOFF.md rule 3) -------------------------

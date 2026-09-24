@@ -48,11 +48,11 @@ from embodiment.app import (
 class FakeSpeech:
     def __init__(self, directory: Path) -> None:
         self.directory = directory
-        self.synthesized: list[str] = []
+        self.synthesized: list[tuple[str, bool]] = []
         self.pre_rendered: tuple[str, ...] = ()
 
-    def synthesize(self, text: str) -> str:
-        self.synthesized.append(text)
+    def synthesize(self, text: str, *, loud: bool = False) -> str:
+        self.synthesized.append((text, loud))
         audio_id = "a" * 64
         (self.directory / f"{audio_id}.wav").write_bytes(b"RIFFfake-wave")
         return audio_id
@@ -446,12 +446,34 @@ def test_websocket_synthesizes_say_and_delivers_same_origin_audio_url(tmp_path):
         end = websocket.receive_json()
         message = websocket.receive_json()
 
-    assert speech.synthesized == ["Rest now."]
+    assert speech.synthesized == [("Rest now.", False)]
     assert (start["type"], start["kind"], start["phase"]) == ("activity", "tts", "start")
     assert (end["type"], end["kind"], end["phase"], end["ok"]) == ("activity", "tts", "end", True)
     assert end["duration_ms"] >= 0
     assert message["audio_url"] == f"/speech/{'a' * 64}.wav"
     assert message["session_id"] == "session-1"
+
+
+def test_websocket_passes_loud_emphasis_to_speech(tmp_path):
+    bus = FakeBus()
+    speech = FakeSpeech(tmp_path)
+    app = create_app(bus, speech=speech)
+    with TestClient(app) as client, client.websocket_connect("/ws") as websocket:
+        receive_initial_eyes_and_config(websocket)
+        bus.publish(
+            Say(
+                source="agent",
+                text="Rest now.",
+                strategy="repeat_louder",
+                interruptible=True,
+                emphasis="loud",
+            )
+        )
+        websocket.receive_json()
+        websocket.receive_json()
+        message = websocket.receive_json()
+    assert speech.synthesized == [("Rest now.", True)]
+    assert message["text"] == "Rest now."
 
 
 def test_websocket_uses_caregiver_clip_without_calling_piper(tmp_path):

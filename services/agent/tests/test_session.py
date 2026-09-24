@@ -25,6 +25,17 @@ def make_session(*, strategies=None, **config_kwargs) -> Session:
     return Session(config=config, id_fn=lambda: next(ids))
 
 
+def test_restroom_interpretation_during_floor_escalation_window_keeps_goal():
+    session = make_session(observe_seconds=1, floor_limit_seconds=10)
+    session.on_person_state("standing", "other", NIGHT)
+    session.tick(NIGHT + timedelta(seconds=2))
+    assert session.phase == Phase.ENGAGED
+    session.on_person_state("on_floor", "other", NIGHT + timedelta(seconds=3))
+    assert session.phase == Phase.ENGAGED
+    assert session.on_interpretation("need_restroom", 0, NIGHT + timedelta(seconds=4)) is None
+    assert session.goal == "return_to_bed"
+
+
 def test_no_session_starts_outside_the_night_window():
     session = make_session()
     assert session.on_person_state("standing", "other", DAY) is None
@@ -232,7 +243,12 @@ def test_rule5_absent_fires_from_idle_after_its_limit():
 
 
 def test_no_new_nudging_session_during_cooldown_but_rule5_still_escalates():
-    session = make_session(observe_seconds=1.0, in_bed_stable_seconds=1.0, cooldown_seconds=300.0)
+    session = make_session(
+        observe_seconds=1.0,
+        in_bed_stable_seconds=1.0,
+        cooldown_seconds=300.0,
+        floor_limit_seconds=0.0,
+    )
     session.on_person_state("standing", "other", NIGHT)
     session.tick(NIGHT + timedelta(seconds=2))
     assert session.phase == Phase.ENGAGED
@@ -506,7 +522,7 @@ def test_wait_for_caregiver_set_on_escalation():
 
 
 def test_wait_for_caregiver_set_on_escalation_from_a_non_root_goal():
-    session = make_session()
+    session = make_session(floor_limit_seconds=0.0)
     t = NIGHT
     enter_engaged(session, t)
     t += timedelta(seconds=1)
@@ -547,7 +563,7 @@ def test_propose_goal_rejects_an_illegal_change():
 
 
 def test_propose_goal_cannot_undo_wait_for_caregiver_after_escalation():
-    session = make_session()
+    session = make_session(floor_limit_seconds=0.0)
     transition = session.on_person_state("on_floor", "other", NIGHT)
     assert transition is not None
     assert session.phase == Phase.ESCALATED
@@ -849,13 +865,27 @@ def test_new_need_breaks_compliance_grace():
     assert not session.compliance_hold(NIGHT + timedelta(seconds=3))
 
 
-def test_self_echo_matches_short_fragment_and_overlap_only_within_twenty_seconds():
+def test_self_echo_requires_three_content_words_within_twenty_seconds():
     session = make_session()
     session.record_say(NIGHT, "guided_return", "Let's go back to bed now, Jean.")
-    assert session.is_self_echo("Go.", NIGHT + timedelta(seconds=2))
+    assert not session.is_self_echo("Go.", NIGHT + timedelta(seconds=2))
     assert session.is_self_echo("Go back to bed now", NIGHT + timedelta(seconds=2))
     assert not session.is_self_echo("I need the restroom", NIGHT + timedelta(seconds=2))
-    assert not session.is_self_echo("Go.", NIGHT + timedelta(seconds=21))
+    assert not session.is_self_echo("Go back to bed now", NIGHT + timedelta(seconds=21))
+
+
+def test_self_echo_ignores_common_words_in_real_speech():
+    session = make_session()
+    session.record_say(
+        NIGHT,
+        "path_light",
+        "The restroom is through the bedroom door and immediately to the left, Jean.",
+    )
+    assert not session.is_self_echo("There, through the door now.", NIGHT + timedelta(seconds=2))
+    assert session.is_self_echo(
+        "The restroom is through the bedroom door and immediately to the left",
+        NIGHT + timedelta(seconds=2),
+    )
 
 
 def test_ladder_skips_a_strategy_already_spoken_as_a_direct_reply():
@@ -867,3 +897,39 @@ def test_ladder_skips_a_strategy_already_spoken_as_a_direct_reply():
     session.record_say(NIGHT + timedelta(seconds=31), "orient_time_place", "You are home.")
     next_rung = session.tick(NIGHT + timedelta(seconds=50))
     assert next_rung is not None and next_rung.strategy.id == "validate_and_redirect"
+
+
+def test_persistent_distress_followup_is_once_after_a_minute():
+    session = make_session(floor_limit_seconds=0)
+    first = session.on_person_state("on_floor", "other", NIGHT)
+    assert first.notify.level == "critical"
+    assert session.on_interpretation("unclear", 2, NIGHT + timedelta(seconds=10)) is None
+    assert session.on_interpretation("fine", 0, NIGHT + timedelta(seconds=20)) is None
+    assert session.on_interpretation("unclear", 2, NIGHT + timedelta(seconds=30)) is None
+    followup = session.on_interpretation("unclear", 2, NIGHT + timedelta(seconds=61))
+    assert followup.notify.level == "critical"
+    assert followup.notify.title == "Still in distress"
+    assert "3 times since the first alert" in followup.notify.body
+    assert session.on_interpretation("unclear", 3, NIGHT + timedelta(seconds=90)) is None
+
+
+def test_short_floor_reading_does_not_escalate():
+    session = make_session()
+    assert session.on_person_state("on_floor", "other", NIGHT) is None
+    assert session.tick(NIGHT + timedelta(seconds=5)) is None
+    assert session.on_person_state("sitting_up", "other", NIGHT + timedelta(seconds=5)) is not None
+    assert session.phase == Phase.OBSERVING
+    assert session._brief_floor_notice.level == "info"
+    assert session._brief_floor_notice.repeat_until_ack is False
+    assert session._brief_floor_notice.body == (
+        "The camera saw them on the floor for 5 s; they are up again."
+    )
+
+
+def test_floor_limit_is_checked_before_a_late_clear_reading():
+    session = make_session()
+    session.on_person_state("on_floor", "other", NIGHT)
+    transition = session.on_person_state("sitting_up", "other", NIGHT + timedelta(seconds=11))
+    assert transition.phase == Phase.ESCALATED
+    assert transition.notify.title == "Possible fall"
+    assert session._brief_floor_notice is None

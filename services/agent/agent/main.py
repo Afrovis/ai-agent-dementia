@@ -1,7 +1,7 @@
 """Entry point for the `agent` service (issue #12): the real session core.
 
-Reads `PersonState` from the `person` stream and complete `Utterance` events
-from `speech_in` (ignoring its early barge-in signal), and drives an
+Reads `PersonState` from the `person` stream and `SpeechStarted`/`Utterance`
+events from `speech_in`, and drives an
 `agent.session.Session` -- the deterministic phase state machine, see that
 module and `agent.rules` for what it does and does not decide.
 
@@ -61,7 +61,7 @@ import os
 import time
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import redis
 from nc_shared.bus import Bus
@@ -78,6 +78,7 @@ from nc_shared.events import (
     Say,
     SessionState,
     Show,
+    SpeechStarted,
     Utterance,
 )
 
@@ -87,15 +88,23 @@ from agent.goals import GOALS
 from agent.llm import ClaudeLLM, FallbackLLM, LLMClient
 from agent.llm import local_llm as build_local_llm
 from agent.profile import DEFAULT_PROFILE, PersonProfile, load_profile
+from agent.questions import is_direct_question, is_hearing_request
 from agent.rules import Phase, RuleResult, validate_composition, validate_say
 from agent.session import PendingSay, Session, Transition
 from agent.strategies import (
+    ACKNOWLEDGE_FEELING_ID,
+    ACKNOWLEDGE_PAIN_ID,
+    ACKNOWLEDGE_PROGRESS_ID,
+    ASK_NEED_ID,
+    CAREGIVER_ALERTED_ID,
+    COMFORT_PAIN_ID,
     ESCALATE_PHONE_ID,
     PATH_LIGHT_ID,
     REASSURE_WAITING_ID,
     StrategyDef,
     load_strategies,
     render_template,
+    spoken_time_words,
     time_as_words,
 )
 from agent.veto import Proposal, VetoContext
@@ -104,6 +113,19 @@ SERVICE_NAME = "agent"
 HEALTH_INTERVAL_S = 30.0
 HEARTBEAT_INTERVAL_S = 60.0
 PENDING_SAY_MAX_AGE_S = 30.0
+SPEECH_STARTED_MAX_AGE_S = 15.0
+MAX_REASSURANCES = 2
+ESCALATED_CHECKIN_S = 120.0
+# After the cap, a direct question, a stated need or distress 2+ is answered at most once
+# per this many seconds: a frightened person on the floor may ask "can you
+# hear me?" every 15 s, and a sentence each time is the repetition the cap
+# exists to stop.
+REASSURE_AFTER_CAP_INTERVAL_S = 60.0
+REASSURANCE_FALLBACKS = (
+    "Help is on the way{name_vocative}; you can rest where you are.",
+    "I've let someone know{name_vocative}, and they're coming to you.",
+    "You're not alone{name_vocative}; help is coming.",
+)
 
 PERSON_STREAM = "person"
 PERSON_GROUP = "agent"
@@ -174,6 +196,65 @@ def _decision_activity(bus, session_id: str | None, detail: dict[str, object]) -
         _log("published Activity", event_type="Activity", kind="decision", phase="end", ok=False)
     except Exception as exc:
         _log("failed to publish decision Activity", level=logging.WARNING, error=type(exc).__name__)
+
+
+def _reassure_or_stay_silent(
+    bus,
+    session: Session,
+    text: str,
+    now: datetime,
+    profile: PersonProfile,
+    llm,
+    *,
+    distress: int | None = None,
+    preferred_id: str = REASSURE_WAITING_ID,
+) -> None:
+    """Pace all escalated replies together; a person query prefers the alerted wording.
+
+    If it was just spoken, use the rotating reassurance phrases instead.
+    """
+    # A stated need ("help me up", "so cold") or clear distress is answered
+    # like a question: still at most once a minute after the cap.
+    urgent = (
+        is_direct_question(text)
+        or (distress is not None and distress >= 2)
+        or veto.states_need(text)
+    )
+    since_last_say = session.seconds_since_last_say(now)
+    if session.reassurance_count < MAX_REASSURANCES or (
+        urgent and (since_last_say is None or since_last_say >= REASSURE_AFTER_CAP_INTERVAL_S)
+    ):
+        if (
+            preferred_id == CAREGIVER_ALERTED_ID
+            and session._last_reassurance_strategy_id == CAREGIVER_ALERTED_ID
+        ):
+            preferred_id = REASSURE_WAITING_ID
+        _reply_to_utterance(bus, session, preferred_id, now, profile, llm)
+        return
+    detail = {
+        "decision": "no_reply",
+        "reason": "reassured_recently" if urgent else "reassured_enough",
+        "text": text,
+        "phase": session.phase.value,
+        "goal": session.goal,
+        "reassurances": session.reassurance_count,
+    }
+    _decision_activity(bus, session.session_id, detail)
+    _log("no reply after reassurance cap", **detail)
+
+
+def _intentional_silence(bus, session: Session, text: str, reason: str) -> None:
+    _decision_activity(
+        bus,
+        session.session_id,
+        {
+            "decision": "no_reply",
+            "reason": reason,
+            "text": text,
+            "phase": session.phase.value,
+            "goal": session.goal,
+        },
+    )
 
 
 def _vetoed(
@@ -356,6 +437,7 @@ def _maybe_publish_say(
     strategy = transition.strategy
     if strategy is None or strategy.say_template is None:
         return False
+    terminal_reply = strategy.terminal or transition.reason == "pain_reported"
     if session._pending_say is not None:
         _drop_pending_say(bus, session, "superseded", now)
 
@@ -365,19 +447,30 @@ def _maybe_publish_say(
     # just outside the camera's view. The latest raw reading is used rather
     # than waiting for rule 5's absence limit: speaking to a room currently
     # believed empty has no benefit during that grace period.
-    if not session.person_present(now) and not strategy.terminal:
+    if not session.person_present(now) and not terminal_reply:
         _log(
             "suppressed ordinary Say while person is absent",
             event_type="Say",
             strategy=strategy.id,
         )
         return False
+    if (
+        session._on_floor_since is not None
+        and session.phase != Phase.ESCALATED
+        and not terminal_reply
+    ):
+        # During the floor confirmation window no ordinary ladder sentence
+        # may imply that help has already been called.
+        return False
 
-    time_words = time_as_words(session.wall_clock(now))
+    time_words = spoken_time_words(session.wall_clock(now), session._spoken_time_variant)
     text = render_template(strategy.say_template, profile, time_words=time_words)
     compose = llm is not None and (
-        strategy.id == "validate_and_redirect"
-        or (direct and strategy.id in (REASSURE_WAITING_ID, "orient_time_place"))
+        strategy.id in ("validate_and_redirect", ACKNOWLEDGE_FEELING_ID)
+        or (direct and strategy.id == "orient_time_place")
+        # While escalated the approved phrasings rotate instead: composition
+        # added about 2.4 s and was rejected 12 of 14 times in 2026-09-23T1854-live.
+        or (direct and strategy.id == REASSURE_WAITING_ID and session.phase != Phase.ESCALATED)
     )
     if compose:
         model = _llm_model_name(llm)
@@ -437,6 +530,25 @@ def _maybe_publish_say(
                 )
             else:
                 text = composition.text
+    if strategy.id == REASSURE_WAITING_ID and session.phase == Phase.ESCALATED:
+        # Prefer the caregiver's template, then approved alternatives when
+        # composition or a fixed fallback repeats something already spoken.
+        # Once every phrasing has been used, the one said longest ago wins.
+        def _norm(value: str) -> str:
+            return " ".join(value.lower().split())
+
+        said = [_norm(s) for s in session.reassurance_texts]
+        if _norm(text) in said:
+            candidates = [
+                render_template(fallback, profile, time_words=time_words)
+                for fallback in (strategy.say_template, *REASSURANCE_FALLBACKS)
+            ]
+
+            def _last_said(candidate: str) -> int:
+                norm = _norm(candidate)
+                return max((i for i, s in enumerate(said) if s == norm), default=-1)
+
+            text = min(candidates, key=_last_said)
     # The minimum-silence gap paces ordinary strategy speech, one sentence
     # then quiet. A terminal strategy (`escalate_phone`) is not ordinary
     # speech: it is the single sentence telling a person who may be on the
@@ -447,16 +559,27 @@ def _maybe_publish_say(
     # terminal strategy is exempt from this one check. Every other rule 3
     # check -- one sentence, no forbidden phrasing, no question -- still
     # applies to it exactly as before.
-    seconds_since_last_say = None if strategy.terminal else session.seconds_since_last_say(now)
+    seconds_since_last_say = (
+        None
+        if terminal_reply
+        else session.seconds_since_last_say_end(now)
+        if direct
+        else session.seconds_since_last_say(now)
+    )
+    min_gap_seconds = (
+        session.config.reply_gap_after_speech_seconds
+        if direct
+        else session.config.say_min_gap_seconds
+    )
     result = validate_say(
         text,
         seconds_since_last_say=seconds_since_last_say,
-        min_gap_seconds=session.config.say_min_gap_seconds,
+        min_gap_seconds=min_gap_seconds,
     )
     gap_only = (
         not result.accepted
         and validate_say(
-            text, seconds_since_last_say=None, min_gap_seconds=session.config.say_min_gap_seconds
+            text, seconds_since_last_say=None, min_gap_seconds=min_gap_seconds
         ).accepted
     )
     if not result.accepted and not gap_only:
@@ -473,7 +596,7 @@ def _maybe_publish_say(
         context = veto_context(session, profile, now)
     if _vetoed(
         bus,
-        Proposal("say", strategy.id, text=text, terminal=strategy.terminal),
+        Proposal("say", strategy.id, text=text, terminal=terminal_reply),
         context,
         session_id=session.session_id,
     ):
@@ -487,10 +610,12 @@ def _maybe_publish_say(
         # `escalate_phone` must not be interrupted by barge-in the way an
         # ordinary strategy's speech can be (HANDOFF.md section 7:
         # `listen`'s barge-in) -- there is nothing left to redirect to.
-        interruptible=strategy.id != ESCALATE_PHONE_ID,
+        interruptible=not terminal_reply,
         clip_id=strategy.clip_id,
     )
-    if gap_only:
+    speech_active = _speech_in_progress(session, now)
+    hold_for_speech = speech_active and strategy.id != ESCALATE_PHONE_ID
+    if gap_only or hold_for_speech:
         session._pending_say = PendingSay(
             say_event,
             transition.goal,
@@ -505,12 +630,25 @@ def _maybe_publish_say(
             strategy=strategy.id,
             session_id=transition.session_id,
             goal=transition.goal,
-            reason=result.reason,
+            reason="speech_in_progress" if hold_for_speech else result.reason,
         )
+        if hold_for_speech:
+            _decision_activity(
+                bus,
+                transition.session_id,
+                {
+                    "decision": "pending_say_deferred",
+                    "reason": "speech_in_progress",
+                    "strategy": strategy.id,
+                    "direct": direct,
+                    "phase": session.phase.value,
+                    "goal": session.goal,
+                },
+            )
         return False
 
     bus.publish(say_event)
-    session.record_say(now, strategy.id, say_event.text)
+    session.record_say(now, strategy.id, say_event.text, trigger=transition.reason)
     _log("published Say", event_type="Say", strategy=strategy.id)
     _said_decision(bus, session, say_event, trigger=transition.reason, direct=direct)
     return True
@@ -520,8 +658,16 @@ def _maybe_publish_say(
 # reason is one too. A Say from any other transition (a dwell timer, a zone change) is a
 # scheduled step, even when it happens to follow an utterance.
 _SPEECH_TRIGGERS = frozenset(
-    {"utterance", "utterance_reply", "llm_plan_strategy", "distress_detected_twice"}
+    {
+        "hearing_request",
+        "utterance",
+        "utterance_reply",
+        "llm_plan_strategy",
+        "distress_detected_twice",
+        "pain_reported",
+    }
 )
+_SCHEDULED_TRIGGERS = frozenset({"escalated_checkin"})
 
 
 def _said_decision(
@@ -529,8 +675,12 @@ def _said_decision(
 ) -> None:
     """Why a Say went out: the transition that caused it (a dwell timer or the person's
     speech), so a trace can tell a reply from a ladder step that happened to follow."""
-    reply = direct or (
-        trigger is not None and (trigger in _SPEECH_TRIGGERS or trigger.startswith("interpreted_"))
+    reply = trigger not in _SCHEDULED_TRIGGERS and (
+        direct
+        or (
+            trigger is not None
+            and (trigger in _SPEECH_TRIGGERS or trigger.startswith("interpreted_"))
+        )
     )
     _decision_activity(
         bus,
@@ -546,6 +696,85 @@ def _said_decision(
             "goal": session.goal,
         },
     )
+
+
+def _speech_in_progress(session: Session, now: datetime) -> bool:
+    started = session.speech_started_at
+    if started is None:
+        return False
+    if (now - started).total_seconds() >= SPEECH_STARTED_MAX_AGE_S:
+        session.speech_started_at = None
+        return False
+    return True
+
+
+def _repeat_louder(bus, session: Session, now: datetime, profile: PersonProfile) -> bool:
+    """Answer a hearing request from recent spoken history without the speech gap."""
+    if not session._say_history:
+        return False
+    said_at, _, text = session._say_history[-1]
+    if not 0 <= (now - said_at).total_seconds() <= 120:
+        return False
+    if session._repeat_text == text and session._repeat_count >= 2:
+        return False
+    if not session.person_present(now):
+        _intentional_silence(bus, session, text, "person_absent")
+        return True
+    context = veto_context(session, profile, now)
+    if _vetoed(
+        bus,
+        Proposal("say", "repeat_louder", text=text),
+        context,
+        session_id=session.session_id,
+    ):
+        return True
+    show = Show(
+        source=SERVICE_NAME,
+        session_id=session.session_id,
+        face="speaking",
+        headline=text,
+        body="",
+        brightness=0.7,
+    )
+    say = Say(
+        source=SERVICE_NAME,
+        session_id=session.session_id,
+        text=text,
+        strategy="repeat_louder",
+        emphasis="loud",
+        interruptible=True,
+    )
+    if _speech_in_progress(session, now):
+        if session._pending_say is not None:
+            _drop_pending_say(bus, session, "superseded", now)
+        session._pending_say = PendingSay(
+            say,
+            session.goal,
+            session.strategy_index,
+            now,
+            show=show,
+            direct=True,
+            trigger="hearing_request",
+        )
+        _decision_activity(
+            bus,
+            session.session_id,
+            {
+                "decision": "pending_say_deferred",
+                "reason": "speech_in_progress",
+                "strategy": say.strategy,
+                "direct": True,
+                "phase": session.phase.value,
+                "goal": session.goal,
+            },
+        )
+        bus.publish(show.model_copy(update={"face": "awake"}))
+        return True
+    bus.publish(show)
+    bus.publish(say)
+    session.record_say(now, "repeat_louder", text, trigger="hearing_request")
+    _said_decision(bus, session, say, trigger="hearing_request", direct=True)
+    return True
 
 
 def _drop_pending_say(bus, session: Session, reason: str, now: datetime) -> None:
@@ -582,7 +811,16 @@ def _flush_pending_say(bus, session: Session, now: datetime, profile: PersonProf
         return
     age = (now - pending.queued_at).total_seconds()
     current = session._engine.current()
-    seconds_since_last_say = session.seconds_since_last_say(now)
+    seconds_since_last_say = (
+        session.seconds_since_last_say_end(now)
+        if pending.direct
+        else session.seconds_since_last_say(now)
+    )
+    min_gap_seconds = (
+        session.config.reply_gap_after_speech_seconds
+        if pending.direct
+        else session.config.say_min_gap_seconds
+    )
     if age > PENDING_SAY_MAX_AGE_S:
         _drop_pending_say(bus, session, "max_age", now)
     elif session.session_id != pending.event.session_id:
@@ -599,9 +837,12 @@ def _flush_pending_say(bus, session: Session, now: datetime, profile: PersonProf
         _drop_pending_say(bus, session, "strategy_changed", now)
     elif not session.person_present(now) and pending.event.strategy != ESCALATE_PHONE_ID:
         _drop_pending_say(bus, session, "person_absent", now)
+    elif _speech_in_progress(session, now):
+        return
     elif (
-        seconds_since_last_say is not None
-        and seconds_since_last_say < session.config.say_min_gap_seconds
+        pending.event.strategy != "repeat_louder"
+        and seconds_since_last_say is not None
+        and seconds_since_last_say < min_gap_seconds
     ):
         return
     else:
@@ -624,7 +865,7 @@ def _flush_pending_say(bus, session: Session, now: datetime, profile: PersonProf
         if pending.show is not None:
             bus.publish(pending.show.model_copy(update={"ts": datetime.now(UTC)}))
         bus.publish(pending.event.model_copy(update={"ts": datetime.now(UTC)}))
-        session.record_say(now, pending.event.strategy, pending.event.text)
+        session.record_say(now, pending.event.strategy, pending.event.text, trigger=pending.trigger)
         session._pending_say = None
         _said_decision(
             bus,
@@ -663,6 +904,9 @@ def _publish_transition(
     `.strategy_index` -- shown on the dashboard timeline -- never lag
     behind. `profile` is the caregiver-authored profile loaded by `run`;
     direct callers default to a safe generic profile."""
+    if transition.reason == "pain_reported":
+        pain_strategy = next(s for s in session.strategies if s.id == ACKNOWLEDGE_PAIN_ID)
+        transition = replace(transition, strategy=pain_strategy)
     context = veto_context(session, profile, now)
     event = SessionState(
         source=SERVICE_NAME,
@@ -701,6 +945,7 @@ def _publish_transition(
             and transition.strategy is not None
             and transition.strategy.id == PATH_LIGHT_ID
         ):
+            session.hallway_light_awaiting_bed = False
             light_event = LightCommand(
                 source=SERVICE_NAME,
                 session_id=transition.session_id,
@@ -717,18 +962,24 @@ def _publish_transition(
             goal_changed_event.from_goal == "restroom"
             and goal_changed_event.to_goal == "return_to_bed"
         ):
-            light_event = LightCommand(
-                source=SERVICE_NAME,
-                session_id=transition.session_id,
-                light="hallway",
-                state="off",
-                reason="restroom_goal_ended",
-            )
-            if not _vetoed(
-                bus, Proposal("light", light_event.state), context, session_id=session.session_id
-            ):
-                bus.publish(light_event)
-                _log("published LightCommand", event_type="LightCommand", state="off")
+            if goal_changed_event.reason == "interpreted_wants_bed":
+                session.hallway_light_awaiting_bed = True
+            else:
+                light_event = LightCommand(
+                    source=SERVICE_NAME,
+                    session_id=transition.session_id,
+                    light="hallway",
+                    state="off",
+                    reason="restroom_goal_ended",
+                )
+                if not _vetoed(
+                    bus,
+                    Proposal("light", light_event.state),
+                    context,
+                    session_id=session.session_id,
+                ):
+                    bus.publish(light_event)
+                    _log("published LightCommand", event_type="LightCommand", state="off")
 
     # A phase resolution is a final idempotent backstop for a light that
     # remained on through an escalation or an unusual goal transition.
@@ -753,7 +1004,7 @@ def _publish_transition(
             level=transition.notify.level,
             title=transition.notify.title,
             body=transition.notify.body,
-            repeat_until_ack=True,
+            repeat_until_ack=transition.notify.repeat_until_ack,
         )
         if not _vetoed(
             bus,
@@ -767,7 +1018,11 @@ def _publish_transition(
     strategy = transition.strategy
     if strategy is None or not _vetoed(
         bus,
-        Proposal("strategy", strategy.id, terminal=strategy.terminal),
+        Proposal(
+            "strategy",
+            strategy.id,
+            terminal=strategy.terminal or transition.reason == "pain_reported",
+        ),
         context,
         session_id=session.session_id,
     ):
@@ -793,8 +1048,12 @@ def _reply_to_utterance(
     strategy = next((item for item in session.strategies if item.id == strategy_id), None)
     if strategy is None:
         return
+    if strategy_id == CAREGIVER_ALERTED_ID and session.phase != Phase.ESCALATED:
+        return
     context = veto_context(session, profile, now)
-    if strategy_id == PATH_LIGHT_ID:
+    if _vetoed(bus, Proposal("strategy", strategy.id), context, session_id=session.session_id):
+        return
+    if strategy_id == PATH_LIGHT_ID and session.goal != "restroom":
         # Direct guidance does not change the goal. Keep any caregiver alert
         # active while still meeting the stated toilet need.
         light = LightCommand(
@@ -806,8 +1065,6 @@ def _reply_to_utterance(
         )
         if not _vetoed(bus, Proposal("light", "on"), context, session_id=session.session_id):
             bus.publish(light)
-    if _vetoed(bus, Proposal("strategy", strategy.id), context, session_id=session.session_id):
-        return
     transition = Transition(
         phase=session.phase,
         session_id=session.session_id,
@@ -860,6 +1117,76 @@ def _handle_person_state(
         published.append(
             _publish_transition(bus, transition, session, now, profile=profile, llm=llm)
         )
+    if session._brief_floor_notice is not None:
+        notice = session._brief_floor_notice
+        session._brief_floor_notice = None
+        published.append(
+            _publish_transition(
+                bus,
+                Transition(
+                    session.phase,
+                    session.session_id,
+                    session.goal,
+                    session.strategy_index,
+                    "brief_floor_reading",
+                    notify=notice,
+                ),
+                session,
+                now,
+                profile=profile,
+                llm=llm,
+            )
+        )
+    if session.hallway_light_awaiting_bed and (
+        state == "in_bed"
+        or (zone == "bed" and session._pending_zone_count >= session.config.zone_confirm_readings)
+    ):
+        light_event = LightCommand(
+            source=SERVICE_NAME,
+            session_id=session.session_id,
+            light="hallway",
+            state="off",
+            reason="returned_to_bed",
+        )
+        if not _vetoed(
+            bus,
+            Proposal("light", "off"),
+            veto_context(session, profile, now),
+            session_id=session.session_id,
+        ):
+            bus.publish(light_event)
+            _log("published LightCommand", event_type="LightCommand", state="off")
+        session.hallway_light_awaiting_bed = False
+
+
+def _escalated_checkin(bus, session: Session, now: datetime, profile: PersonProfile) -> None:
+    """Pace a scheduled reassurance from actual speech, without using the reply budget."""
+    since = session.seconds_since_last_say(now)
+    if (
+        session.phase != Phase.ESCALATED
+        or since is None
+        or since < ESCALATED_CHECKIN_S
+        or not session.person_present(now)
+        or session.settled
+        or session._pending_say is not None
+    ):
+        return
+    strategy = next((s for s in session.strategies if s.id == REASSURE_WAITING_ID), None)
+    if strategy is None:
+        return
+    context = veto_context(session, profile, now)
+    if _vetoed(bus, Proposal("strategy", strategy.id), context, session_id=session.session_id):
+        return
+    transition = Transition(
+        phase=session.phase,
+        session_id=session.session_id,
+        goal=session.goal,
+        strategy_index=session.strategy_index,
+        reason="escalated_checkin",
+        strategy=strategy,
+    )
+    if _maybe_publish_say(bus, transition, session, now, profile, context=context):
+        _log("published escalated check-in", event_type="Say", session_id=session.session_id)
 
 
 def run_once(
@@ -926,6 +1253,14 @@ def run_once(
             force_in_bed=overrides.force_in_bed,
         )
 
+    # See barge-in onset before person-state transitions and their scheduled
+    # speech. Both streams can have events waiting in the same run_once call.
+    utterance_messages = bus.read(
+        UTTERANCE_STREAM, UTTERANCE_GROUP, consumer, count=count, block_ms=None
+    )
+    if any(isinstance(event, SpeechStarted) for _, event in utterance_messages):
+        session.speech_started_at = now_fn()
+
     person_messages = bus.read(
         PERSON_STREAM, PERSON_GROUP, consumer, count=count, block_ms=block_ms
     )
@@ -940,22 +1275,23 @@ def run_once(
         )
         _handle_person_state(bus, session, state, zone, now, published, profile, llm)
 
-    utterance_messages = bus.read(
-        UTTERANCE_STREAM, UTTERANCE_GROUP, consumer, count=count, block_ms=None
-    )
     for msg_id, event in utterance_messages:
         bus.ack(UTTERANCE_STREAM, UTTERANCE_GROUP, msg_id)
-        # `listen` also puts the early, transcript-free `SpeechStarted`
-        # barge-in signal on this stream.  Embodiment consumes that signal;
-        # the session core acts only on complete transcribed utterances.
+        if isinstance(event, SpeechStarted):
+            session.speech_started_at = now_fn()
+            continue
         if not isinstance(event, Utterance):
             continue
         now = now_fn()
+        session.speech_started_at = None
         if session.is_self_echo(event.text, now):
             _log(
                 "ignored self-echo Utterance", event_type="Utterance", session_id=session.session_id
             )
             continue
+        # The person has said something newer; its own reply replaces a queued one.
+        if session._pending_say is not None and session._pending_say.direct:
+            _drop_pending_say(bus, session, "superseded", now)
         prior_turns = session.recent_utterances
         transition = session.on_utterance(now)
         cooldown_reply = (
@@ -1024,42 +1360,170 @@ def run_once(
                             )
                         )
 
+                if (
+                    (session.phase in (Phase.ENGAGED, Phase.ESCALATED) or cooldown_reply)
+                    and is_hearing_request(event.text)
+                    and _repeat_louder(bus, session, now, profile)
+                ):
+                    continue
+
                 intent = interpretation.intent.value
+                intentional_silence = False
                 if session.phase in (Phase.ENGAGED, Phase.ESCALATED) or cooldown_reply:
                     reply_id = None
                     if cooldown_reply and interpretation.distress >= 2:
                         reply_id = REASSURE_WAITING_ID
-                    elif intent == "wants_bed" and (
-                        goal_before_interpretation == "return_to_bed"
-                        or session.phase == Phase.ESCALATED
+                    elif (
+                        session.phase == Phase.ENGAGED
+                        and session.last_person_state == "in_bed"
+                        and intent in {"wants_bed", "fine"}
+                        and not is_direct_question(event.text)
+                    ):
+                        # "Goodnight, that's all I need." from bed: let them
+                        # settle (NICE-05) rather than "take your time getting
+                        # back to bed".
+                        _intentional_silence(bus, session, event.text, "settling_in_bed")
+                        intentional_silence = True
+                    elif (
+                        intent == "wants_bed"
+                        and session.last_person_state != "on_floor"
+                        and (
+                            goal_before_interpretation == "return_to_bed"
+                            or session.phase == Phase.ESCALATED
+                        )
                     ):
                         reply_id = "acknowledge_return"
-                    elif intent == "confused_time":
-                        explicit_question = "?" in event.text or any(
-                            phrase in event.text.lower()
-                            for phrase in (
-                                "what time",
-                                "where am i",
-                                "what's the time",
-                                "is it morning",
-                            )
+                    elif (
+                        session.phase == Phase.ENGAGED
+                        and session.goal == "restroom"
+                        and interpretation.distress < 2
+                        and intent in {"need_restroom", "unclear", "fine"}
+                        and is_direct_question(event.text)
+                    ):
+                        # No directions from the floor, and no "someone is on
+                        # their way" either: nobody has been alerted yet in
+                        # ENGAGED. The on-floor rule escalates shortly.
+                        reply_id = (
+                            None if session.last_person_state == "on_floor" else PATH_LIGHT_ID
                         )
+                    elif (
+                        intent == "confused_time"
+                        and session.phase == Phase.ESCALATED
+                        and not any(
+                            word in event.text.lower()
+                            for word in ("where", "home", "house", "room", "bed")
+                        )
+                    ):
+                        reply_id = REASSURE_WAITING_ID
+                    elif intent == "confused_time":
+                        explicit_question = is_direct_question(event.text)
                         if explicit_question or not session.recently_said("orient_time_place", now):
                             reply_id = "orient_time_place"
+                        else:
+                            _intentional_silence(bus, session, event.text, "oriented_recently")
+                            intentional_silence = True
                     elif intent == "need_restroom" and (
                         session.phase == Phase.ESCALATED or cooldown_reply
                     ):
-                        reply_id = PATH_LIGHT_ID
+                        # Directions only for a named toilet need: "pressing a bit
+                        # more now" from a person with chest pain read as
+                        # need_restroom and got directions (2026-09-23T1854-live).
+                        reply_id = (
+                            PATH_LIGHT_ID
+                            if session.last_person_state != "on_floor"
+                            and veto.mentions_toilet(event.text)
+                            else REASSURE_WAITING_ID
+                        )
+                    elif session.phase == Phase.ENGAGED and intent == "pain":
+                        if not session._pain_acknowledged or is_direct_question(event.text):
+                            reply_id = COMFORT_PAIN_ID
+                        else:
+                            _intentional_silence(bus, session, event.text, "pain_acknowledged")
+                            intentional_silence = True
+                    elif (
+                        session.phase == Phase.ENGAGED
+                        and session.goal == "restroom"
+                        and intent in {"fine", "unclear", "need_restroom"}
+                    ):
+                        # "Nearly there." is often read as need_restroom; with the
+                        # goal already restroom it is progress, not a new need.
+                        progress = intent in {"fine", "unclear"} or (
+                            intent == "need_restroom" and goal_before_interpretation == "restroom"
+                        )
+                        if progress and interpretation.distress < 2:
+                            if not session._progress_acknowledged:
+                                reply_id = ACKNOWLEDGE_PROGRESS_ID
+                            else:
+                                _intentional_silence(
+                                    bus, session, event.text, "progress_acknowledged"
+                                )
+                                intentional_silence = True
+                    elif session.phase == Phase.ENGAGED and intent in {
+                        "looking_for_person",
+                        "wants_to_leave",
+                    }:
+                        if (
+                            not is_direct_question(event.text)
+                            and session._last_validation_at is not None
+                            and (now - session._last_validation_at).total_seconds() < 60
+                        ):
+                            _intentional_silence(bus, session, event.text, "validated_recently")
+                            intentional_silence = True
+                        else:
+                            reply_id = (
+                                ACKNOWLEDGE_FEELING_ID
+                                if session.last_person_state == "in_bed"
+                                else "validate_and_redirect"
+                            )
+                    elif session.phase == Phase.ENGAGED and intent == "unclear":
+                        if is_direct_question(event.text) and session._need_asked:
+                            reply_id = (
+                                ACKNOWLEDGE_FEELING_ID
+                                if session.last_person_state == "in_bed"
+                                else "validate_and_redirect"
+                            )
+                        elif not session._need_asked:
+                            reply_id = ASK_NEED_ID
+                        else:
+                            _intentional_silence(bus, session, event.text, "need_asked")
+                            intentional_silence = True
                     elif cooldown_reply and intent in {"looking_for_person", "pain"}:
                         reply_id = REASSURE_WAITING_ID
                     elif session.phase == Phase.ESCALATED:
-                        reply_id = REASSURE_WAITING_ID
-                    if reply_id is not None and session._last_say_at != now:
-                        _reply_to_utterance(bus, session, reply_id, now, profile, llm)
-            elif (
-                session.phase == Phase.ESCALATED or cooldown_reply
-            ) and session._last_say_at != now:
-                _reply_to_utterance(bus, session, REASSURE_WAITING_ID, now, profile, llm)
+                        reply_id = (
+                            CAREGIVER_ALERTED_ID
+                            if intent == "looking_for_person"
+                            else REASSURE_WAITING_ID
+                        )
+                    # A goal or phase transition may already have said or queued
+                    # a sentence this tick. A reply must not add a second one.
+                    reply_scheduled = session._last_say_at == now or (
+                        session._pending_say is not None and session._pending_say.queued_at == now
+                    )
+                    if reply_id is not None and not reply_scheduled:
+                        if (
+                            reply_id in {REASSURE_WAITING_ID, CAREGIVER_ALERTED_ID}
+                            and session.phase == Phase.ESCALATED
+                        ):
+                            _reassure_or_stay_silent(
+                                bus,
+                                session,
+                                event.text,
+                                now,
+                                profile,
+                                llm,
+                                distress=interpretation.distress,
+                                preferred_id=reply_id,
+                            )
+                        else:
+                            _reply_to_utterance(bus, session, reply_id, now, profile, llm)
+            elif session.phase in (Phase.ENGAGED, Phase.ESCALATED) or cooldown_reply:
+                if is_hearing_request(event.text) and _repeat_louder(bus, session, now, profile):
+                    continue
+                if session.phase == Phase.ESCALATED and session._last_say_at != now:
+                    _reassure_or_stay_silent(bus, session, event.text, now, profile, llm)
+                elif cooldown_reply and session._last_say_at != now:
+                    _reply_to_utterance(bus, session, REASSURE_WAITING_ID, now, profile, llm)
 
             # Interpretation may just have escalated. A plan must never run
             # afterward and use an otherwise legal goal-reset edge to undo
@@ -1075,7 +1539,11 @@ def run_once(
             reply_scheduled = session._last_say_at == now or (
                 session._pending_say is not None and session._pending_say.queued_at == now
             )
-            if plan is not None and not reply_scheduled:
+            if (
+                plan is not None
+                and not reply_scheduled
+                and not (interpretation is not None and intentional_silence)
+            ):
                 if plan.goal_change is not None:
                     proposed = session.propose_goal(plan.goal_change, "llm_plan", now)
                     if proposed is not None:
@@ -1104,8 +1572,13 @@ def run_once(
                             level=logging.WARNING,
                             strategy=plan.next_strategy,
                         )
-        elif (session.phase == Phase.ESCALATED or cooldown_reply) and session._last_say_at != now:
-            _reply_to_utterance(bus, session, REASSURE_WAITING_ID, now, profile, None)
+        elif session.phase in (Phase.ENGAGED, Phase.ESCALATED) or cooldown_reply:
+            if is_hearing_request(event.text) and _repeat_louder(bus, session, now, profile):
+                continue
+            if session.phase == Phase.ESCALATED and session._last_say_at != now:
+                _reassure_or_stay_silent(bus, session, event.text, now, profile, None)
+            elif cooldown_reply and session._last_say_at != now:
+                _reply_to_utterance(bus, session, REASSURE_WAITING_ID, now, profile, None)
 
     now = now_fn()
     transition = session.tick(now)
@@ -1115,6 +1588,7 @@ def run_once(
         )
 
     _flush_pending_say(bus, session, now, profile)
+    _escalated_checkin(bus, session, now, profile)
 
     return published
 
@@ -1163,6 +1637,49 @@ def maybe_emit_health(
     bus.publish(Health(source=SERVICE_NAME, service=SERVICE_NAME, ok=ok, detail=detail))
     _log("published Health", event_type="Health", ok=ok, detail=detail)
     return now
+
+
+LLM_REWARM_LEAD = timedelta(minutes=15)
+
+
+class LlmCacheRefresh:
+    """Once a day, unload the local model while nobody needs it, and load it
+    again shortly before the night window.
+
+    Ollama's MLX runner keeps a prefix cache that grows with every request
+    and is only trimmed near the whole host's memory (see
+    `agent.llm.OllamaLLM.unload`). Unloading frees it. The unload happens
+    only while the session is `IDLE` outside the night window, and the model
+    is loaded again `LLM_REWARM_LEAD` before the window opens, so the first
+    reply of the night is not a 20-second cold start. A backend without
+    `unload` (the OpenAI-compatible server) is left alone.
+    """
+
+    def __init__(self, unload: Callable[[], bool], warm_up: Callable[[], bool]) -> None:
+        self._unload = unload
+        self._warm_up = warm_up
+        self._unloaded_on: date | None = None
+        self._needs_warm_up = False
+
+    def step(self, session: Session, now: datetime) -> str | None:
+        """Unload or warm up if due; returns which, for logging and tests."""
+        if session.phase != Phase.IDLE:
+            return None
+        wall = session.wall_clock(now)
+        in_night = session.config.in_night_window(wall)
+        if self._needs_warm_up and session.config.in_night_window(wall + LLM_REWARM_LEAD):
+            self._needs_warm_up = not self._warm_up()
+            _log("local llm re-warmed before the night window", ok=not self._needs_warm_up)
+            return "warm_up"
+        if in_night or self._unloaded_on == wall.date():
+            return None
+        if session.config.in_night_window(wall + LLM_REWARM_LEAD):
+            return None  # too close to the night to unload now
+        self._unloaded_on = wall.date()
+        ok = self._unload()
+        self._needs_warm_up = True
+        _log("local llm unloaded to free its prefix cache", ok=ok)
+        return "unload"
 
 
 def _log_startup_timezone_check(config: AgentConfig) -> None:
@@ -1250,6 +1767,12 @@ def run() -> None:
 
             cloud_llm = ClaudeLLM(api_key=api_key, on_call=record_cloud_call)
     llm = FallbackLLM(local_llm, cloud_llm)
+    unload = getattr(local_llm, "unload", None)
+    cache_refresh = (
+        LlmCacheRefresh(unload, local_llm.warm_up)
+        if unload is not None and warm_up is not None
+        else None
+    )
 
     last_health_at: float | None = None
     last_heartbeat_at: datetime | None = None
@@ -1263,6 +1786,8 @@ def run() -> None:
                 bus, session, last_heartbeat_at, now, interval=HEARTBEAT_INTERVAL_S
             )
         last_health_at = maybe_emit_health(bus, last_health_at, time.time())
+        if cache_refresh is not None and not published:
+            cache_refresh.step(session, now)
         if not published:
             time.sleep(0.05)
 

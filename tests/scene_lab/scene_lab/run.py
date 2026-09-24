@@ -282,13 +282,17 @@ async def run_live(
         "model": agent_model(REPO_ROOT, stack.env),
         "scene_count": 0,
     }
+    model = agent_model(REPO_ROOT, stack.env)
     try:
+        # Start from an empty Ollama prefix cache (see Stack.unload_llm).
+        run.metadata["llm_reset"] = stack.reset_llm(model)
         if not no_stack_up:
             stack.up()
         await _execute_scene(scene, source, run, stack, preflight, thresholds)
     finally:
         if not keep_stack:
             stack.down()
+            stack.unload_llm(model)
         run.finish("live", preflight.get("commit", "-"), agent_model(REPO_ROOT, stack.env), 0, 1)
     return run.path
 
@@ -400,8 +404,13 @@ async def run_hours(
     scene_runner=None,
     stack_factory=Stack,
     clock=time.monotonic,
+    triage_after: bool = True,
+    triage_quick_tests: bool = True,
+    triage_fn=None,
 ) -> Path:
-    """Use one nightsim stack for a bounded series of director scenes."""
+    """Use one nightsim stack for a bounded series of director scenes, then
+    write a fix list (`fixes.md`, see `scene_lab.triage`) unless the batch
+    ran no scenes or stopped at the Claude usage limit."""
     if hours <= 0:
         raise ValueError("hours must be positive")
     if max_scenes is not None and max_scenes < 1:
@@ -433,7 +442,12 @@ async def run_hours(
     (run.path / "coverage.json").write_text(json.dumps(coverage(scenes), indent=2) + "\n")
     deadline = clock() + hours * 3600
     started = False
+    llm_resets: list[dict] = []
+    run.metadata["llm_resets"] = llm_resets
     try:
+        # Ollama's prefix cache grows with every request and is only trimmed
+        # near the whole host's memory (Stack.unload_llm); reset it per scene.
+        stack.unload_llm(model)
         stack.up()
         started = True
         stack.wait_ready()
@@ -488,6 +502,9 @@ async def run_hours(
             )
             mounted_person.write_bytes(profile.read_bytes())
             mounted_strategies.write_bytes(strategies.read_bytes())
+            if scenes:
+                # The first scene follows the agent's own start-up warm-up.
+                llm_resets.append({"scene": scene.id, **stack.reset_llm(model)})
             interrupted = False
             try:
                 if scene_runner is None:
@@ -534,5 +551,27 @@ async def run_hours(
     finally:
         if started and not keep_stack:
             stack.down()
+            stack.unload_llm(model)
         run.finish("live", preflight.get("commit", "-"), model, hours, len(scenes))
+    # Triage is another Claude call: skip it once the batch hit the usage limit.
+    bugs_file = run.path / "bugs.jsonl"
+    limited = bugs_file.exists() and any(
+        usage_limited(json.loads(line).get("summary"))
+        for line in bugs_file.read_text().splitlines()
+    )
+    if triage_after and scenes and not limited:
+        if triage_fn is None:
+            from .triage import triage as triage_fn
+        try:
+            fixes = await asyncio.to_thread(
+                triage_fn,
+                run.path,
+                REPO_ROOT,
+                preflight.get("commit", "HEAD"),
+                quick_tests=triage_quick_tests,
+            )
+            print(f"fix list: {fixes}")
+        except Exception as exc:  # noqa: BLE001 - the run itself is already complete
+            (run.path / "triage-error.txt").write_text(f"{type(exc).__name__}: {exc}\n")
+            print(f"triage failed: {exc}")
     return run.path

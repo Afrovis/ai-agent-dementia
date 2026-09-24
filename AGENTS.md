@@ -141,6 +141,16 @@ schema goes in the prompt and replies are validated as strictly as Ollama's.
 - `notify` logs alerts to `docker compose logs notify` when `NTFY_URL` is empty.
   `Notify` requires a `source` field, which is easy to miss when publishing one
   by hand.
+- Host Ollama's MLX runner keeps a prefix cache that grows about 35 MB per
+  request and is trimmed only near about 16 GiB on the 16 GB Mac mini; left
+  loaded through a long run it makes the host swap, and a model load under
+  that pressure kernel-panicked it on 2026-09-23. `api/ps` shows the load
+  size, not the cache (the runner logs `held="… GiB"` in
+  `~/.ollama/logs/server.log`). The agent unloads daily while idle and reloads
+  15 minutes before the night (`LlmCacheRefresh`); `scene_lab` resets the model
+  per director scene. Free it by hand only through the API, never by killing
+  Ollama (the orphaned runner keeps GPU memory):
+  `curl -s localhost:11434/api/generate -d '{"model":"gemma4:e4b-mlx","keep_alive":0}'`
 - Per-install configuration (`config/zones.yaml`, `phantoms.yaml`, `person.yaml`,
   `strategies.yaml`) is gitignored; only the `*.example.yaml` templates are
   committed.

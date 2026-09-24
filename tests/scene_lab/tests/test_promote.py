@@ -88,7 +88,7 @@ def _run(tmp_path):
     return root
 
 
-def test_promote_both_replays_recorded_failure(tmp_path):
+def test_promote_both_replays_recorded_question_reply(tmp_path):
     root = _run(tmp_path)
     files = promote(
         root, scene="question", at=30, to="both", out_dir=tmp_path / "out", claude=False
@@ -111,7 +111,7 @@ def test_promote_both_replays_recorded_failure(tmp_path):
         files["session_replay"], expect=spec, llm_mode="recorded", llm_latency="recorded"
     )
     passed, _ = check_expectations(timeline, spec)
-    assert not passed
+    assert passed
     bench = load_scenario(files["decision_bench"])
     assert not bench.labelled
     assert [round(e.t) for e in bench.timeline] == [0, 25]

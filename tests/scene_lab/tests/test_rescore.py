@@ -6,7 +6,8 @@ from scene_lab.thresholds import load
 from scene_lab.trace import Trace, TraceEvent
 
 
-def test_rescore_rechecks_traces_and_keeps_harness_entries(tmp_path):
+def test_rescore_rechecks_traces_and_keeps_harness_entries(tmp_path, monkeypatch):
+    monkeypatch.setenv("SCENE_LAB_RUNS", str(tmp_path))
     run = RunDir("live", root=tmp_path)
     trace = Trace(
         id="scene-a",

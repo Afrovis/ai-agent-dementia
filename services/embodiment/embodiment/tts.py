@@ -9,13 +9,16 @@ origin as the face page.  Generated audio never crosses Redis.
 from __future__ import annotations
 
 import hashlib
+import io
 import logging
 import re
 import threading
 import wave
 from collections.abc import Iterable, Mapping
+from dataclasses import replace
 from pathlib import Path
 
+import numpy as np
 import yaml
 
 logger = logging.getLogger("embodiment")
@@ -23,6 +26,10 @@ logger = logging.getLogger("embodiment")
 DEFAULT_VOICE_MODEL = Path("/app/models/piper/en_US-lessac-medium.onnx")
 DEFAULT_CACHE_DIR = Path("/tmp/night-companion-tts")
 DEFAULT_SPEED = 0.85
+# Piper peak-normalizes output, so a volume boost clips. A soft limiter
+# raises quieter samples while preserving the int16 peak without hard clipping.
+LOUD_LENGTH_SCALE = 1.15
+LOUD_SOFT_GAIN = 2.0
 DEFAULT_STRATEGY_TEMPLATES = (
     "Hello {name}, it's night-time.",
     "You are home in your bedroom, and it is night-time.",
@@ -80,12 +87,13 @@ class PiperSpeech:
         namespace = f"{path.name}:{stat.st_size}:{stat.st_mtime_ns}:{speed}"
         return cls(voice, config, cache_dir, cache_namespace=namespace)
 
-    def synthesize(self, text: str) -> str:
+    def synthesize(self, text: str, *, loud: bool = False) -> str:
         """Return the opaque audio id for ``text``, synthesizing once if needed."""
         clean_text = text.strip()
         if not clean_text:
             raise ValueError("cannot synthesize empty speech")
-        audio_id = hashlib.sha256(f"{self._cache_namespace}\0{clean_text}".encode()).hexdigest()
+        namespace = f"{self._cache_namespace}:loud" if loud else self._cache_namespace
+        audio_id = hashlib.sha256(f"{namespace}\0{clean_text}".encode()).hexdigest()
         destination = self.cache_dir / f"{audio_id}.wav"
         if destination.is_file():
             return audio_id
@@ -98,12 +106,32 @@ class PiperSpeech:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
             temporary = self.cache_dir / f".{audio_id}.wav.tmp"
             try:
-                with wave.open(str(temporary), "wb") as wav_file:
-                    self._voice.synthesize_wav(
-                        clean_text,
-                        wav_file,
-                        syn_config=self._synthesis_config,
+                if loud:
+                    config = replace(
+                        self._synthesis_config,
+                        length_scale=(self._synthesis_config.length_scale or 1.0)
+                        * LOUD_LENGTH_SCALE,
                     )
+                    raw = io.BytesIO()
+                    with wave.open(raw, "wb") as wav_file:
+                        self._voice.synthesize_wav(clean_text, wav_file, syn_config=config)
+                    raw.seek(0)
+                    with wave.open(raw, "rb") as original:
+                        params = original.getparams()
+                        samples = np.frombuffer(original.readframes(params.nframes), dtype="<i2")
+                    scaled = samples.astype(np.float64) / 32768.0
+                    boosted = np.tanh(LOUD_SOFT_GAIN * scaled) / np.tanh(LOUD_SOFT_GAIN)
+                    pcm = np.clip(np.rint(boosted * 32768), -32768, 32767).astype("<i2")
+                    with wave.open(str(temporary), "wb") as wav_file:
+                        wav_file.setparams(params)
+                        wav_file.writeframes(pcm.tobytes())
+                else:
+                    with wave.open(str(temporary), "wb") as wav_file:
+                        self._voice.synthesize_wav(
+                            clean_text,
+                            wav_file,
+                            syn_config=self._synthesis_config,
+                        )
                 temporary.replace(destination)
             finally:
                 temporary.unlink(missing_ok=True)
@@ -155,8 +183,8 @@ def load_prerender_phrases(
     """Expand configured fixed Say templates into phrases to warm at startup.
 
     The built-in greetings say only that it is night-time. A caregiver may
-    still configure any fixed template with `{time_words}`; expanding all
-    twelve hours for those templates makes their first use a cache hit while
+    still configure any fixed template with `{time_words}`; expanding the
+    spoken day-part variants for those templates makes their first use a cache hit while
     leaving LLM-composed responses to be synthesized on demand.
     Invalid/missing caregiver files degrade to the safe built-in templates;
     their contents are never logged.
@@ -194,11 +222,22 @@ def load_prerender_phrases(
         "caregiver_name": caregiver_name.strip(),
     }
     phrases: list[str] = []
+    # Keep in sync with agent.strategies.spoken_time_words; services do not
+    # import one another in production.
+    spoken_time_phrases = (
+        "late in the evening",
+        "late at night",
+        "night-time",
+        "the middle of the night",
+        "still night-time",
+        "very early in the morning",
+        "nearly morning and still dark",
+    )
     for template in templates:
-        hours = range(1, 13) if "{time_words}" in template else (None,)
-        for hour in hours:
+        variants = spoken_time_phrases if "{time_words}" in template else (None,)
+        for phrase in variants:
             values = dict(base_values)
-            values["time_words"] = "" if hour is None else f"{hour} o'clock at night"
+            values["time_words"] = "" if phrase is None else phrase
             rendered = _render_template(template, values)
             if rendered:
                 phrases.append(rendered)

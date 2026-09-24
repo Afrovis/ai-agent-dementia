@@ -29,6 +29,8 @@ from dataclasses import dataclass
 GUIDED_RETURN = "guided_return"
 VALIDATE_AND_REDIRECT = "validate_and_redirect"
 ORIENT_TIME_PLACE = "orient_time_place"
+PATH_LIGHT = "path_light"
+ACKNOWLEDGE_RETURN = "acknowledge_return"
 
 
 @dataclass(frozen=True)
@@ -104,6 +106,14 @@ _AVOID_TERM_RE = re.compile(
 )
 
 
+def mentions_toilet(text: str) -> bool:
+    return bool(_TOILET_RE.search(text))
+
+
+def states_need(text: str) -> bool:
+    return bool(_NEED_RE.search(text))
+
+
 def avoid_terms(things_to_avoid: tuple[str, ...]) -> tuple[str, ...]:
     """The literal terms a profile's `things_to_avoid` forbids mentioning."""
     terms = []
@@ -119,6 +129,18 @@ def _deny(rule: str, clause: str, reason: str) -> Verdict:
 
 
 def _check_strategy(strategy: str, context: VetoContext) -> Verdict:
+    if strategy == PATH_LIGHT and context.person_state == "on_floor":
+        return _deny(
+            "no_directions_from_floor",
+            "FALL-01",
+            "path_light to a person who is on the floor",
+        )
+    if context.person_state == "on_floor" and strategy in (GUIDED_RETURN, ACKNOWLEDGE_RETURN):
+        return _deny(
+            "no_return_prompt_from_floor",
+            "FALL-01",
+            f"{strategy} to a person who is on the floor",
+        )
     if context.person_state == "in_bed" and strategy in (
         GUIDED_RETURN,
         VALIDATE_AND_REDIRECT,

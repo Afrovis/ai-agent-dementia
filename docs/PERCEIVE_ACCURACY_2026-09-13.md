@@ -187,8 +187,9 @@ session split inference from classification.
   live backend would produce (0.25 model floor, zeroed keypoints dropped),
   drives the real `StateTracker`, and scores with `vlm_agreement.py`. It adds
   a false floor episode count: a run of `on_floor` frames with no VLM
-  `on_floor` frame in it. The agent pages on the first `on_floor` frame
-  (`AGENT_FLOOR_LIMIT_SECONDS=0`), so episodes are what a caregiver feels.
+  `on_floor` frame in it. The original probe used
+  `AGENT_FLOOR_LIMIT_SECONDS=0`, which paged on the first frame. The current
+  default waits 10 continuous seconds; short episodes get an info notice.
 - Parity: the replay reproduces the section 4 numbers for YOLOv8n and v8s at
   320 exactly (0.56 / 0.49 / 7 of 9 and 0.57 / 0.49 / 6 of 9), and a real
   `predict` run with the final rule set matches the replay exactly on both

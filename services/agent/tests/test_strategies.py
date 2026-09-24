@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
+from dialogue_bench.checks import CheckContext, CheckStatus, conjunction_but, states_clock_time
 
 from agent.rules import validate_say
 from agent.strategies import (
@@ -20,6 +21,7 @@ from agent.strategies import (
     StrategyEngine,
     load_strategies,
     render_template,
+    spoken_time_words,
     time_as_words,
 )
 
@@ -59,6 +61,31 @@ def write_wav(path: Path, *, seconds: float = 0.25) -> None:
 
 
 # --- StrategyEngine: ordering, enable/disable, cooldown, dwell -----------
+
+
+def test_spoken_time_phrases_rotate_by_hour_band_and_pass_speech_checks():
+    expected = {
+        22: ("late in the evening", "late at night", "night-time"),
+        2: ("the middle of the night", "night-time", "still night-time"),
+        5: ("very early in the morning", "still night-time", "nearly morning and still dark"),
+        12: ("night-time", "night-time", "night-time"),
+    }
+    for hour, phrases in expected.items():
+        now = NOW.replace(hour=hour)
+        assert tuple(spoken_time_words(now, i) for i in range(3)) == phrases
+        for phrase in phrases:
+            sentence = f"You are home in your bedroom, and it is {phrase}."
+            assert validate_say(sentence, seconds_since_last_say=None, min_gap_seconds=8).accepted
+            ctx = CheckContext(
+                profile={},
+                utterance=None,
+                time_words=phrase,
+                scene_note=None,
+                caregiver_phrase_template="",
+                avoid_terms=(),
+            )
+            assert states_clock_time(sentence, ctx).status == CheckStatus.PASS
+            assert conjunction_but(sentence, ctx).status == CheckStatus.PASS
 
 
 def test_engine_selects_first_in_configured_order():
@@ -412,6 +439,42 @@ def test_every_default_strategy_template_passes_validate_say(strategy, profile):
     for text in _rendered_texts(strategy, profile):
         result = validate_say(text, seconds_since_last_say=None, min_gap_seconds=8.0)
         assert result.accepted is True, f"{strategy.id!r} produced {text!r}: {result.reason}"
+
+
+@pytest.mark.parametrize(
+    "strategy_id",
+    [
+        "acknowledge_pain",
+        "comfort_pain",
+        "acknowledge_progress",
+        "acknowledge_feeling",
+        "ask_need",
+        "caregiver_alerted",
+    ],
+)
+def test_new_reply_phrases_pass_validate_say(strategy_id):
+    strategy = next(s for s in DEFAULT_STRATEGIES if s.id == strategy_id)
+    for profile in (DEFAULT_PROFILE, NAMED_PROFILE):
+        text = render_template(strategy.say_template, profile)
+        assert validate_say(text, seconds_since_last_say=None, min_gap_seconds=8).accepted
+        ctx = CheckContext(
+            profile={"name": profile.name, "caregiver_name": profile.caregiver_name},
+            utterance=None,
+            time_words="the middle of the night",
+            scene_note=None,
+            caregiver_phrase_template="",
+            avoid_terms=(),
+        )
+        assert states_clock_time(text, ctx).status == CheckStatus.PASS
+        assert conjunction_but(text, ctx).status == CheckStatus.PASS
+        assert "remember" not in text.lower()
+        assert not any(phrase in text.lower() for phrase in ("you can't", "you're wrong"))
+
+
+def test_caregiver_alerted_degrades_without_a_caregiver_name():
+    strategy = next(s for s in DEFAULT_STRATEGIES if s.id == "caregiver_alerted")
+    text = render_template(strategy.say_template, PersonProfile(caregiver_name=""))
+    assert text == "I've let someone know, and help is on the way."
 
 
 @pytest.mark.parametrize("profile", [DEFAULT_PROFILE, NAMED_PROFILE], ids=["unset_name", "named"])

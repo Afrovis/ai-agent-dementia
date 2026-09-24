@@ -92,6 +92,97 @@ def test_tt1_and_tm2():
     ] == "strategy_changed"
 
 
+def test_tt1_deliberate_silence_passes_unless_it_answers_a_question():
+    for text, severity, passed, cause in (
+        ("I am waiting", "info", True, "no reply by design: reassured_enough"),
+        (
+            "Is anyone there",
+            "review",
+            False,
+            "no reply by design to a question: reassured_enough",
+        ),
+    ):
+        trace = baseline(
+            ev(2, "Utterance", text=text),
+            TraceEvent(
+                t=3,
+                kind="decision",
+                type="Activity",
+                data={"decision": "no_reply", "reason": "reassured_enough"},
+            ),
+            end=40,
+        )
+        result = next(r for r in score(trace, "TT-1") if cause in r.reason)
+        assert (result.severity, result.passed, result.context["drop_reason"]) == (
+            severity,
+            passed,
+            "reassured_enough",
+        )
+
+
+def test_tt1_cancellation_at_start_and_recovery():
+    cancelled = (
+        ev(4.1, "Activity", kind="playback", phase="start", detail="requested"),
+        ev(4.2, "Activity", kind="playback", phase="end", detail="barge-in"),
+    )
+    trace = baseline(
+        ev(2, "Utterance", text="Where am I?"),
+        ev(4, "Say", text="You are at home.", strategy="orient"),
+        *cancelled,
+        end=40,
+    )
+    fail(trace, "TT-1", "major", "reply cancelled at start by barge-in")
+    open_speech = baseline(
+        ev(2, "Utterance", text="Where am I?"),
+        ev(3, "SpeechStarted"),
+        ev(4, "Say", text="You are at home.", strategy="orient"),
+        ev(4.1, "Activity", kind="playback", phase="start", detail="requested"),
+        ev(5, "Utterance", text="Can you hear me?"),
+        end=40,
+    )
+    fail(open_speech, "TT-1", "major", "reply cancelled at start by barge-in")
+    recovered = baseline(
+        ev(2, "Utterance", text="Where am I?"),
+        ev(4, "Say", text="You are at home.", strategy="orient"),
+        *cancelled,
+        ev(12, "Utterance", text="Can you hear me?"),
+        ev(13, "Say", text="Yes.", strategy="orient"),
+        ev(13.1, "Activity", kind="playback", phase="start", detail="playing"),
+        ev(14, "Activity", kind="playback", phase="end", detail="ended"),
+        end=40,
+    )
+    fail(recovered, "TT-1", "info", "reply cancelled at start by barge-in")
+    unrelated = baseline(
+        ev(2, "Utterance", text="Where am I?"),
+        ev(4, "Say", text="You are at home.", strategy="orient"),
+        ev(4.1, "Activity", kind="playback", phase="start", detail="requested"),
+        ev(4.2, "Activity", kind="playback", phase="end", detail="failed"),
+        end=40,
+    )
+    fail(unrelated, "TT-1", "critical", "reply composed but never played")
+
+
+def test_tt1_designed_silence_reviews_distress_and_stated_need():
+    for text, distress in (("My chest feels heavy.", 2), ("Please help me.", 0)):
+        trace = baseline(
+            ev(2, "Utterance", text=text),
+            TraceEvent(
+                t=2.5,
+                kind="decision",
+                type="Activity",
+                data={"decision": "interpreted", "text": text, "distress": distress},
+            ),
+            TraceEvent(
+                t=3,
+                kind="decision",
+                type="Activity",
+                data={"decision": "no_reply", "reason": "reassured_enough"},
+            ),
+            end=40,
+        )
+        fail(trace, "TT-1", "review", "no reply by design to distress: reassured_enough")
+
+
 def _said(t, strategy, reply, trigger):
     return TraceEvent(
         t=t,
@@ -114,6 +205,13 @@ def test_tt1_scheduled_step_is_not_a_reply():
         _said(4, "validate_and_redirect", True, "utterance_reply"),
     )
     passes(reply, "TT-1")
+    repeated = baseline(
+        ev(2, "Utterance", text="Speak up."),
+        ev(4, "Say", text="Tom is safe.", strategy="repeat_louder", emphasis="loud"),
+        _said(4, "repeat_louder", True, "hearing_request"),
+    )
+    passes(repeated, "TT-1")
+    passes(repeated, "SM-5")
 
 
 def test_tt2_review_and_question_heuristic():
@@ -270,6 +368,16 @@ def test_sm3_sm4():
         "SM-3",
     )
     fail(baseline(end=100), "SM-3", "major", "silent session")
+    for gap, fails in ((130, False), (160, True)):
+        escalated = scene(
+            ev(0, "PersonState", state="on_floor", zone="other"),
+            ev(0, "SessionState", phase="ESCALATED", goal="wait_for_caregiver"),
+            ev(0, "Say", text="Help is coming.", strategy="escalate_phone"),
+            ev(gap, "Say", text="I'm here with you.", strategy="reassure_waiting"),
+            end=gap,
+        )
+        assert bool([r for r in score(escalated, "SM-3") if not r.passed]) is fails
+    fail(baseline(end=70), "SM-3", "major", "silent session")
     returns_to_bed = baseline(ev(20, "PersonState", state="in_bed", zone="bed"))
     passes(returns_to_bed, "SM-3")
     fail(
@@ -358,6 +466,14 @@ def test_sm5_skip_and_veto():
         ev(6, "Say", text="Let's go back to bed now.", strategy="guided_return"),
     )
     assert not [r for r in score(wants_bed, "SM-5") if not r.passed]
+
+
+def test_sm5_flags_path_light_said_to_person_on_floor():
+    trace = baseline(
+        ev(1, "PersonState", state="on_floor", zone="other"),
+        ev(10, "Say", text="The restroom is to the left.", strategy="path_light"),
+    )
+    fail(trace, "SM-5", "critical", "no_directions_from_floor")
 
 
 def test_tm1_tm3():

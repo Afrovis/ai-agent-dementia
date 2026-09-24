@@ -85,6 +85,12 @@ ESCALATE_PHONE_ID = "escalate_phone"
 PATH_LIGHT_ID = "path_light"
 REASSURE_WAITING_ID = "reassure_waiting"
 ACKNOWLEDGE_RETURN_ID = "acknowledge_return"
+ACKNOWLEDGE_PAIN_ID = "acknowledge_pain"
+COMFORT_PAIN_ID = "comfort_pain"
+ACKNOWLEDGE_PROGRESS_ID = "acknowledge_progress"
+ACKNOWLEDGE_FEELING_ID = "acknowledge_feeling"
+ASK_NEED_ID = "ask_need"
+CAREGIVER_ALERTED_ID = "caregiver_alerted"
 GUIDED_RETURN_ID = "guided_return"
 FAMILIAR_VOICE_ID = "familiar_voice"
 
@@ -349,6 +355,90 @@ DEFAULT_STRATEGIES: tuple[StrategyDef, ...] = (
         # Force-only: see `StrategyDef.terminal`.
         terminal=True,
     ),
+    StrategyDef(
+        id=ACKNOWLEDGE_PAIN_ID,
+        order=11,
+        enabled=True,
+        intrusiveness=2,
+        dwell_seconds=0.0,
+        cooldown_seconds=0.0,
+        face="speaking",
+        brightness=0.5,
+        headline_template="Help is coming",
+        body_template="Someone is on their way.",
+        say_template="I'm sorry it hurts{name_vocative}; I'm letting someone know now.",
+        goal_only=True,
+    ),
+    StrategyDef(
+        id=COMFORT_PAIN_ID,
+        order=12,
+        enabled=True,
+        intrusiveness=2,
+        dwell_seconds=0.0,
+        cooldown_seconds=0.0,
+        face="speaking",
+        brightness=0.5,
+        headline_template="I'm here with you",
+        body_template="Try to rest comfortably.",
+        say_template="I'm sorry it hurts{name_vocative}; I'm here with you.",
+        goal_only=True,
+    ),
+    StrategyDef(
+        id=ACKNOWLEDGE_PROGRESS_ID,
+        order=13,
+        enabled=True,
+        intrusiveness=2,
+        dwell_seconds=0.0,
+        cooldown_seconds=0.0,
+        face="speaking",
+        brightness=0.5,
+        headline_template="Take your time",
+        body_template="The path is lit.",
+        say_template="Good{name_vocative}, take your time.",
+        goal_only=True,
+    ),
+    StrategyDef(
+        id=ACKNOWLEDGE_FEELING_ID,
+        order=14,
+        enabled=True,
+        intrusiveness=2,
+        dwell_seconds=0.0,
+        cooldown_seconds=0.0,
+        face="speaking",
+        brightness=0.5,
+        headline_template="I'm here with you",
+        body_template="You can rest now.",
+        say_template="I'm here with you{name_vocative}; you can rest now.",
+        goal_only=True,
+    ),
+    StrategyDef(
+        id=ASK_NEED_ID,
+        order=15,
+        enabled=True,
+        intrusiveness=2,
+        dwell_seconds=0.0,
+        cooldown_seconds=0.0,
+        face="speaking",
+        brightness=0.5,
+        headline_template="Is there something you need?",
+        body_template="I'm here to help.",
+        say_template="Is there something you need{name_vocative}?",
+        goal_only=True,
+    ),
+    StrategyDef(
+        id=CAREGIVER_ALERTED_ID,
+        order=16,
+        enabled=True,
+        intrusiveness=2,
+        dwell_seconds=0.0,
+        cooldown_seconds=0.0,
+        face="speaking",
+        brightness=0.5,
+        headline_template="Help is coming",
+        body_template="Someone is on their way.",
+        say_template="I've let {caregiver_name} know{name_vocative}, and help is on the way.",
+        goal_only=True,
+    ),
 )
 
 
@@ -402,7 +492,7 @@ def render_template(template: str, profile: PersonProfile, **extra: str) -> str:
     fields: dict[str, str] = {
         "name": spoken_name,
         "preferred_address": profile.preferred_address,
-        "caregiver_name": profile.caregiver_name,
+        "caregiver_name": profile.caregiver_name or "someone",
         "caregiver_relationship": profile.caregiver_relationship,
         "restroom_location": profile.restroom_location,
         "restroom_direction": (
@@ -450,6 +540,23 @@ def time_as_words(now: datetime) -> str:
     if hour == 0:
         hour = 12
     return f"{hour} o'clock at night"
+
+
+def spoken_time_words(now: datetime, variant: int) -> str:
+    """A rotating day-part for speech; exact hours belong on the screen only."""
+    if 21 <= now.hour <= 23:
+        phrases = ("late in the evening", "late at night", "night-time")
+    elif 0 <= now.hour <= 3:
+        phrases = ("the middle of the night", "night-time", "still night-time")
+    elif 4 <= now.hour <= 6:
+        phrases = (
+            "very early in the morning",
+            "still night-time",
+            "nearly morning and still dark",
+        )
+    else:
+        phrases = ("night-time",)
+    return phrases[variant % len(phrases)]
 
 
 def _log_fallback(reason: str, path: str) -> None:
