@@ -1,4 +1,4 @@
-# Handoff: scene_lab fixes still to finish and deploy (2026-09-23, evening)
+# Handoff: scene_lab fixes still to finish and deploy (2026-09-23, updated 2026-09-24)
 
 Branch `scene-lab-fixes`, worktree
 `/Users/mathiasserver/Documents/ai-agent-dementia/.claude/worktrees/scene-lab-fixes`,
@@ -54,25 +54,26 @@ changes (5a, 7a) have not been checked against the live model yet.
      recovered).
    - Designed silence to distress ≥ 2 or a stated need is `review`, not `info`.
 
-## Not started yet
+## Round 4: talk-over hold and BASELINE, committed and pushed
 
-3. `.codex/brief-talkover.md`, to run after job 1 is committed because it touches the same
-   files. Scope:
-   - Hold any non-terminal Say while the person is speaking: record `SpeechStarted`, and clear
-     it on the Utterance or after 15 s.
-   - A queued reply is superseded by the newer utterance's reply.
-   - Fix false self-echo drops: content words only, overlap ≥ 0.6, at least 3 matching words.
+3. Done from `.codex/brief-talkover.md` (Codex, then reviewed): the agent records
+   `SpeechStarted` and holds any non-terminal Say until the Utterance or 15 s
+   (`pending_say_deferred speech_in_progress`); `escalate_phone` is exempt. A queued direct
+   reply is dropped as `superseded` by the newer utterance. That drop comes after the
+   self-echo check, so an echo of the device's own sentence cannot cancel a real reply. Self-echo
+   ignores stopwords and needs ≥ 3 matching content words and ≥ 0.6 overlap. Utterances are
+   now read before the blocking person read, so a reply can wait up to one extra 200 ms
+   `block_ms`. Tests: 731 passed, 1 skipped; ruff clean. Not checked live: recorded replays
+   carry no `SpeechStarted` timing.
+4. Done: `tests/scene_lab/BASELINE.md` has a "Third director hour, `2026-09-23T1854-live`"
+   section marking fix-list items 1–11 and the checker items, and the PR #90 description has a
+   third-round section.
 
-   Run it with
-   `codex exec -m gpt-6-sol -c model_reasoning_effort="medium" -C <worktree> -s workspace-write -o .codex/out-talkover.md - < .codex/brief-talkover.md`.
-4. Update `tests/scene_lab/BASELINE.md` "Triage after the director hours" with the run
-   `2026-09-23T1854-live` results: 13 scenes, no contention, 7 critical, 29 major, 37 review.
-   Its fix list is at
-   `../data-ai-agent-dementia/analysis/scene-lab/runs/2026-09-23T1854-live/fixes.md`. Mark
-   items 1–11 fixed or open. Push, and update the PR #90 description.
+## Next
+
 5. Verify with a new director hour using the skill (`.claude/skills/scene-lab-director-run/`).
    It will be the first run with "speak up", the floor timing and the talk-over hold. Watch the
-   poor-hearing and pain scenes in particular.
+   poor-hearing and pain scenes in particular, and check the prompt-only changes (5a, 7a).
 
 ## Deploying (after the PR is reviewed and merged)
 

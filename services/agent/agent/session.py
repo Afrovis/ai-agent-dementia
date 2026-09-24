@@ -144,7 +144,7 @@ class GoalChangeResult:
 
 @dataclass(frozen=True)
 class PendingSay:
-    """A validated sentence awaiting only the minimum silence gap."""
+    """A validated sentence awaiting quiet speech and/or the minimum gap."""
 
     event: Say
     goal: str
@@ -258,6 +258,7 @@ class Session:
     _need_asked: bool = field(default=False, init=False, repr=False)
     _last_validation_at: datetime | None = field(default=None, init=False, repr=False)
     _pending_say: PendingSay | None = field(default=None, init=False, repr=False)
+    speech_started_at: datetime | None = field(default=None, init=False)
     _compliance_until: datetime | None = field(default=None, init=False, repr=False)
     _say_history: list[tuple[datetime, str, str]] = field(
         default_factory=list, init=False, repr=False
@@ -990,18 +991,52 @@ class Session:
     def is_self_echo(self, text: str, now: datetime) -> bool:
         import re
 
-        tokens = re.findall(r"[a-z0-9]+", text.lower())
-        if not tokens:
+        stopwords = {
+            "the",
+            "a",
+            "an",
+            "and",
+            "to",
+            "of",
+            "is",
+            "it",
+            "you",
+            "i",
+            "now",
+            "there",
+            "here",
+            "that",
+            "this",
+            "on",
+            "in",
+            "at",
+            "for",
+            "with",
+            "be",
+            "are",
+            "was",
+            "just",
+            "so",
+            "oh",
+            "well",
+            "yes",
+            "no",
+            "dear",
+            "please",
+            "okay",
+            "ok",
+            "right",
+            "all",
+        }
+        tokens = set(re.findall(r"[a-z0-9]+", text.lower())) - stopwords
+        if len(tokens) < 2:
             return False
         for at, _, said in self._say_history:
             if not 0 <= (now - at).total_seconds() <= 20:
                 continue
-            own = re.findall(r"[a-z0-9]+", said.lower())
-            if len(tokens) <= 3 and any(
-                own[i : i + len(tokens)] == tokens for i in range(len(own))
-            ):
-                return True
-            if len(set(tokens) & set(own)) / len(set(tokens)) >= 0.6:
+            own = set(re.findall(r"[a-z0-9]+", said.lower())) - stopwords
+            matches = len(tokens & own)
+            if matches >= 3 and matches / len(tokens) >= 0.6:
                 return True
         return False
 

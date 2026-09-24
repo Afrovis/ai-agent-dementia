@@ -865,13 +865,27 @@ def test_new_need_breaks_compliance_grace():
     assert not session.compliance_hold(NIGHT + timedelta(seconds=3))
 
 
-def test_self_echo_matches_short_fragment_and_overlap_only_within_twenty_seconds():
+def test_self_echo_requires_three_content_words_within_twenty_seconds():
     session = make_session()
     session.record_say(NIGHT, "guided_return", "Let's go back to bed now, Jean.")
-    assert session.is_self_echo("Go.", NIGHT + timedelta(seconds=2))
+    assert not session.is_self_echo("Go.", NIGHT + timedelta(seconds=2))
     assert session.is_self_echo("Go back to bed now", NIGHT + timedelta(seconds=2))
     assert not session.is_self_echo("I need the restroom", NIGHT + timedelta(seconds=2))
-    assert not session.is_self_echo("Go.", NIGHT + timedelta(seconds=21))
+    assert not session.is_self_echo("Go back to bed now", NIGHT + timedelta(seconds=21))
+
+
+def test_self_echo_ignores_common_words_in_real_speech():
+    session = make_session()
+    session.record_say(
+        NIGHT,
+        "path_light",
+        "The restroom is through the bedroom door and immediately to the left, Jean.",
+    )
+    assert not session.is_self_echo("There, through the door now.", NIGHT + timedelta(seconds=2))
+    assert session.is_self_echo(
+        "The restroom is through the bedroom door and immediately to the left",
+        NIGHT + timedelta(seconds=2),
+    )
 
 
 def test_ladder_skips_a_strategy_already_spoken_as_a_direct_reply():

@@ -1917,6 +1917,117 @@ def test_scheduled_step_keeps_eight_second_gap():
     assert session._pending_say is not None
 
 
+def _speech_held_ladder():
+    bus = make_bus()
+    strategies = small_strategies(dwell=5, n=3)
+    strategies[1] = dc_replace(strategies[1], dwell_seconds=30)
+    session = Session(config=AgentConfig(observe_seconds=1), strategies=strategies)
+    now_fn, advance = make_clock(NIGHT)
+    bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=now_fn)
+    advance(2)
+    run_once(bus, session, now_fn=now_fn)
+    advance(1)
+    bus.publish(SpeechStarted(source="listen"))
+    run_once(bus, session, now_fn=now_fn)
+    advance(4)
+    run_once(bus, session, now_fn=now_fn)
+    assert session._pending_say is not None
+    assert not bus.read("say", "test", "held")
+    assert any(
+        d.get("decision") == "pending_say_deferred" and d.get("reason") == "speech_in_progress"
+        for d in decisions(bus)
+    )
+    return bus, session, now_fn, advance
+
+
+def test_ladder_waits_for_utterance_end_before_speaking():
+    bus, session, now_fn, advance = _speech_held_ladder()
+    advance(1)
+    bus.publish(Utterance(source="listen", text="I am still here", confidence=0.9, duration_s=5))
+    run_once(bus, session, now_fn=now_fn)
+    assert session.speech_started_at is None
+    assert [e.strategy for _, e in bus.read("say", "test", "released")] == ["s2"]
+
+
+def test_ladder_speaks_after_speech_start_expires():
+    bus, session, now_fn, advance = _speech_held_ladder()
+    advance(12)
+    run_once(bus, session, now_fn=now_fn)
+    assert session.speech_started_at is None
+    assert [e.strategy for _, e in bus.read("say", "test", "expired")] == ["s2"]
+
+
+def test_terminal_escalate_phone_speaks_during_speech():
+    bus, session, now_fn, _advance = _speech_held_ladder()
+    terminal = next(s for s in DEFAULT_STRATEGIES if s.id == ESCALATE_PHONE_ID)
+    transition = Transition(
+        Phase.ESCALATED,
+        session.session_id,
+        session.goal,
+        session.strategy_index,
+        "floor_limit",
+        strategy=terminal,
+    )
+    _publish_transition(bus, transition, session, now_fn())
+    assert [e.strategy for _, e in bus.read("say", "test", "terminal")] == ["escalate_phone"]
+
+
+def test_speech_held_reply_is_superseded_by_next_utterance_reply():
+    bus, session, now_fn, advance = engaged_for_reply()
+    advance(1)
+    bus.publish(SpeechStarted(source="listen"))
+    run_once(bus, session, now_fn=now_fn)
+    strategy = next(s for s in DEFAULT_STRATEGIES if s.id == "ask_need")
+    transition = Transition(
+        Phase.ENGAGED,
+        session.session_id,
+        session.goal,
+        session.strategy_index,
+        "utterance_reply",
+        strategy=strategy,
+    )
+    assert not _maybe_publish_say(
+        bus, transition, session, now_fn(), PersonProfile(name="Jean"), direct=True
+    )
+    advance(1)
+    llm = FakeLLM(interpretations=[Interpretation(intent=Intent.CONFUSED_TIME, distress=0)])
+    say_to_agent(bus, session, now_fn, llm, "What time is it?")
+    says = [e for _, e in bus.read("say", "test", "superseded_reply")]
+    assert [e.strategy for e in says] == ["orient_time_place"]
+    assert any(
+        d.get("decision") == "pending_say_dropped" and d.get("reason") == "superseded"
+        for d in decisions(bus)
+    )
+
+
+def test_self_echo_does_not_supersede_speech_held_reply():
+    bus, session, now_fn, advance = engaged_for_reply()
+    echoed = "The restroom is through the bedroom door and immediately to the left, Jean."
+    session.record_say(now_fn(), "path_light", echoed)
+    advance(1)
+    bus.publish(SpeechStarted(source="listen"))
+    run_once(bus, session, now_fn=now_fn)
+    strategy = next(s for s in DEFAULT_STRATEGIES if s.id == "ask_need")
+    transition = Transition(
+        Phase.ENGAGED,
+        session.session_id,
+        session.goal,
+        session.strategy_index,
+        "utterance_reply",
+        strategy=strategy,
+    )
+    assert not _maybe_publish_say(
+        bus, transition, session, now_fn(), PersonProfile(name="Jean"), direct=True
+    )
+    advance(1)
+    bus.publish(Utterance(source="listen", text=echoed, confidence=0.9, duration_s=4))
+    run_once(bus, session, now_fn=now_fn)
+    assert session._pending_say is not None
+    assert session._pending_say.event.strategy == "ask_need"
+    assert not any(d.get("reason") == "superseded" for d in decisions(bus))
+
+
 @pytest.mark.parametrize(
     "utterance,distress", [("Help me up.", 0), ("So cold.", 0), ("I feel worse.", 2)]
 )

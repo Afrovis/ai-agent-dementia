@@ -1,7 +1,7 @@
 """Entry point for the `agent` service (issue #12): the real session core.
 
-Reads `PersonState` from the `person` stream and complete `Utterance` events
-from `speech_in` (ignoring its early barge-in signal), and drives an
+Reads `PersonState` from the `person` stream and `SpeechStarted`/`Utterance`
+events from `speech_in`, and drives an
 `agent.session.Session` -- the deterministic phase state machine, see that
 module and `agent.rules` for what it does and does not decide.
 
@@ -78,6 +78,7 @@ from nc_shared.events import (
     Say,
     SessionState,
     Show,
+    SpeechStarted,
     Utterance,
 )
 
@@ -112,6 +113,7 @@ SERVICE_NAME = "agent"
 HEALTH_INTERVAL_S = 30.0
 HEARTBEAT_INTERVAL_S = 60.0
 PENDING_SAY_MAX_AGE_S = 30.0
+SPEECH_STARTED_MAX_AGE_S = 15.0
 MAX_REASSURANCES = 2
 ESCALATED_CHECKIN_S = 120.0
 # After the cap, a direct question, a stated need or distress 2+ is answered at most once
@@ -611,7 +613,9 @@ def _maybe_publish_say(
         interruptible=not terminal_reply,
         clip_id=strategy.clip_id,
     )
-    if gap_only:
+    speech_active = _speech_in_progress(session, now)
+    hold_for_speech = speech_active and strategy.id != ESCALATE_PHONE_ID
+    if gap_only or hold_for_speech:
         session._pending_say = PendingSay(
             say_event,
             transition.goal,
@@ -626,8 +630,21 @@ def _maybe_publish_say(
             strategy=strategy.id,
             session_id=transition.session_id,
             goal=transition.goal,
-            reason=result.reason,
+            reason="speech_in_progress" if hold_for_speech else result.reason,
         )
+        if hold_for_speech:
+            _decision_activity(
+                bus,
+                transition.session_id,
+                {
+                    "decision": "pending_say_deferred",
+                    "reason": "speech_in_progress",
+                    "strategy": strategy.id,
+                    "direct": direct,
+                    "phase": session.phase.value,
+                    "goal": session.goal,
+                },
+            )
         return False
 
     bus.publish(say_event)
@@ -681,6 +698,16 @@ def _said_decision(
     )
 
 
+def _speech_in_progress(session: Session, now: datetime) -> bool:
+    started = session.speech_started_at
+    if started is None:
+        return False
+    if (now - started).total_seconds() >= SPEECH_STARTED_MAX_AGE_S:
+        session.speech_started_at = None
+        return False
+    return True
+
+
 def _repeat_louder(bus, session: Session, now: datetime, profile: PersonProfile) -> bool:
     """Answer a hearing request from recent spoken history without the speech gap."""
     if not session._say_history:
@@ -701,15 +728,13 @@ def _repeat_louder(bus, session: Session, now: datetime, profile: PersonProfile)
         session_id=session.session_id,
     ):
         return True
-    bus.publish(
-        Show(
-            source=SERVICE_NAME,
-            session_id=session.session_id,
-            face="speaking",
-            headline=text,
-            body="",
-            brightness=0.7,
-        )
+    show = Show(
+        source=SERVICE_NAME,
+        session_id=session.session_id,
+        face="speaking",
+        headline=text,
+        body="",
+        brightness=0.7,
     )
     say = Say(
         source=SERVICE_NAME,
@@ -719,6 +744,33 @@ def _repeat_louder(bus, session: Session, now: datetime, profile: PersonProfile)
         emphasis="loud",
         interruptible=True,
     )
+    if _speech_in_progress(session, now):
+        if session._pending_say is not None:
+            _drop_pending_say(bus, session, "superseded", now)
+        session._pending_say = PendingSay(
+            say,
+            session.goal,
+            session.strategy_index,
+            now,
+            show=show,
+            direct=True,
+            trigger="hearing_request",
+        )
+        _decision_activity(
+            bus,
+            session.session_id,
+            {
+                "decision": "pending_say_deferred",
+                "reason": "speech_in_progress",
+                "strategy": say.strategy,
+                "direct": True,
+                "phase": session.phase.value,
+                "goal": session.goal,
+            },
+        )
+        bus.publish(show.model_copy(update={"face": "awake"}))
+        return True
+    bus.publish(show)
     bus.publish(say)
     session.record_say(now, "repeat_louder", text, trigger="hearing_request")
     _said_decision(bus, session, say, trigger="hearing_request", direct=True)
@@ -785,7 +837,13 @@ def _flush_pending_say(bus, session: Session, now: datetime, profile: PersonProf
         _drop_pending_say(bus, session, "strategy_changed", now)
     elif not session.person_present(now) and pending.event.strategy != ESCALATE_PHONE_ID:
         _drop_pending_say(bus, session, "person_absent", now)
-    elif seconds_since_last_say is not None and seconds_since_last_say < min_gap_seconds:
+    elif _speech_in_progress(session, now):
+        return
+    elif (
+        pending.event.strategy != "repeat_louder"
+        and seconds_since_last_say is not None
+        and seconds_since_last_say < min_gap_seconds
+    ):
         return
     else:
         context = veto_context(session, profile, now)
@@ -1195,6 +1253,14 @@ def run_once(
             force_in_bed=overrides.force_in_bed,
         )
 
+    # See barge-in onset before person-state transitions and their scheduled
+    # speech. Both streams can have events waiting in the same run_once call.
+    utterance_messages = bus.read(
+        UTTERANCE_STREAM, UTTERANCE_GROUP, consumer, count=count, block_ms=None
+    )
+    if any(isinstance(event, SpeechStarted) for _, event in utterance_messages):
+        session.speech_started_at = now_fn()
+
     person_messages = bus.read(
         PERSON_STREAM, PERSON_GROUP, consumer, count=count, block_ms=block_ms
     )
@@ -1209,22 +1275,23 @@ def run_once(
         )
         _handle_person_state(bus, session, state, zone, now, published, profile, llm)
 
-    utterance_messages = bus.read(
-        UTTERANCE_STREAM, UTTERANCE_GROUP, consumer, count=count, block_ms=None
-    )
     for msg_id, event in utterance_messages:
         bus.ack(UTTERANCE_STREAM, UTTERANCE_GROUP, msg_id)
-        # `listen` also puts the early, transcript-free `SpeechStarted`
-        # barge-in signal on this stream.  Embodiment consumes that signal;
-        # the session core acts only on complete transcribed utterances.
+        if isinstance(event, SpeechStarted):
+            session.speech_started_at = now_fn()
+            continue
         if not isinstance(event, Utterance):
             continue
         now = now_fn()
+        session.speech_started_at = None
         if session.is_self_echo(event.text, now):
             _log(
                 "ignored self-echo Utterance", event_type="Utterance", session_id=session.session_id
             )
             continue
+        # The person has said something newer; its own reply replaces a queued one.
+        if session._pending_say is not None and session._pending_say.direct:
+            _drop_pending_say(bus, session, "superseded", now)
         prior_turns = session.recent_utterances
         transition = session.on_utterance(now)
         cooldown_reply = (

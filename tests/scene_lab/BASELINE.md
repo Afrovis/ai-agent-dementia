@@ -338,8 +338,9 @@ Still open, in suggested order:
    composition for "Where is Tom?" on the restroom goal is rejected, the
    caregiver template ("let's rest now and talk more in the morning") points
    away from the toilet (TOIL-01).
-4. **Talk-over (finding 9)** and **restroom goal from the camera
-   (finding 3)**: unchanged, need live or perceive work.
+4. **Talk-over (finding 9)**: speech hold added after `1854-live` (see
+   below), not yet measured live. **Restroom goal from the camera
+   (finding 3)**: unchanged, needs perceive work.
 5. **Harness.** Both director hours ran with host Ollama's MLX prefix cache
    pinned at 16.3 GiB (from 2026-09-22 23:34), so the host was swapping and
    part of the measured latency is that, not the agent. `scene_lab` now resets
@@ -350,3 +351,35 @@ Still open, in suggested order:
    is invisible to TM-1 (the SM-5 minor in `0552-live`). `session_replay
    --llm live` against a busy host Ollama times out every call and silently
    replays with no model.
+
+### Third director hour, `2026-09-23T1854-live`
+
+13 director-chosen scenes (three falls, three pain, three false alarms, three
+restroom trips, one disorientation), gemma4 on host Ollama, and this time
+**no contending stack** (`contention: false`). `bugs.md`: 7 critical,
+29 major, 37 review. The worst harm was in the wait after an escalation:
+worsening chest pain, a numb arm and "Please someone come now" got three
+minutes of silence and the caregiver alert stayed at `attention`. The fix
+list with evidence links is `runs/2026-09-23T1854-live/fixes.md`. Status of
+its items on this branch:
+
+| item | status |
+| --- | --- |
+| 1. Worsening pain while escalated gets silence and no second alert | Fixed. (a) Distress ≥ 2 or a stated need is urgent under the escalated cap, still paced once a minute (862537b). (b) One extra `critical` Notify when distress ≥ 2 comes twice more, at least 60 s into the escalation (81a16fd). |
+| 2. On the floor, told to "take your time getting back to bed" | Fixed: veto `no_return_prompt_from_floor` (FALL-01) (862537b). |
+| 3. Composed reassurances while escalated (slow, made both claims) | Fixed: no composition while `ESCALATED`; the approved phrasings rotate (862537b). |
+| 4. Chest pain read as a toilet need gets directions and the light | Fixed: escalated directions only when the words name a toilet (862537b). |
+| 5. Remarks on the way to the toilet end the trip, light off | Fixed (81a16fd): agreeing with directions is not `wants_bed` (prompt, not yet checked on the live model); after a spoken return the light stays on until the camera sees the bed zone or `in_bed`. |
+| 6. "Speak up" not answered by repeating | Fixed: the last sentence is repeated louder and slower, with its text on screen (b2a89ca). |
+| 7. Place and "how long" questions get the wrong content | Fixed (81a16fd): place questions are `confused_time` (prompt, not yet checked live); while escalated, "how much longer" gets a reassurance. |
+| 8. Scheduled steps start over the person's speech | Fixed, offline only: the agent records `SpeechStarted` and holds any sentence except `escalate_phone` until the Utterance arrives or 15 s pass (`pending_say_deferred speech_in_progress`); a queued reply is dropped as `superseded` by the newer utterance. Recorded replays carry no `SpeechStarted` timing, so only a live run can show it. |
+| 9. Replies wait behind the 8 s gap after a timed step | Fixed: a direct reply waits 2 s after the previous sentence's estimated end (`AGENT_REPLY_GAP_SECONDS`) (81a16fd). |
+| 10. Silence without a record; "get back to bed" to someone in bed | Fixed: `no_reply settling_in_bed` and `no_reply oriented_recently` (862537b). |
+| 11. A 1.5 s false `on_floor` reading pages as critical | Fixed: `AGENT_FLOOR_LIMIT_SECONDS=10`; a shorter floor episode sends one `info` "Brief floor reading" (81a16fd). |
+| checker: TT-3 speech end, TT-4 self-ended playback | Fixed (862537b). |
+| checker: TT-1 barge-in cancel label, urgent designed silence | Fixed (81a16fd). Rescore of this run: critical 7 → 6, major 29 → 27, review 37 → 73 (the new review class). |
+| harness: real speech dropped as self-echo | Fixed in the agent: the self-echo check ignores stopwords and needs ≥ 3 matching content words and ≥ 0.6 overlap; "There, through the door now." passes. |
+
+Not yet verified by a live run: everything above. The next director hour is
+the first with "speak up", the floor timing and the talk-over hold; watch
+the poor-hearing and pain scenes.
