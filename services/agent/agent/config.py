@@ -59,20 +59,18 @@ class AgentConfig:
     """How long `in_bed` must hold, unbroken, before the machine leaves
     `ENGAGED`/`ESCALATED` for `COOLDOWN`. `AGENT_IN_BED_STABLE_SECONDS`."""
 
-    floor_limit_seconds: float = 0.0
+    floor_limit_seconds: float = 10.0
     """How long `on_floor` is tolerated, from any phase with a live session,
     before HANDOFF.md rule 5 fires and skips straight to `ESCALATED`.
-    Defaults to `0`, i.e. escalate on the very first classified frame:
-    `on_floor` is the single highest-risk state this system observes, and
-    unlike `absent` there is no benign everyday reason for it, so there is
-    no grace period to justify. `AGENT_FLOOR_LIMIT_SECONDS`."""
+    Defaults to 10 seconds so a brief mistaken reading does not page the
+    caregiver. `AGENT_FLOOR_LIMIT_SECONDS`."""
 
     absent_limit_seconds: float = 600.0
     """How long `absent` is tolerated before rule 5 fires the same way.
     Ten minutes, not zero, because someone out of camera view at night is
     ordinarily just using the bathroom -- normal and expected -- whereas
     lying on the floor never is; that asymmetry is why `absent` gets a
-    grace period and `on_floor` does not. `AGENT_ABSENT_LIMIT_SECONDS`."""
+    much longer grace period. `AGENT_ABSENT_LIMIT_SECONDS`."""
 
     utterance_presence_seconds: float = 30.0
     """A complete utterance establishes presence for this long despite an absent camera reading."""
@@ -101,12 +99,14 @@ class AgentConfig:
     `config/person.yaml`, then `config/person.example.yaml`. `PERSON_PATH`."""
 
     say_min_gap_seconds: float = 8.0
+    """Minimum publication gap for scheduled speech. `AGENT_SAY_MIN_GAP_SECONDS`."""
+
+    reply_gap_after_speech_seconds: float = 2.0
+    """Minimum quiet after estimated playback for direct replies.
+    `AGENT_REPLY_GAP_SECONDS`."""
+
     compliance_grace_seconds: float = 120.0
     repeat_window_seconds: float = 120.0
-    """The minimum silence, in seconds, `agent.rules.validate_say` requires
-    between one published `Say` and the next (HANDOFF.md rule 3: "Spoken
-    output is one sentence, then silence for at least 8 seconds").
-    `AGENT_SAY_MIN_GAP_SECONDS`."""
 
     zone_confirm_readings: int = 3
     """How many consecutive `PersonState` readings must agree on a zone
@@ -154,12 +154,13 @@ class AgentConfig:
             observe_seconds=float(env.get("AGENT_OBSERVE_SECONDS", "20")),
             cooldown_seconds=float(env.get("AGENT_COOLDOWN_SECONDS", "300")),
             in_bed_stable_seconds=float(env.get("AGENT_IN_BED_STABLE_SECONDS", "120")),
-            floor_limit_seconds=float(env.get("AGENT_FLOOR_LIMIT_SECONDS", "0")),
+            floor_limit_seconds=float(env.get("AGENT_FLOOR_LIMIT_SECONDS", "10")),
             absent_limit_seconds=float(env.get("AGENT_ABSENT_LIMIT_SECONDS", "600")),
             restroom_timeout_seconds=float(env.get("AGENT_RESTROOM_TIMEOUT_SECONDS", "900")),
             strategies_path=env.get("STRATEGIES_PATH"),
             person_path=env.get("PERSON_PATH") or None,
             say_min_gap_seconds=float(env.get("AGENT_SAY_MIN_GAP_SECONDS", "8")),
+            reply_gap_after_speech_seconds=float(env.get("AGENT_REPLY_GAP_SECONDS", "2")),
             compliance_grace_seconds=float(env.get("AGENT_COMPLIANCE_GRACE_SECONDS", "120")),
             repeat_window_seconds=float(env.get("AGENT_REPEAT_WINDOW_SECONDS", "120")),
             zone_confirm_readings=int(env.get("AGENT_ZONE_CONFIRM_READINGS", "3")),

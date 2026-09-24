@@ -120,6 +120,69 @@ def test_tt1_deliberate_silence_passes_unless_it_answers_a_question():
         )
 
 
+def test_tt1_cancellation_at_start_and_recovery():
+    cancelled = (
+        ev(4.1, "Activity", kind="playback", phase="start", detail="requested"),
+        ev(4.2, "Activity", kind="playback", phase="end", detail="barge-in"),
+    )
+    trace = baseline(
+        ev(2, "Utterance", text="Where am I?"),
+        ev(4, "Say", text="You are at home.", strategy="orient"),
+        *cancelled,
+        end=40,
+    )
+    fail(trace, "TT-1", "major", "reply cancelled at start by barge-in")
+    open_speech = baseline(
+        ev(2, "Utterance", text="Where am I?"),
+        ev(3, "SpeechStarted"),
+        ev(4, "Say", text="You are at home.", strategy="orient"),
+        ev(4.1, "Activity", kind="playback", phase="start", detail="requested"),
+        ev(5, "Utterance", text="Can you hear me?"),
+        end=40,
+    )
+    fail(open_speech, "TT-1", "major", "reply cancelled at start by barge-in")
+    recovered = baseline(
+        ev(2, "Utterance", text="Where am I?"),
+        ev(4, "Say", text="You are at home.", strategy="orient"),
+        *cancelled,
+        ev(12, "Utterance", text="Can you hear me?"),
+        ev(13, "Say", text="Yes.", strategy="orient"),
+        ev(13.1, "Activity", kind="playback", phase="start", detail="playing"),
+        ev(14, "Activity", kind="playback", phase="end", detail="ended"),
+        end=40,
+    )
+    fail(recovered, "TT-1", "info", "reply cancelled at start by barge-in")
+    unrelated = baseline(
+        ev(2, "Utterance", text="Where am I?"),
+        ev(4, "Say", text="You are at home.", strategy="orient"),
+        ev(4.1, "Activity", kind="playback", phase="start", detail="requested"),
+        ev(4.2, "Activity", kind="playback", phase="end", detail="failed"),
+        end=40,
+    )
+    fail(unrelated, "TT-1", "critical", "reply composed but never played")
+
+
+def test_tt1_designed_silence_reviews_distress_and_stated_need():
+    for text, distress in (("My chest feels heavy.", 2), ("Please help me.", 0)):
+        trace = baseline(
+            ev(2, "Utterance", text=text),
+            TraceEvent(
+                t=2.5,
+                kind="decision",
+                type="Activity",
+                data={"decision": "interpreted", "text": text, "distress": distress},
+            ),
+            TraceEvent(
+                t=3,
+                kind="decision",
+                type="Activity",
+                data={"decision": "no_reply", "reason": "reassured_enough"},
+            ),
+            end=40,
+        )
+        fail(trace, "TT-1", "review", "no reply by design to distress: reassured_enough")
+
+
 def _said(t, strategy, reply, trigger):
     return TraceEvent(
         t=t,

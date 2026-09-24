@@ -704,7 +704,7 @@ def test_terminal_say_still_publishes_when_the_latest_state_is_absent():
 
 def test_escalated_speech_is_interpreted_and_reassured_after_gap():
     bus = make_bus()
-    session = Session(config=AgentConfig())
+    session = Session(config=AgentConfig(floor_limit_seconds=0.0))
     now_fn, advance = make_clock(NIGHT)
     bus.publish(PersonState(source="perceive", state="on_floor", confidence=0.9, zone="other"))
     run_once(bus, session, now_fn=now_fn)
@@ -877,7 +877,7 @@ def test_restroom_progress_read_as_need_restroom_is_acknowledged_once():
 
 def test_escalated_reassurance_cap_questions_distress_and_varied_composition():
     bus = make_bus()
-    session = Session(config=AgentConfig())
+    session = Session(config=AgentConfig(floor_limit_seconds=0.0))
     now_fn, advance = make_clock(NIGHT)
     bus.publish(PersonState(source="perceive", state="on_floor", confidence=0.9, zone="other"))
     run_once(bus, session, now_fn=now_fn)
@@ -928,7 +928,7 @@ def test_escalated_reassurance_cap_questions_distress_and_varied_composition():
 
 def test_escalated_no_llm_fallback_obeys_cap_and_resets_on_new_escalation():
     bus = make_bus()
-    session = Session(config=AgentConfig())
+    session = Session(config=AgentConfig(floor_limit_seconds=0.0))
     now_fn, advance = make_clock(NIGHT)
     bus.publish(PersonState(source="perceive", state="on_floor", confidence=0.9, zone="other"))
     run_once(bus, session, now_fn=now_fn)
@@ -962,7 +962,7 @@ def test_escalated_no_llm_fallback_obeys_cap_and_resets_on_new_escalation():
 
 def test_escalated_questions_after_cap_are_answered_at_most_once_a_minute():
     bus = make_bus()
-    session = Session(config=AgentConfig())
+    session = Session(config=AgentConfig(floor_limit_seconds=0.0))
     now_fn, advance = make_clock(NIGHT)
     bus.publish(PersonState(source="perceive", state="on_floor", confidence=0.9, zone="other"))
     run_once(bus, session, now_fn=now_fn)
@@ -995,7 +995,7 @@ def test_escalated_questions_after_cap_are_answered_at_most_once_a_minute():
 
 def test_escalated_unavailable_interpretation_obeys_cap():
     bus = make_bus()
-    session = Session(config=AgentConfig())
+    session = Session(config=AgentConfig(floor_limit_seconds=0.0))
     now_fn, advance = make_clock(NIGHT)
     bus.publish(PersonState(source="perceive", state="on_floor", confidence=0.9, zone="other"))
     run_once(bus, session, now_fn=now_fn)
@@ -1015,7 +1015,7 @@ def test_escalated_unavailable_interpretation_obeys_cap():
 
 def test_escalated_restroom_interpretation_on_floor_reassures_without_directions():
     bus = make_bus()
-    session = Session(config=AgentConfig())
+    session = Session(config=AgentConfig(floor_limit_seconds=0.0))
     now_fn, advance = make_clock(NIGHT)
     bus.publish(PersonState(source="perceive", state="on_floor", confidence=0.9, zone="other"))
     run_once(bus, session, now_fn=now_fn)
@@ -1047,7 +1047,7 @@ def test_escalated_restroom_interpretation_on_floor_reassures_without_directions
 
 def test_cooldown_restroom_interpretation_on_floor_reassures():
     bus = make_bus()
-    session = Session(config=AgentConfig())
+    session = Session(config=AgentConfig(floor_limit_seconds=0.0))
     session.phase = Phase.COOLDOWN
     session.session_id = "cooldown-session"
     session._last_person_state = "on_floor"
@@ -1194,7 +1194,7 @@ def test_time_question_answers_without_advancing_ladder():
 
 def test_escalated_checkins_are_scheduled_rotated_and_do_not_spend_reply_cap():
     bus = make_bus()
-    session = Session(config=AgentConfig())
+    session = Session(config=AgentConfig(floor_limit_seconds=0.0))
     now_fn, advance = make_clock(NIGHT)
     bus.publish(PersonState(source="perceive", state="on_floor", confidence=0.9, zone="other"))
     run_once(bus, session, now_fn=now_fn)
@@ -1225,7 +1225,7 @@ def test_escalated_checkins_are_scheduled_rotated_and_do_not_spend_reply_cap():
 @pytest.mark.parametrize("state,zone", [("absent", "other"), ("in_bed", "bed")])
 def test_escalated_checkin_skips_absent_or_settled_person(state, zone):
     bus = make_bus()
-    session = Session(config=AgentConfig(in_bed_stable_seconds=1000.0))
+    session = Session(config=AgentConfig(in_bed_stable_seconds=1000.0, floor_limit_seconds=0.0))
     now_fn, advance = make_clock(NIGHT)
     bus.publish(PersonState(source="perceive", state="on_floor", confidence=0.9, zone="other"))
     run_once(bus, session, now_fn=now_fn)
@@ -1377,7 +1377,7 @@ def test_recent_utterance_counts_as_presence_after_camera_loses_person():
 
 def test_speaking_face_waits_for_deferred_say():
     bus = make_bus()
-    session = Session(config=AgentConfig())
+    session = Session(config=AgentConfig(floor_limit_seconds=0.0))
     now_fn, advance = make_clock(NIGHT)
     bus.publish(PersonState(source="perceive", state="on_floor", confidence=0.9, zone="other"))
     run_once(bus, session, now_fn=now_fn)
@@ -1512,7 +1512,7 @@ def test_the_minimum_say_gap_is_enforced_across_strategy_advances():
 def _session_with_pending_say(bus, *, gap=8.0):
     terminal = next(item for item in DEFAULT_STRATEGIES if item.id == ESCALATE_PHONE_ID)
     session = Session(
-        config=AgentConfig(say_min_gap_seconds=gap),
+        config=AgentConfig(say_min_gap_seconds=gap, floor_limit_seconds=0.0),
         strategies=[*small_strategies(dwell=100.0, n=4), terminal],
     )
     bus.publish(PersonState(source="perceive", state="standing", confidence=0.9, zone="other"))
@@ -1821,3 +1821,187 @@ def test_llm_cache_refresh_waits_for_idle_and_skips_always_night():
     always = Session(config=AgentConfig(night_start=dt_time(0, 0), night_end=dt_time(0, 0)))
     assert refresh.step(always, datetime(2026, 9, 23, 12, 0)) is None
     assert calls == []
+
+
+def test_persistent_distress_notify_uses_transition_publisher_once():
+    bus = make_bus()
+    session = Session(config=AgentConfig(floor_limit_seconds=0))
+    first = session.on_person_state("on_floor", "other", NIGHT)
+    _publish_transition(bus, first, session, NIGHT)
+    for offset in (10, 61, 80):
+        now = NIGHT + timedelta(seconds=offset)
+        transition = session.on_interpretation("unclear", 2, now)
+        if transition is not None:
+            _publish_transition(bus, transition, session, now)
+    notices = [event for _, event in bus.read("notify", "test", "c1")]
+    assert [(event.level, event.title) for event in notices] == [
+        ("critical", "Possible fall"),
+        ("critical", "Still in distress"),
+    ]
+    assert notices[1].repeat_until_ack
+
+
+def test_five_second_floor_reading_publishes_one_info_notice():
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    bus.publish(PersonState(source="perceive", state="on_floor", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=lambda: NIGHT)
+    bus.publish(PersonState(source="perceive", state="sitting_up", confidence=0.9, zone="other"))
+    run_once(bus, session, now_fn=lambda: NIGHT + timedelta(seconds=5))
+    notices = [event for _, event in bus.read("notify", "test", "c1")]
+    assert [(event.level, event.title, event.repeat_until_ack) for event in notices] == [
+        ("info", "Brief floor reading", False)
+    ]
+    assert not bus.read("say", "test", "floor_window")
+    assert session.phase != Phase.ESCALATED
+
+
+def test_direct_reply_gap_is_measured_after_estimated_playback():
+    from agent.main import _flush_pending_say
+
+    strategy = next(s for s in DEFAULT_STRATEGIES if s.id == "ask_need")
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    session.phase = Phase.ENGAGED
+    session.session_id = "reply-gap"
+    session.record_say(NIGHT, text="one two three four five")
+    transition = Transition(
+        Phase.ENGAGED, "reply-gap", session.goal, 0, "utterance_reply", strategy=strategy
+    )
+    assert _maybe_publish_say(
+        bus,
+        transition,
+        session,
+        NIGHT + timedelta(seconds=4),
+        PersonProfile(name="Jean"),
+        direct=True,
+    )
+    assert len(bus.read("say", "test", "c1")) == 1
+
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    session.phase = Phase.ENGAGED
+    session.session_id = "reply-gap-long"
+    session.record_say(NIGHT, text=" ".join(["word"] * 15))
+    transition = Transition(
+        Phase.ENGAGED, "reply-gap-long", session.goal, 0, "utterance_reply", strategy=strategy
+    )
+    assert not _maybe_publish_say(
+        bus,
+        transition,
+        session,
+        NIGHT + timedelta(seconds=1),
+        PersonProfile(name="Jean"),
+        direct=True,
+    )
+    assert session._pending_say is not None
+    _flush_pending_say(bus, session, NIGHT + timedelta(seconds=7), PersonProfile(name="Jean"))
+    assert not bus.read("say", "test", "c1")
+    _flush_pending_say(bus, session, NIGHT + timedelta(seconds=8), PersonProfile(name="Jean"))
+    assert len(bus.read("say", "test", "c2")) == 1
+
+
+def test_scheduled_step_keeps_eight_second_gap():
+    strategy = next(s for s in DEFAULT_STRATEGIES if s.id == "ask_need")
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    session.phase = Phase.ENGAGED
+    session.session_id = "scheduled-gap"
+    session.record_say(NIGHT, text="one two three four five")
+    transition = Transition(
+        Phase.ENGAGED, "scheduled-gap", session.goal, 0, "strategy_advanced", strategy=strategy
+    )
+    assert not _maybe_publish_say(
+        bus, transition, session, NIGHT + timedelta(seconds=4), PersonProfile(name="Jean")
+    )
+    assert session._pending_say is not None
+
+
+@pytest.mark.parametrize(
+    "utterance,distress", [("Help me up.", 0), ("So cold.", 0), ("I feel worse.", 2)]
+)
+def test_escalated_stated_need_after_cap_is_paced(utterance, distress):
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    session.phase = Phase.ESCALATED
+    session.session_id = "need-cap"
+    session._last_person_state = "sitting_up"
+    session._reassurance_reply_count = 2
+    session.record_say(NIGHT, "reassure_waiting", "Someone is on their way, and you're safe here.")
+    llm = FakeLLM(interpretations=[Interpretation(intent=Intent.UNCLEAR, distress=distress)] * 2)
+    bus.publish(Utterance(source="listen", text=utterance, confidence=0.9, duration_s=1))
+    run_once(bus, session, now_fn=lambda: NIGHT + timedelta(seconds=30), llm=llm)
+    assert not bus.read("say", "test", "early")
+    bus.publish(Utterance(source="listen", text=utterance, confidence=0.9, duration_s=1))
+    run_once(bus, session, now_fn=lambda: NIGHT + timedelta(seconds=61), llm=llm)
+    assert [event.strategy for _, event in bus.read("say", "test", "late")] == ["reassure_waiting"]
+
+
+@pytest.mark.parametrize(
+    "utterance,intent,expected",
+    [
+        ("How much longer?", Intent.CONFUSED_TIME, "reassure_waiting"),
+        ("It's pressing a bit more now", Intent.NEED_RESTROOM, "reassure_waiting"),
+        ("I need the toilet", Intent.NEED_RESTROOM, "path_light"),
+        ("Just want my bed", Intent.WANTS_BED, "reassure_waiting"),
+    ],
+)
+def test_escalated_floor_or_ambiguous_need_reply(utterance, intent, expected):
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    session.phase = Phase.ESCALATED
+    session.session_id = "escalated-reply"
+    session._last_person_state = "sitting_up" if expected == "path_light" else "on_floor"
+    llm = FakeLLM(interpretations=[Interpretation(intent=intent, distress=0)])
+    bus.publish(Utterance(source="listen", text=utterance, confidence=0.9, duration_s=1))
+    run_once(bus, session, now_fn=lambda: NIGHT, llm=llm)
+    assert [event.strategy for _, event in bus.read("say", "test", "c1")] == [expected]
+    if expected == "path_light":
+        assert [event.state for _, event in bus.read("light", "test", "c1")] == ["on"]
+    else:
+        assert not bus.read("light", "test", "c1")
+
+
+@pytest.mark.parametrize("intent", [Intent.WANTS_BED, Intent.FINE])
+def test_in_bed_settling_utterance_records_silence(intent):
+    bus, session, now_fn, advance = engaged_for_reply()
+    session._last_person_state = "in_bed"
+    advance(10)
+    llm = FakeLLM(interpretations=[Interpretation(intent=intent, distress=0)])
+    say_to_agent(bus, session, now_fn, llm, "Goodnight, that's all I need.")
+    assert not bus.read("say", "test", "settling")
+    assert any(
+        item["decision"] == "no_reply" and item["reason"] == "settling_in_bed"
+        for item in decisions(bus)
+    )
+
+
+def test_recent_nonquestion_orientation_records_silence():
+    bus, session, now_fn, advance = engaged_for_reply()
+    session.record_say(
+        now_fn(), "orient_time_place", "You are home in your bedroom, and it is night-time."
+    )
+    advance(10)
+    llm = FakeLLM(interpretations=[Interpretation(intent=Intent.CONFUSED_TIME, distress=0)])
+    say_to_agent(bus, session, now_fn, llm, "This is my own bed.")
+    assert not bus.read("say", "test", "oriented")
+    assert any(
+        item["decision"] == "no_reply" and item["reason"] == "oriented_recently"
+        for item in decisions(bus)
+    )
+
+
+def test_cooldown_reassurance_still_uses_composition():
+    strategy = next(s for s in DEFAULT_STRATEGIES if s.id == "reassure_waiting")
+    bus = make_bus()
+    session = Session(config=AgentConfig())
+    session.phase = Phase.COOLDOWN
+    session.session_id = "cooldown-compose"
+    llm = FakeLLM(compositions=[Composition(text="Someone is on their way, and you're safe here.")])
+    transition = Transition(
+        Phase.COOLDOWN, session.session_id, session.goal, 0, "utterance_reply", strategy=strategy
+    )
+    assert _maybe_publish_say(
+        bus, transition, session, NIGHT, PersonProfile(name="Jean"), llm, direct=True
+    )
+    assert [name for name, _ in llm.calls] == ["compose"]

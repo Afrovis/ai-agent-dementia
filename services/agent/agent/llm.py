@@ -172,9 +172,11 @@ _COMPOSE_TASK = (
 
 _INTERPRET_TASK = (
     "Classify the latest utterance's intent and distress (0 calm through 3 severe). "
-    "Use wants_bed for agreement or intention to go back to bed, including "
-    "'Okay, I'll go to bed' and 'I'll go back to bed', or when they say they are "
-    "finished with or back from the restroom. Use need_restroom when they need to go there."
+    "Use wants_bed only for going back to bed or being finished with or back from the restroom. "
+    "Agreement with directions or remarks about getting there ('left, all right', "
+    "'almost there', 'through the door now', 'nearly there') are need_restroom, not wants_bed. "
+    "Questions about where they are, whose house or room this is, or whether this is home "
+    "are confused_time. Use need_restroom when they need to go there."
 )
 
 

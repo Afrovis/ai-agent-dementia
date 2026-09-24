@@ -295,3 +295,12 @@ def test_ollama_warm_up_failure_is_harmless(monkeypatch):
     monkeypatch.setattr("agent.llm.urlopen", fail)
 
     assert OllamaLLM(ollama_url="http://ollama").warm_up() is False
+
+
+def test_interpret_prompt_keeps_restroom_progress_and_place_guidance():
+    from agent.llm import _INTERPRET_TASK
+
+    for phrase in ("left, all right", "almost there", "through the door now", "nearly there"):
+        assert phrase in _INTERPRET_TASK
+    assert "Questions about where they are, whose house or room this is" in _INTERPRET_TASK
+    assert "whether this is home" in _INTERPRET_TASK

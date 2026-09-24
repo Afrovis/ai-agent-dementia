@@ -336,3 +336,13 @@ def test_allowed_strategy_publishes_show_and_say():
         len([event for _, event in bus.read("show", "test", "c1") if isinstance(event, Show)]) == 1
     )
     assert len([event for _, event in bus.read("say", "test", "c1") if isinstance(event, Say)]) == 1
+
+
+@pytest.mark.parametrize("strategy", ["guided_return", "acknowledge_return"])
+def test_floor_veto_blocks_return_prompts(strategy):
+    verdict = check(Proposal("strategy", strategy), context(person_state="on_floor"))
+    assert (verdict.allowed, verdict.rule, verdict.clause) == (
+        False,
+        "no_return_prompt_from_floor",
+        "FALL-01",
+    )

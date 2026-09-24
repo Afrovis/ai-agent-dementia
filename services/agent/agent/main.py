@@ -452,6 +452,14 @@ def _maybe_publish_say(
             strategy=strategy.id,
         )
         return False
+    if (
+        session._on_floor_since is not None
+        and session.phase != Phase.ESCALATED
+        and not terminal_reply
+    ):
+        # During the floor confirmation window no ordinary ladder sentence
+        # may imply that help has already been called.
+        return False
 
     time_words = spoken_time_words(session.wall_clock(now), session._spoken_time_variant)
     text = render_template(strategy.say_template, profile, time_words=time_words)
@@ -549,16 +557,27 @@ def _maybe_publish_say(
     # terminal strategy is exempt from this one check. Every other rule 3
     # check -- one sentence, no forbidden phrasing, no question -- still
     # applies to it exactly as before.
-    seconds_since_last_say = None if terminal_reply else session.seconds_since_last_say(now)
+    seconds_since_last_say = (
+        None
+        if terminal_reply
+        else session.seconds_since_last_say_end(now)
+        if direct
+        else session.seconds_since_last_say(now)
+    )
+    min_gap_seconds = (
+        session.config.reply_gap_after_speech_seconds
+        if direct
+        else session.config.say_min_gap_seconds
+    )
     result = validate_say(
         text,
         seconds_since_last_say=seconds_since_last_say,
-        min_gap_seconds=session.config.say_min_gap_seconds,
+        min_gap_seconds=min_gap_seconds,
     )
     gap_only = (
         not result.accepted
         and validate_say(
-            text, seconds_since_last_say=None, min_gap_seconds=session.config.say_min_gap_seconds
+            text, seconds_since_last_say=None, min_gap_seconds=min_gap_seconds
         ).accepted
     )
     if not result.accepted and not gap_only:
@@ -740,7 +759,16 @@ def _flush_pending_say(bus, session: Session, now: datetime, profile: PersonProf
         return
     age = (now - pending.queued_at).total_seconds()
     current = session._engine.current()
-    seconds_since_last_say = session.seconds_since_last_say(now)
+    seconds_since_last_say = (
+        session.seconds_since_last_say_end(now)
+        if pending.direct
+        else session.seconds_since_last_say(now)
+    )
+    min_gap_seconds = (
+        session.config.reply_gap_after_speech_seconds
+        if pending.direct
+        else session.config.say_min_gap_seconds
+    )
     if age > PENDING_SAY_MAX_AGE_S:
         _drop_pending_say(bus, session, "max_age", now)
     elif session.session_id != pending.event.session_id:
@@ -757,10 +785,7 @@ def _flush_pending_say(bus, session: Session, now: datetime, profile: PersonProf
         _drop_pending_say(bus, session, "strategy_changed", now)
     elif not session.person_present(now) and pending.event.strategy != ESCALATE_PHONE_ID:
         _drop_pending_say(bus, session, "person_absent", now)
-    elif (
-        seconds_since_last_say is not None
-        and seconds_since_last_say < session.config.say_min_gap_seconds
-    ):
+    elif seconds_since_last_say is not None and seconds_since_last_say < min_gap_seconds:
         return
     else:
         context = veto_context(session, profile, now)
@@ -862,6 +887,7 @@ def _publish_transition(
             and transition.strategy is not None
             and transition.strategy.id == PATH_LIGHT_ID
         ):
+            session.hallway_light_awaiting_bed = False
             light_event = LightCommand(
                 source=SERVICE_NAME,
                 session_id=transition.session_id,
@@ -878,18 +904,24 @@ def _publish_transition(
             goal_changed_event.from_goal == "restroom"
             and goal_changed_event.to_goal == "return_to_bed"
         ):
-            light_event = LightCommand(
-                source=SERVICE_NAME,
-                session_id=transition.session_id,
-                light="hallway",
-                state="off",
-                reason="restroom_goal_ended",
-            )
-            if not _vetoed(
-                bus, Proposal("light", light_event.state), context, session_id=session.session_id
-            ):
-                bus.publish(light_event)
-                _log("published LightCommand", event_type="LightCommand", state="off")
+            if goal_changed_event.reason == "interpreted_wants_bed":
+                session.hallway_light_awaiting_bed = True
+            else:
+                light_event = LightCommand(
+                    source=SERVICE_NAME,
+                    session_id=transition.session_id,
+                    light="hallway",
+                    state="off",
+                    reason="restroom_goal_ended",
+                )
+                if not _vetoed(
+                    bus,
+                    Proposal("light", light_event.state),
+                    context,
+                    session_id=session.session_id,
+                ):
+                    bus.publish(light_event)
+                    _log("published LightCommand", event_type="LightCommand", state="off")
 
     # A phase resolution is a final idempotent backstop for a light that
     # remained on through an escalation or an unusual goal transition.
@@ -914,7 +946,7 @@ def _publish_transition(
             level=transition.notify.level,
             title=transition.notify.title,
             body=transition.notify.body,
-            repeat_until_ack=True,
+            repeat_until_ack=transition.notify.repeat_until_ack,
         )
         if not _vetoed(
             bus,
@@ -1027,6 +1059,46 @@ def _handle_person_state(
         published.append(
             _publish_transition(bus, transition, session, now, profile=profile, llm=llm)
         )
+    if session._brief_floor_notice is not None:
+        notice = session._brief_floor_notice
+        session._brief_floor_notice = None
+        published.append(
+            _publish_transition(
+                bus,
+                Transition(
+                    session.phase,
+                    session.session_id,
+                    session.goal,
+                    session.strategy_index,
+                    "brief_floor_reading",
+                    notify=notice,
+                ),
+                session,
+                now,
+                profile=profile,
+                llm=llm,
+            )
+        )
+    if session.hallway_light_awaiting_bed and (
+        state == "in_bed"
+        or (zone == "bed" and session._pending_zone_count >= session.config.zone_confirm_readings)
+    ):
+        light_event = LightCommand(
+            source=SERVICE_NAME,
+            session_id=session.session_id,
+            light="hallway",
+            state="off",
+            reason="returned_to_bed",
+        )
+        if not _vetoed(
+            bus,
+            Proposal("light", "off"),
+            veto_context(session, profile, now),
+            session_id=session.session_id,
+        ):
+            bus.publish(light_event)
+            _log("published LightCommand", event_type="LightCommand", state="off")
+        session.hallway_light_awaiting_bed = False
 
 
 def _escalated_checkin(bus, session: Session, now: datetime, profile: PersonProfile) -> None:
@@ -1267,6 +1339,15 @@ def run_once(
                         reply_id = (
                             None if session.last_person_state == "on_floor" else PATH_LIGHT_ID
                         )
+                    elif (
+                        intent == "confused_time"
+                        and session.phase == Phase.ESCALATED
+                        and not any(
+                            word in event.text.lower()
+                            for word in ("where", "home", "house", "room", "bed")
+                        )
+                    ):
+                        reply_id = REASSURE_WAITING_ID
                     elif intent == "confused_time":
                         explicit_question = is_direct_question(event.text)
                         if explicit_question or not session.recently_said("orient_time_place", now):

@@ -15,13 +15,14 @@ def test_from_env_defaults():
     assert config.observe_seconds == 20.0
     assert config.cooldown_seconds == 300.0
     assert config.in_bed_stable_seconds == 120.0
-    assert config.floor_limit_seconds == 0.0
+    assert config.floor_limit_seconds == 10.0
     assert config.absent_limit_seconds == 600.0
     assert config.restroom_timeout_seconds == 900.0
     assert config.zone_confirm_readings == 3
     assert config.strategies_path is None
     assert config.person_path is None
     assert config.say_min_gap_seconds == 8.0
+    assert config.reply_gap_after_speech_seconds == 2.0
     assert config.llm_model == "gemma4:e4b-mlx"
     assert config.llm_timeout_seconds == 10.0
     assert config.llm_backend == "ollama"
@@ -42,6 +43,7 @@ def test_from_env_reads_every_key():
         "STRATEGIES_PATH": "/tmp/strategies.yaml",
         "PERSON_PATH": "/tmp/person.yaml",
         "AGENT_SAY_MIN_GAP_SECONDS": "10",
+        "AGENT_REPLY_GAP_SECONDS": "3",
         "AGENT_LLM_MODEL": "qwen2.5:7b",
         "AGENT_LLM_TIMEOUT_SECONDS": "4.5",
         "AGENT_LLM_BACKEND": "OpenAI",
@@ -60,6 +62,7 @@ def test_from_env_reads_every_key():
     assert config.strategies_path == "/tmp/strategies.yaml"
     assert config.person_path == "/tmp/person.yaml"
     assert config.say_min_gap_seconds == 10.0
+    assert config.reply_gap_after_speech_seconds == 3.0
     assert config.llm_model == "qwen2.5:7b"
     assert config.llm_timeout_seconds == 4.5
     assert config.llm_backend == "openai"
