@@ -4,7 +4,7 @@ import json
 import subprocess
 
 from scene_lab import gpu
-from scene_lab.triage import prepare_clusters, triage
+from scene_lab.triage import clean_plan, prepare_clusters, triage
 
 IDLE = {"idle": True, "device_utilization_pct": 0, "waited_s": 0}
 
@@ -158,6 +158,10 @@ def test_triage_plans_then_investigates_in_series_then_writes(tmp_path):
     assert gates == [1, 2]
     assert "raise MAX_REASSURANCES" in write and "designed pacing" in write
     assert "Edit" not in calls[3]["command"]
+    # Hard turn caps on workers and the writer, none on the tool-less planner.
+    assert "--max-turns" not in calls[0]["command"]
+    assert calls[1]["command"][calls[1]["command"].index("--max-turns") + 1] == "25"
+    assert calls[3]["command"][calls[3]["command"].index("--max-turns") + 1] == "15"
     assert fixes.read_text().startswith("# Fix list: 2026-09-23T2000-live")
     # One patch per item, from a reset copy each time.
     first_patch = (run / "triage/1.patch").read_text()
@@ -182,6 +186,19 @@ def test_triage_plans_then_investigates_in_series_then_writes(tmp_path):
         ["git", "-C", str(repo), "worktree", "list"], capture_output=True, text=True
     ).stdout
     assert len(listed.strip().splitlines()) == 1
+
+
+def test_clean_plan_caps_clusters_per_item():
+    clusters = [{"id": f"c{n}"} for n in range(1, 6)]
+    plan = {
+        "summary": "s",
+        "investigations": [{"title": "t", "clusters": ["c1", "c2", "c3", "c4"], "question": "q"}],
+        "set_aside": [],
+    }
+    cleaned = clean_plan(plan, clusters, 6)
+    assert cleaned["investigations"][0]["clusters"] == ["c1", "c2", "c3"]
+    assert {"clusters": ["c4"], "reason": "over the cap of 3 per item"} in cleaned["set_aside"]
+    assert cleaned["set_aside"][-1] == {"clusters": ["c5"], "reason": "not placed by the plan"}
 
 
 def test_triage_without_quick_tests_is_read_only(tmp_path):

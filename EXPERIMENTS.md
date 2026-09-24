@@ -10,6 +10,54 @@ below are the record.
 
 ---
 
+## 2026-09-24 — scene_lab triage: one Opus agent vs plan / Sonnet workers / write
+
+### Question
+
+The single Opus triage agent on `2026-09-24T1435-live` hit the subscription
+session limit after 44 turns (82 input, 4,791,179 cache-read, 167,854
+cache-write, 24,654 output tokens, 15,888 of them thinking; $2.79 list) and
+wrote no fix list. Does the split triage (`scene_lab/triage.py`: Python
+clusters, Opus planner with no tools, Sonnet workers in series behind a GPU
+idle check, Opus writer with read-only tools) finish, and at what cost?
+
+### Setup
+
+A copy of the run with its old triage outputs removed, `python -m scene_lab
+triage <copy> --commit 1f9f413` from branch `scene-lab-triage-fanout` at
+6c09ecf (no turn caps yet), 2026-09-24 19:22–19:42 EDT. Effort `medium`
+everywhere. GPU at 0 % and no Ollama model before every worker.
+
+### Results
+
+| step | model | calls | turns | cache read | cache write | output (thinking) | list USD |
+| --- | --- | ---: | --- | ---: | ---: | ---: | ---: |
+| plan | Opus | 1 | 2 | 0 | 15,105 | 6,887 (3,378) | 0.26 |
+| workers | Sonnet | 5 | 18, 36, 18, 31, 25 | 6,643,966 | 308,198 | 89,842 (56,203) | 3.46 |
+| write | Opus | 1 | 11 | 361,171 | 44,735 | 9,822 (3,202) | 0.63 |
+| total | | 7 | | 7,005,137 | 368,038 | 106,551 | 4.35 |
+
+It finished in 20 minutes with a complete `fixes.md` (5 items, 25 clusters
+all placed; 3 set aside with reasons). Opus cache reads fell from 4.8M to
+0.36M. Total tokens rose, since the old run stopped partway, and now sit
+mostly on Sonnet. Against the owner-reviewed fix list for the same run, three
+main items match (escalated silence, the speech hold, the restroom path). Two
+are new (a held reply dropped as `superseded`, an invented photo). Two old
+items are missing: `orient_time_place` compose latency and wording (the
+planner set latency aside as known), and sentence timestamps. One quick test
+ran (8 passed), and none produced a patch.
+
+### Conclusions
+
+- The prompt's "about fifteen tool calls" did not hold: the two broadest
+  workers (8 and 6 clusters) took 36 and 31 turns and used 3.7M of the 6.6M
+  cache reads. Now capped: `--max-turns` 25 per worker and 15 for the writer,
+  at most 3 clusters per investigation, and workers are told to Grep for
+  ranges instead of reading `main.py` (2,020 lines) whole.
+- Open: re-measure with the caps on the next director hour's triage.
+
+---
+
 ## 2026-09-17 — The compose prompt's own rules, measured for the first time
 
 ### Question

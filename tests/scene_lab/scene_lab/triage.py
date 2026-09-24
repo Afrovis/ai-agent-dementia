@@ -51,6 +51,12 @@ WORKER_MODEL = "sonnet"
 WRITE_MODEL = "opus"
 EFFORT = "medium"
 MAX_INVESTIGATIONS = 6
+# Hard caps (hidden `--max-turns` flag). The prompt's "about fifteen tool
+# calls" alone did not hold: on 2026-09-24T1435-live one worker with an
+# eight-cluster brief took 36 turns and 2.2M cached tokens.
+WORKER_MAX_TURNS = 25
+WRITE_MAX_TURNS = 15
+MAX_CLUSTERS_PER_ITEM = 3
 PLAN_TIMEOUT_S = 600
 WORKER_TIMEOUT_S = 900
 WRITE_TIMEOUT_S = 900
@@ -86,7 +92,9 @@ you need is below. Another model (Sonnet) investigates each item you choose,
 one at a time, in a fresh context, so each question must stand on its own.
 
 - Order by harm to the person first, then reach (count, scenes).
-- Merge clusters that most likely share one cause into one investigation.
+- Merge clusters that most likely share one cause into one investigation,
+  but give each investigation one likely cause and at most
+  {max_clusters} clusters: a worker with a broad brief reads too much.
 - At most {max_items} investigations. Prefer critical and major clusters.
 - Set aside, with a one-line reason: review-only clusters that are designed
   behaviour (see the known fingerprints below), items already on the open
@@ -130,7 +138,10 @@ _WORKER = (
     + """
 Your job: investigate one item from the run's fix list and report the cause
 and a concrete, reviewable fix. Stay on this item. Start from the files named
-below and read only what you need (aim for about fifteen tool calls). Useful
+below and read only what you need. You have a hard limit of {max_turns}
+turns; past it your work is lost, so answer by turn {answer_by} even if
+unsure (then with low confidence). Read large files in ranges found with
+Grep, not whole. Useful
 background if relevant: services/agent/agent/ (main.py reply routing,
 session.py, veto.py, strategies.py, rules.py, llm.py),
 tests/decision_bench/guidelines.md (care guidelines for every spoken
@@ -357,6 +368,7 @@ def _claude_command(
     tools: list[str],
     add_dirs: list[Path],
     schema: dict | None = None,
+    max_turns: int | None = None,
 ) -> list[str]:
     executable = shutil.which("claude")
     if executable is None:
@@ -368,6 +380,7 @@ def _claude_command(
         model,
         "--effort",
         EFFORT,
+        *(["--max-turns", str(max_turns)] if max_turns else []),
         "--setting-sources",
         "",
         "--strict-mcp-config",
@@ -498,8 +511,8 @@ def build_plan_prompt(run_dir: Path, repo: Path, clusters: list[dict], max_items
         for p in (repo / "services/agent/agent").glob("*.py")
     )
     return (
-        _PLAN.format(max_items=max_items)
-        + f"\nRun id: {run_dir.name}\n"
+        _PLAN.format(max_items=max_items, max_clusters=MAX_CLUSTERS_PER_ITEM)
+        + f"\nRun id: {run_dir.name}\nRun directory (outside the repository): {run_dir}\n"
         + f"Agent code: {', '.join(agent_files) or '(not found)'}\n\n"
         + "From tests/scene_lab/BASELINE.md:\n\n"
         + baseline_notes(repo)
@@ -540,11 +553,17 @@ def clean_plan(plan: dict, clusters: list[dict], max_items: int) -> dict:
     for item in plan.get("investigations", []):
         ids = [i for i in item.get("clusters", []) if i in known]
         if ids and len(items) < max_items:
-            items.append({**item, "clusters": ids})
+            items.append({**item, "clusters": ids[:MAX_CLUSTERS_PER_ITEM]})
     aside = [
         {**a, "clusters": [i for i in a.get("clusters", []) if i in known]}
         for a in plan.get("set_aside", [])
     ]
+    for item in plan.get("investigations", []):
+        extra = [i for i in item.get("clusters", []) if i in known][MAX_CLUSTERS_PER_ITEM:]
+        if extra:
+            aside.append(
+                {"clusters": extra, "reason": f"over the cap of {MAX_CLUSTERS_PER_ITEM} per item"}
+            )
     covered = {i for x in items + aside for i in x["clusters"]}
     missing = sorted(known - covered, key=lambda i: int(i[1:]))
     if missing:
@@ -573,6 +592,8 @@ def build_worker_prompt(
         "any timing you measure is contended.\n"
     )
     return _WORKER.format(
+        max_turns=WORKER_MAX_TURNS,
+        answer_by=WORKER_MAX_TURNS - 5,
         sandbox=_SANDBOX.format(run_dir=run_dir),
         quick_tests=(
             _QUICK_TESTS.format(py=py, scratch=scratch)
@@ -694,6 +715,7 @@ def triage(
                         _worker_tools(py, quick_tests),
                         [run_dir, scratch],
                         WORKER_SCHEMA,
+                        WORKER_MAX_TURNS,
                     ),
                     prompt,
                     worktree,
@@ -756,7 +778,7 @@ def triage(
         try:
             payload = _call(
                 runner,
-                _claude_command(WRITE_MODEL, _read_tools(), [run_dir]),
+                _claude_command(WRITE_MODEL, _read_tools(), [run_dir], max_turns=WRITE_MAX_TURNS),
                 prompt,
                 worktree,
                 WRITE_TIMEOUT_S,
