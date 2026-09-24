@@ -11,6 +11,7 @@ from pathlib import Path
 
 import yaml
 
+from . import usage
 from .bugs import harness_error, usage_limited
 from .scene import Scene, load_scene
 
@@ -81,6 +82,34 @@ def coverage(scenes: list[dict]) -> dict:
     }
 
 
+def coverage_prompt(scenes: list[dict]) -> dict:
+    """Coverage for the director's prompt: the dimensions and only the non-zero cells.
+
+    The full grid has 1,008 cells; in 2026-09-24T1435-live 11 were non-zero and
+    the zeros made up most of a ~63 KB prompt on every director call.
+    """
+    full = coverage(scenes)
+    return {
+        "dimensions": full["dimensions"],
+        "counts": {key: n for key, n in full["counts"].items() if n},
+        "note": "counts are category|persona|stressor|noise; a cell not listed is 0",
+    }
+
+
+def scenes_prompt(scenes: list[dict]) -> list[dict]:
+    """Scenes so far with each scene's failures counted per fingerprint, not listed."""
+    rows = []
+    for row in scenes:
+        failures: dict[str, dict] = {}
+        for item in row.get("failures", []):
+            entry = failures.setdefault(
+                item["fingerprint"], {"severity": item["severity"], "count": 0}
+            )
+            entry["count"] += 1
+        rows.append({**row, "failures": failures})
+    return rows
+
+
 def existing_cards() -> list[tuple[Path, Scene]]:
     return [(path, load_scene(path)) for path in sorted(CARDS.glob("*.yaml"))]
 
@@ -143,7 +172,9 @@ def output_schema() -> dict:
 
 
 class Director:
-    def __init__(self, model: str = "opus", runner=None):
+    # Sonnet: a validated, rule-bound pick with a fallback card; a weaker pick costs
+    # coverage, not correctness.
+    def __init__(self, model: str = "sonnet", runner=None):
         self.model = model
         self.runner = runner
         # Why the last call fell back, if it did; the batch stops on a usage limit.
@@ -158,8 +189,8 @@ class Director:
         cards = existing_cards()
         summary = {
             "time_left_s": left,
-            "coverage": coverage(scenes),
-            "scenes_so_far": scenes,
+            "coverage": coverage_prompt(scenes),
+            "scenes_so_far": scenes_prompt(scenes),
             "bugs": state.get("bugs", {}),
             "existing_cards": [
                 {"id": card.id, "summary": card.persona.summary} for _, card in cards
@@ -168,14 +199,26 @@ class Director:
         }
         prompt = PROMPT + "\n\n" + json.dumps(summary, sort_keys=True)
         error = ""
+        log = run.path / "usage.jsonl"
         for attempt in range(2):
             try:
                 with tempfile.TemporaryDirectory() as directory:
                     system = Path(directory) / "system.txt"
                     system.write_text("Return only structured JSON for a synthetic scene card.")
-                    result = (self.runner or run_claude)(
-                        system, prompt + error, output_schema(), self.model, "low"
-                    )
+                    try:
+                        result = (self.runner or run_claude)(
+                            system, prompt + error, output_schema(), self.model, "low"
+                        )
+                    except Exception as exc:
+                        usage.record(log, "director", error=str(exc), requested_model=self.model)
+                        raise
+                usage.record(
+                    log,
+                    "director",
+                    payload=result if isinstance(result, dict) else None,
+                    requested_model=self.model,
+                    prompt_chars=len(prompt + error),
+                )
                 raw = (
                     result.get("structured_output", result) if isinstance(result, dict) else result
                 )

@@ -12,6 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from . import usage
 from .scene import Persona, State, Zone
 
 
@@ -110,11 +111,22 @@ def build_prompt(persona: Persona, context: dict) -> str:
 
 
 class ClaudeMind:
-    def __init__(self, persona: Persona, model: str = "sonnet", runner=None, timeout_s: float = 60):
+    def __init__(
+        self,
+        persona: Persona,
+        model: str = "sonnet",
+        runner=None,
+        timeout_s: float = 60,
+        usage_log: Path | None = None,
+        scene: str | None = None,
+    ):
         self.persona = persona
         self.model = model
         self.runner = runner
         self.timeout_s = timeout_s
+        # Where each call's token use goes (the run's usage.jsonl); None skips it.
+        self.usage_log = usage_log
+        self.scene = scene
         self.calls: list[dict] = []
         self.failures: list[str] = []
 
@@ -133,12 +145,30 @@ class ClaudeMind:
                 with tempfile.TemporaryDirectory() as directory:
                     system = Path(directory) / "system.txt"
                     system.write_text("Return only valid JSON for the requested person plan.")
-                    result = await asyncio.wait_for(
-                        asyncio.to_thread(
-                            runner, system, prompt + error, schema, self.model, "low"
-                        ),
-                        timeout=self.timeout_s,
-                    )
+                    try:
+                        result = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                runner, system, prompt + error, schema, self.model, "low"
+                            ),
+                            timeout=self.timeout_s,
+                        )
+                    except Exception as exc:
+                        usage.record(
+                            self.usage_log,
+                            "mind",
+                            error=f"{type(exc).__name__}: {exc}",
+                            requested_model=self.model,
+                            scene=self.scene,
+                        )
+                        raise
+                usage.record(
+                    self.usage_log,
+                    "mind",
+                    payload=result if isinstance(result, dict) else None,
+                    requested_model=self.model,
+                    scene=self.scene,
+                    prompt_chars=len(prompt + error),
+                )
                 raw = (
                     result.get("structured_output", result) if isinstance(result, dict) else result
                 )

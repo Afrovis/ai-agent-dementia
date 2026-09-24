@@ -14,6 +14,7 @@ import redis
 import yaml
 from nc_shared.bus import Bus
 
+from . import usage
 from .body import Body
 from .bugs import RunDir, harness_error, usage_limited
 from .director import Director, coverage, noise_level
@@ -298,7 +299,9 @@ async def run_live(
     return run.path
 
 
-async def _execute_scene(scene, source, run, stack, preflight, thresholds):
+async def _execute_scene(
+    scene, source, run, stack, preflight, thresholds, mind_model: str = "sonnet"
+):
     start = datetime.now(UTC)
     errors = []
     state = {
@@ -308,7 +311,16 @@ async def _execute_scene(scene, source, run, stack, preflight, thresholds):
         "mind_calls": [],
         "mind_errors": [],
     }
-    mind = ClaudeMind(scene.persona) if scene.mind == "claude" else ScriptMind()
+    mind = (
+        ClaudeMind(
+            scene.persona,
+            model=mind_model,
+            usage_log=run.path / "usage.jsonl",
+            scene=scene.id,
+        )
+        if scene.mind == "claude"
+        else ScriptMind()
+    )
     try:
         stack.wait_ready()
         stack.reset()
@@ -411,6 +423,8 @@ async def run_hours(
     triage_after: bool = True,
     triage_quick_tests: bool = True,
     triage_fn=None,
+    director_model: str = "sonnet",
+    mind_model: str = "sonnet",
 ) -> Path:
     """Use one nightsim stack for a bounded series of director scenes, then
     write a fix list (`fixes.md`, see `scene_lab.triage`) unless the batch
@@ -441,7 +455,7 @@ async def run_hours(
     preflight = stack.preflight()
     model = agent_model(REPO_ROOT, stack.env)
     run.metadata = {"kind": "live", **preflight, "model": model, "scene_count": 0}
-    chosen = director or Director()
+    chosen = director or Director(model=director_model)
     scenes: list[dict] = []
     (run.path / "coverage.json").write_text(json.dumps(coverage(scenes), indent=2) + "\n")
     deadline = clock() + hours * 3600
@@ -513,7 +527,7 @@ async def run_hours(
             try:
                 if scene_runner is None:
                     _, entries = await _execute_scene(
-                        scene, source, run, stack, preflight, thresholds
+                        scene, source, run, stack, preflight, thresholds, mind_model
                     )
                 else:
                     entries = await scene_runner(scene, source, run, stack, preflight, thresholds)
@@ -595,4 +609,6 @@ async def run_hours(
         except Exception as exc:  # noqa: BLE001 - the run itself is already complete
             (run.path / "triage-error.txt").write_text(f"{type(exc).__name__}: {exc}\n")
             print(f"triage failed: {exc}")
+    if (run.path / "usage.jsonl").exists():
+        (run.path / "usage.md").write_text(usage.summarize(run.path / "usage.jsonl"))
     return run.path

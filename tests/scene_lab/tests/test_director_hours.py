@@ -40,8 +40,12 @@ def test_director_valid_retry_and_prompt(tmp_path):
 
     def runner(system, prompt, schema, model, effort):
         prompts.append(prompt)
-        assert model == "opus" and effort == "low" and system.exists()
-        return {"structured_output": answers.pop(0)}
+        assert model == "sonnet" and effort == "low" and system.exists()
+        return {
+            "structured_output": answers.pop(0),
+            "usage": {"input_tokens": 100, "output_tokens": 20},
+            "model_usage": {"claude-sonnet-5": {}},
+        }
 
     state = {
         "run": run,
@@ -65,6 +69,13 @@ def test_director_valid_retry_and_prompt(tmp_path):
     assert "TT-1" in prompts[0] and "counts" in prompts[0]
     assert "Validation error" in prompts[1]
     assert "cover repetition" in (run.path / "director.jsonl").read_text()
+    # Only non-zero coverage cells, and failures counted per fingerprint.
+    assert '"restroom|repeater|repeated_question|none": 1' in prompts[0]
+    assert '": 0' not in prompts[0]
+    assert '"TT-1|-|-|-|-": {"count": 1' in prompts[0]
+    rows = [json.loads(line) for line in (run.path / "usage.jsonl").read_text().splitlines()]
+    assert [r["role"] for r in rows] == ["director", "director"]
+    assert rows[0]["model"] == "claude-sonnet-5" and rows[0]["input"] == 100
 
 
 def test_director_splits_a_beat_that_moves_and_talks(tmp_path):
