@@ -99,7 +99,11 @@ class LLMClient(Protocol):
     """The bounded interface the agent loop consumes."""
 
     def interpret(
-        self, utterance: str, turns: Sequence[str], profile: Mapping[str, object]
+        self,
+        utterance: str,
+        turns: Sequence[str],
+        profile: Mapping[str, object],
+        person_state: str | None = None,
     ) -> Interpretation | None: ...
 
     def compose(
@@ -122,7 +126,11 @@ class CloudLLMClient(Protocol):
     """The deliberately smaller cloud seam: no composition method exists."""
 
     def interpret(
-        self, utterance: str, turns: Sequence[str], profile: Mapping[str, object]
+        self,
+        utterance: str,
+        turns: Sequence[str],
+        profile: Mapping[str, object],
+        person_state: str | None = None,
     ) -> Interpretation | None: ...
 
     def plan(
@@ -179,15 +187,32 @@ _INTERPRET_TASK = (
     "are confused_time. Use need_restroom when they need to go there."
 )
 
+# Added only while the person is on the floor, so every other prompt is unchanged.
+# Without it, "Oh, I'm down." and "Just waiting" on the floor read as
+# need_restroom (2026-09-24T1311-live).
+_ON_FLOOR_NOTE = (
+    " The person is on the floor now. Being down, still being there, waiting, or wanting "
+    "to get up are about the fall: not need_restroom. Use need_restroom only when they say "
+    "they need the toilet or can't hold on."
+)
+
+
+def _interpret_task(person_state: str | None) -> str:
+    return _INTERPRET_TASK + (_ON_FLOOR_NOTE if person_state == "on_floor" else "")
+
 
 class _LocalLLM:
     """The prompts shared by every local backend; subclasses own transport."""
 
     def interpret(
-        self, utterance: str, turns: Sequence[str], profile: Mapping[str, object]
+        self,
+        utterance: str,
+        turns: Sequence[str],
+        profile: Mapping[str, object],
+        person_state: str | None = None,
     ) -> Interpretation | None:
         return self._call(
-            _INTERPRET_TASK,
+            _interpret_task(person_state),
             {"utterance": utterance, "last_turns": list(turns)[-3:], "profile": dict(profile)},
             Interpretation,
         )
@@ -448,11 +473,15 @@ class ClaudeLLM:
         self._on_call = on_call
 
     def interpret(
-        self, utterance: str, turns: Sequence[str], profile: Mapping[str, object]
+        self,
+        utterance: str,
+        turns: Sequence[str],
+        profile: Mapping[str, object],
+        person_state: str | None = None,
     ) -> Interpretation | None:
         return self._call(
             "interpret",
-            _INTERPRET_TASK,
+            _interpret_task(person_state),
             {"utterance": utterance, "last_turns": list(turns)[-3:], "profile": dict(profile)},
             Interpretation,
         )
@@ -536,9 +565,13 @@ class FallbackLLM:
         self._consecutive_unclear = 0
 
     def interpret(
-        self, utterance: str, turns: Sequence[str], profile: Mapping[str, object]
+        self,
+        utterance: str,
+        turns: Sequence[str],
+        profile: Mapping[str, object],
+        person_state: str | None = None,
     ) -> Interpretation | None:
-        local = self._local.interpret(utterance, turns, profile)
+        local = self._local.interpret(utterance, turns, profile, person_state)
         if local is None:
             self._consecutive_unclear = 0
             return None
@@ -549,7 +582,7 @@ class FallbackLLM:
         if self._cloud is None or self._consecutive_unclear < 2:
             return local
         self._consecutive_unclear = 0
-        return self._cloud.interpret(utterance, turns, profile) or local
+        return self._cloud.interpret(utterance, turns, profile, person_state) or local
 
     def compose(
         self,
@@ -602,14 +635,16 @@ class FakeLLM:
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
     def interpret(
-        self, utterance: str, turns: Sequence[str], profile: Mapping[str, object]
+        self,
+        utterance: str,
+        turns: Sequence[str],
+        profile: Mapping[str, object],
+        person_state: str | None = None,
     ) -> Interpretation | None:
-        self.calls.append(
-            (
-                "interpret",
-                {"utterance": utterance, "last_turns": list(turns)[-3:], "profile": dict(profile)},
-            )
-        )
+        payload = {"utterance": utterance, "last_turns": list(turns)[-3:], "profile": dict(profile)}
+        if person_state is not None:
+            payload["person_state"] = person_state
+        self.calls.append(("interpret", payload))
         return self._next(self._interpretations)
 
     def compose(

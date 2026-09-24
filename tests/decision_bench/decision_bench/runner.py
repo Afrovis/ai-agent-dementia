@@ -117,8 +117,8 @@ class _TracingLLM:
             self.bus.trace.entries.append(TraceEntry(self.bus.now_t, "LLMNone", {"task": task}))
         return result
 
-    def interpret(self, utterance: str, turns, profile):
-        return self._call("interpret", utterance, turns, profile)
+    def interpret(self, utterance: str, turns, profile, person_state=None):
+        return self._call("interpret", utterance, turns, profile, person_state)
 
     def compose(
         self,

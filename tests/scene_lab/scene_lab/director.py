@@ -20,10 +20,14 @@ CARDS = REPO / "tests/scene_lab/scenes"
 PROFILES = REPO / "tests/scene_lab/profiles"
 PROMPT = (
     "Choose the next synthetic scene to maximise new coverage. If the previous scene "
-    "failed an invariant, first choose a smaller or harsher variant to confirm and "
-    "isolate it. Never touch code or config outside the scene card. Portray the person "
+    "has a critical or major finding, first choose a smaller or harsher variant to "
+    "confirm and isolate it. Do not chase review findings: designed pacing silence "
+    "with drop reason reassured_recently is known. Never touch code or config outside "
+    "the scene card. Portray the person "
     "respectfully, without caricature. Return JSON with scene and rationale. Scene must "
-    "have mind: claude, 1–4 scripted opening beats, and duration_s <= 600 and time left. "
+    "have mind: claude, opening beats at 1–4 distinct times, and duration_s <= 600 and "
+    "time left. Each beat is exactly one move, say, wait or end; to talk while moving, "
+    "give a move beat and a say beat the same at. "
     "Use only the allowed profile and strategies files. Give it a unique id "
     "<category>-<slug>-<n>."
 )
@@ -99,6 +103,31 @@ def _valid_config(scene: Scene) -> None:
             setattr(scene, field, default)
 
 
+def split_combined_beats(opening: list) -> list:
+    """Split a beat that holds several actions into one beat per action at the same time.
+
+    Talking while walking is a move and a say with the same `at`; the director often
+    writes them as one beat, which Scene rejects. The split is lossless: the move runs
+    first so the body is already moving when the line starts, and `style` stays with
+    its say.
+    """
+    beats = []
+    for beat in opening:
+        if not isinstance(beat, dict):
+            beats.append(beat)
+            continue
+        actions = [key for key in ("move", "say", "wait", "end") if beat.get(key) is not None]
+        if len(actions) < 2:
+            beats.append(beat)
+            continue
+        for key in actions:
+            part = {"at": beat.get("at"), key: beat[key]}
+            if key == "say" and "style" in beat:
+                part["style"] = beat["style"]
+            beats.append(part)
+    return beats
+
+
 def output_schema() -> dict:
     """JSON schema for the director's reply. Scene's nested models live in `$defs`, which
     must sit at the root: `#/$defs/...` references resolve from the root document, and a
@@ -152,11 +181,16 @@ class Director:
                 )
                 if isinstance(raw, str):
                     raw = json.loads(raw)
-                scene = Scene.model_validate(raw["scene"])
+                card = dict(raw["scene"])
+                if isinstance(card.get("opening"), list):
+                    card["opening"] = split_combined_beats(card["opening"])
+                scene = Scene.model_validate(card)
                 if not isinstance(raw["rationale"], str) or not raw["rationale"].strip():
                     raise ValueError("rationale required")
-                if scene.mind != "claude" or not 1 <= len(scene.opening) <= 4:
-                    raise ValueError("mind must be claude and opening must contain 1–4 beats")
+                if scene.mind != "claude" or not 1 <= len({b.at for b in scene.opening}) <= 4:
+                    raise ValueError(
+                        "mind must be claude and opening beats need 1–4 distinct times"
+                    )
                 if scene.duration_s > left:
                     raise ValueError("duration exceeds time left")
                 dimensions = coverage(scenes)["dimensions"]

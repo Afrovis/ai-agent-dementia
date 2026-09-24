@@ -45,6 +45,7 @@ class ScriptMind:
 
 
 DIRECTOR_TIMEOUT_S = 180.0
+HARNESS_STREAK_STOP = 3
 
 
 async def schedule(
@@ -357,6 +358,9 @@ async def _execute_scene(scene, source, run, stack, preflight, thresholds):
             await page_task
     except (Exception, KeyboardInterrupt) as exc:
         errors.append(f"{type(exc).__name__}: {exc}")
+        # "unhandled errors in a TaskGroup" alone hides the cause.
+        for sub in getattr(exc, "exceptions", ()):
+            errors.append(f"{type(sub).__name__}: {str(sub)[:300]}")
         state["interrupted"] = isinstance(exc, KeyboardInterrupt)
     finally:
         if "page_task" in locals():
@@ -547,6 +551,23 @@ async def run_hours(
                 run.append([_limit_entry(run, scene.id, limited)])
                 break
             if interrupted or any("KeyboardInterrupt" in e.summary for e in entries):
+                break
+            # A broken stack does not heal between scenes: 24 scenes of
+            # 2026-09-23T2238-live repeated one readiness timeout.
+            recent = scenes[-HARNESS_STREAK_STOP:]
+            if len(recent) == HARNESS_STREAK_STOP and all(
+                s["harness_errors"] and not s["failures"] for s in recent
+            ):
+                run.append(
+                    [
+                        harness_error(
+                            run.id,
+                            scene.id,
+                            f"{HARNESS_STREAK_STOP} scenes in a row failed in the harness; "
+                            "batch stopped, no further scenes started",
+                        )
+                    ]
+                )
                 break
     finally:
         if started and not keep_stack:

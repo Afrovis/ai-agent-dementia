@@ -162,6 +162,40 @@ def test_tt1_cancellation_at_start_and_recovery():
     fail(unrelated, "TT-1", "critical", "reply composed but never played")
 
 
+def test_tt1_deferred_then_superseded_by_answered_utterance():
+    events = (
+        ev(2, "Utterance", text="Are they safe?"),
+        TraceEvent(
+            t=4,
+            kind="decision",
+            type="Activity",
+            data={"decision": "pending_say_deferred", "direct": True, "strategy": "old"},
+        ),
+        ev(8, "Utterance", text="Please tell me."),
+        TraceEvent(
+            t=8.2,
+            kind="decision",
+            type="Activity",
+            data={"decision": "pending_say_dropped", "reason": "superseded", "strategy": "old"},
+        ),
+        ev(9, "Say", text="They are safe.", strategy="new"),
+        _said(9, "new", True, "utterance_reply"),
+    )
+    hit = next(r for r in score(baseline(*events, end=35), "TT-1") if r.t == 2)
+    assert hit.severity == "info"
+    assert "reply superseded by the next utterance's reply" in hit.reason
+    assert hit.context["strategy"] == "new"
+    close_events = tuple(
+        e.model_copy(update={"t": {8: 5, 8.2: 5.2, 9: 6}.get(e.t, e.t)}) for e in events
+    )
+    close_hit = next(r for r in score(baseline(*close_events, end=35), "TT-1") if r.t == 2)
+    assert close_hit.severity == "info"
+    missing_drop = baseline(
+        *(e for e in events if e.data.get("decision") != "pending_say_dropped"), end=35
+    )
+    fail(missing_drop, "TT-1", "critical", "never composed")
+
+
 def test_tt1_designed_silence_reviews_distress_and_stated_need():
     for text, distress in (("My chest feels heavy.", 2), ("Please help me.", 0)):
         trace = baseline(
@@ -231,6 +265,26 @@ def test_tt2_review_and_question_heuristic():
     assert judged[0].reason == "answered" and judged[0].passed
 
 
+def test_tt2_hearing_request_repeated_louder_is_answered_without_judge():
+    for text in ("Say it again, please.", "What?", "Pardon?", "I can't hear you."):
+        trace = baseline(
+            ev(2, "Utterance", text=text),
+            ev(3, "Say", text="The hall is to your left.", strategy="repeat_louder"),
+            _said(3, "repeat_louder", True, "hearing_request"),
+        )
+        hit = score(trace, "TT-2")[0]
+        assert (hit.severity, hit.reason, hit.context["strategy"]) == (
+            "info",
+            "answered",
+            "repeat_louder",
+        )
+    ordinary = baseline(
+        ev(2, "Utterance", text="What time is it?"),
+        ev(3, "Say", text="It is night.", strategy="repeat_louder"),
+    )
+    assert score(ordinary, "TT-2")[0].severity == "review"
+
+
 def test_tt3_and_tt4():
     good = baseline(
         ev(1, "SpeechStarted"),
@@ -288,6 +342,25 @@ def test_tt5_tt6_tt7():
         ev(4, "Activity", kind="playback", phase="end", detail="ended"),
     )
     fail(real, "TT-5", "major", "silence gap")
+
+    direct = scene(
+        ev(0, "Say", text="first", strategy="greet"),
+        ev(0.1, "Activity", kind="playback", detail="playing"),
+        ev(1, "Activity", kind="playback", phase="end", detail="ended"),
+        ev(1.2, "Utterance", text="Where am I?"),
+        ev(3, "Say", text="second", strategy="orient"),
+        _said(3, "orient", True, "utterance_reply"),
+        ev(3.1, "Activity", kind="playback", detail="playing"),
+        ev(4, "Activity", kind="playback", phase="end", detail="ended"),
+    )
+    passes(direct, "TT-5")
+    scheduled = scene(
+        *[
+            e if e.data.get("decision") != "said" else _said(3, "orient", False, "timer")
+            for e in direct.events
+        ]
+    )
+    fail(scheduled, "TT-5", "major", "silence gap")
     passes(good, "TT-6")
     fail(
         scene(
@@ -378,6 +451,15 @@ def test_sm3_sm4():
         )
         assert bool([r for r in score(escalated, "SM-3") if not r.passed]) is fails
     fail(baseline(end=70), "SM-3", "major", "silent session")
+    for duration, expected_failure in ((200, False), (310, True)):
+        restroom = scene(
+            ev(0, "PersonState", state="walking", zone="bathroom_path"),
+            ev(0, "SessionState", phase="ENGAGED", goal="restroom"),
+            ev(0, "Say", text="Take your time.", strategy="path_light"),
+            ev(duration, "Say", text="I'm here.", strategy="acknowledge_progress"),
+            end=duration,
+        )
+        assert bool([r for r in score(restroom, "SM-3") if not r.passed]) is expected_failure
     returns_to_bed = baseline(ev(20, "PersonState", state="in_bed", zone="bed"))
     passes(returns_to_bed, "SM-3")
     fail(
@@ -414,6 +496,33 @@ def test_sm3_sm4():
         "SM-4",
         "minor",
         "light remained on",
+    )
+    light_open = scene(
+        ev(0, "LightCommand", state="on"),
+        ev(1, "PersonState", state="walking", zone="bathroom_path"),
+        end=40,
+    )
+    assert score(light_open, "SM-4")[0].severity == "info"
+
+
+def test_reply_fingerprints_use_said_strategy():
+    late = baseline(
+        ev(1, "Say", text="Earlier.", strategy="old"),
+        ev(2, "Utterance", text="Where am I?"),
+        ev(9, "Say", text="Home.", strategy="new"),
+        _said(9, "new", True, "utterance_reply"),
+    )
+    assert fingerprint(next(r for r in score(late, "TT-1") if not r.passed)).split("|")[3] == "new"
+    assert score(late, "TT-2")[0].context["strategy"] == "new"
+    overlap = baseline(
+        ev(1, "Say", text="Earlier.", strategy="old"),
+        ev(2, "SpeechStarted"),
+        ev(2.5, "Say", text="Home.", strategy="new"),
+        _said(2.5, "new", True, "utterance_reply"),
+        ev(5, "Utterance", text="Where am I?"),
+    )
+    assert (
+        fingerprint(next(r for r in score(overlap, "TT-3") if not r.passed)).split("|")[3] == "new"
     )
 
 

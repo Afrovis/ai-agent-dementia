@@ -5,6 +5,7 @@ silence_gap_s: 8.0
 direct_reply_window_s: 30.0
 settle_s: 30.0
 silent_session_s: 60.0
+restroom_silent_s: 300.0
 escalated_silent_s: 150.0
 loop_lag_s: 3.0
 max_scene_s: 600

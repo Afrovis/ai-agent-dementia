@@ -1058,3 +1058,23 @@ def test_stale_and_bad_hello_are_ignored(caplog):
     ]
     assert len(hellos) == 1
     assert any('"event_type": "client stale"' in record.message for record in caplog.records)
+
+
+def test_broadcast_loop_blocks_once_per_pass_over_all_streams():
+    # 2026-09-24T1311-live: reading ten streams in turn, each blocking 100 ms,
+    # held a SpeechStarted or Say for up to 0.9 s.
+    calls = []
+
+    class CountingBus(FakeBus):
+        def read(self, *args, **kwargs):
+            raise AssertionError("broadcast_loop must not block per stream")
+
+        def read_many(self, streams, group, consumer, count=10, block_ms=1000):
+            calls.append((tuple(streams), block_ms))
+            return {}
+
+    asyncio.run(broadcast_loop(CountingBus(), ConnectionManager(), max_iterations=2))
+
+    assert len(calls) == 2
+    streams, block_ms = calls[0]
+    assert {"say", "speech_in", "show", "debug"} <= set(streams) and block_ms == 100

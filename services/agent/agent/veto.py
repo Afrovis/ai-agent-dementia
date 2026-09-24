@@ -86,6 +86,7 @@ _TOILET_RE = re.compile(
 _NEED_RE = re.compile(
     r"\b(?:help|cold|freezing|can't get warm|hurts?|hurting|pain|ache|aching|"
     r"feel (?:strange|sick|ill|unwell|funny)|can't breathe|thirsty|hungry|"
+    r"water|a drink|parched|stiff|sore|"
     r"don't know what to do)\b",
     re.IGNORECASE,
 )
@@ -112,6 +113,19 @@ def mentions_toilet(text: str) -> bool:
 
 def states_need(text: str) -> bool:
     return bool(_NEED_RE.search(text))
+
+
+# Remarks a person makes while waiting for the caregiver that deserve a reply even
+# after the reassurance cap. Kept apart from _NEED_RE, which also drives the
+# no_redirect_from_stated_need veto (2026-09-24T1311-live).
+_WAITING_URGENT_RE = re.compile(
+    r"\b(?:wet|accident|hurry|quickly|get up|still (?:\w+ )?(?:here|on the floor|down here))\b",
+    re.IGNORECASE,
+)
+
+
+def urgent_while_waiting(text: str) -> bool:
+    return bool(_WAITING_URGENT_RE.search(text))
 
 
 def avoid_terms(things_to_avoid: tuple[str, ...]) -> tuple[str, ...]:

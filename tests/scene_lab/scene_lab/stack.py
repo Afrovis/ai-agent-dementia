@@ -116,16 +116,21 @@ class Stack:
 
     def wait_ready(self, timeout: float = 90) -> None:
         deadline = time.monotonic() + timeout
+        last_error = "no response"
         while time.monotonic() < deadline:
             try:
-                if self._redis().ping():
-                    with urlopen("http://localhost:18443/", timeout=2) as response:
-                        if response.status == 200:
-                            return
-            except (OSError, redis.RedisError):
-                pass
+                client = self._redis()
+                # PING passes while Redis refuses writes (MISCONF); the services
+                # need writes, so probe one.
+                client.set("nightsim:ready", "1", ex=60)
+                with urlopen("http://localhost:18443/", timeout=2) as response:
+                    if response.status == 200:
+                        return
+                    last_error = f"embodiment HTTP {response.status}"
+            except (OSError, redis.RedisError) as exc:
+                last_error = f"{type(exc).__name__}: {str(exc)[:200]}"
             time.sleep(1)
-        raise TimeoutError("nightsim Redis or embodiment did not become ready")
+        raise TimeoutError(f"nightsim Redis or embodiment did not become ready ({last_error})")
 
     def unload_llm(self, model: str, timeout: float = 60) -> bool:
         """Unload the agent's model from host Ollama.

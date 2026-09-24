@@ -120,3 +120,37 @@ def test_trimming_drops_the_oldest_unread_entries_only():
     read = bus.read("frames", "capture-group", "consumer-1", count=100)
     assert len(read) == 10
     assert [msg_id for msg_id, _ in read] == [entry.msg_id for entry in bus._streams["frames"]]
+
+
+def test_fake_read_many_returns_only_streams_with_new_messages():
+    bus = FakeBus()
+    for stream in ("person", "notify", "health"):
+        bus.ensure_group(stream, "g")
+    bus.publish(PersonState(source="perceive", state="in_bed", confidence=0.9, zone="bed"))
+    bus.publish(Health(source="agent", service="agent", ok=True, detail="ok"))
+
+    batch = bus.read_many(["person", "notify", "health"], "g", "c")
+
+    assert set(batch) == {"person", "health"}
+    assert isinstance(batch["person"][0][1], PersonState)
+    assert bus.read_many(["person", "notify", "health"], "g", "c") == {}
+
+
+def test_read_many_makes_one_xreadgroup_call_over_all_streams():
+    from nc_shared.bus import Bus
+
+    event = Health(source="agent", service="agent", ok=True, detail="ok")
+
+    class Client:
+        calls = []
+
+        def xreadgroup(self, group, consumer, streams, count, block):
+            self.calls.append((group, consumer, streams, count, block))
+            fields = {b"event_type": b"Health", b"data": event.model_dump_json().encode()}
+            return [[b"health", [(b"1-0", fields)]]]
+
+    client = Client()
+    batch = Bus(client).read_many(["say", "health"], "g", "c", count=5, block_ms=100)
+
+    assert client.calls == [("g", "c", {"say": ">", "health": ">"}, 5, 100)]
+    assert batch == {"health": [("1-0", event)]}
