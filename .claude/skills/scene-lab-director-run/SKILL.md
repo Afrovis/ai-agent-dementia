@@ -1,15 +1,17 @@
 ---
 name: scene-lab-director-run
-description: Run a scene_lab director batch (simulated nights with an Opus director and a Claude-played person against the real agent stack), keep the Mac mini safe while it runs, and report the result with the auto-generated fix list (fixes.md). Use whenever the user asks for a director hour/run/batch, a simulated night, "run scene_lab", "try a new director hour", to re-run or triage a finished scene_lab run, or to analyse what went wrong in one.
+description: Run a scene_lab director batch (simulated nights with a Claude director and a Claude-played person against the real agent stack), keep the Mac mini safe while it runs, and report the result with the auto-generated fix list (fixes.md). Use whenever the user asks for a director hour/run/batch, a simulated night, "run scene_lab", "try a new director hour", to re-run or triage a finished scene_lab run, or to analyse what went wrong in one.
 ---
 
 # scene_lab director run
 
 `python -m scene_lab run --hours N` plays simulated nights against the real
-agent stack (`nightsim` compose project). An Opus director picks each scene,
-and a Claude "mind" plays the person through real audio. At the end, an Opus
-triage agent writes `fixes.md`: a ranked fix list with proposals, backed by
-quick tests it runs in a throwaway worktree. Background: `tests/scene_lab/README.md`,
+agent stack (`nightsim` compose project). A Sonnet director picks each scene,
+and a Sonnet "mind" plays the person through real audio (`--director-model`,
+`--mind-model`). At the end, triage writes `fixes.md`: an Opus planner picks
+up to six investigations, Sonnet workers run them one at a time (each after a
+GPU-idle check), and Opus writes the ranked fix list. Every Claude call's
+tokens go to `usage.jsonl`, summarised in `usage.md`. Background: `tests/scene_lab/README.md`,
 the measured `tests/scene_lab/BASELINE.md`, and the Ollama note in `AGENTS.md` ("Operational gotchas").
 
 All commands run from the checkout under test, with a Python environment
@@ -30,7 +32,8 @@ where scene_lab is installed with its `live` extra (README, top).
   the claude.ai subscription (`claude -p`, never the API). About an hour of
   talkative scenes can hit the session limit. The batch then stops by itself
   with one harness entry, and triage is skipped. Don't start a second batch
-  on top of a limited one. Tell the user the reset time.
+  on top of a limited one. Tell the user the reset time. Report
+  `python -m scene_lab usage <run-id>` with the result.
 
 ## Steps
 
@@ -68,11 +71,13 @@ where scene_lab is installed with its `live` extra (README, top).
    semantics: `kill -INT` on the `scene_lab` Python process only, never
    Ollama.
 4. **After the batch** the run folder has `bugs.md`, per-scene
-   `report.md`/`trace.jsonl`, `director.jsonl`, and `fixes.md` (plus
-   `fixes.patch` if the triage edited code in its throwaway worktree). If
-   triage failed or was skipped (`triage-error.txt`, usage limit), run it
-   later with `python -m scene_lab triage <run-id>`, adding `--no-tests` for
-   analysis only.
+   `report.md`/`trace.jsonl`, `director.jsonl`, `usage.jsonl`/`usage.md`,
+   `fixes.md` and `triage/` (clusters, plan, one JSON and patch per
+   investigation; `fixes.patch` joins the patches). If triage failed or was
+   skipped (`triage-error.txt`, usage limit), run it later with
+   `python -m scene_lab triage <run-id>`, adding `--no-tests` for analysis
+   only. A `fixes.md` headed "Written without the final pass" came straight
+   from the workers: check it more carefully.
 5. **Check the fix list before relaying it.** It is model output. For each
    item you pass on, open the linked `report.md#t=...` and the cited
    `file:line`, and confirm them. Say which quick tests were really run, and
@@ -91,13 +96,16 @@ where scene_lab is installed with its `live` extra (README, top).
    end; if not, unload it through the API) and restart any stack you stopped
    if the user wants it back.
 
-## What the triage agent may do
+## What the triage agents may do
 
-`scene_lab/triage.py` runs `claude -p --model opus` in a `git worktree add
---detach` copy of the run's commit, under the system temp folder. Allowed
-tools: Read/Grep/Glob, Edit/Write inside that copy, Python only through a
-wrapper pinned to the copy (pytest, `scene_lab rescore`, `scene_lab promote`
-plus `session_replay run --llm recorded`), and read-only git. It has no
-Docker, no Ollama, no network, and cannot commit. It runs at most five quick
-tests. Its diff is saved as `fixes.patch`, and the worktree is removed. If you
-widen these permissions, say so in the PR.
+`scene_lab/triage.py` makes one `git worktree add --detach` copy of the run's
+commit under the system temp folder. The Opus planner has no tools. Each
+Sonnet worker runs `claude -p` in that copy, one after another, with Read/Grep/
+Glob, Edit/Write inside the copy, Python only through a wrapper pinned to the
+copy (pytest, `scene_lab rescore`, `scene_lab promote` plus `session_replay
+run --llm recorded`), and read-only git. At most two quick tests each. The
+copy is reset between workers. Before each worker, `scene_lab/gpu.py` waits up
+to 5 minutes for GPU utilisation of 20 % or less; it only reads and never
+touches Ollama. The Opus writer has read-only tools. None of them has Docker,
+Ollama or network access, and none can commit. The worktree is removed at the
+end. If you widen these permissions, say so in the PR.

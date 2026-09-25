@@ -311,6 +311,11 @@ def run_claude(
         "model": used_model,
         "session_id": payload.get("session_id"),
         "total_cost_usd": payload.get("total_cost_usd", 0),
+        # Token counts for callers that log usage (scene_lab.usage).
+        "usage": payload.get("usage") or {},
+        "model_usage": usage if isinstance(usage, dict) else {},
+        "num_turns": payload.get("num_turns"),
+        "duration_ms": payload.get("duration_ms"),
     }
 
 

@@ -72,24 +72,38 @@ python -m scene_lab run --hours 3 --runs-root /path/to/runs --max-scenes 12
 python -m scene_lab bugs 2026-09-23T2200-live 2026-09-24T2200-live
 ```
 
-`--hours` uses Opus on the Claude subscription to pick synthetic scenes, keeps
-one nightsim stack up, and stops starting scenes when fewer than 600 seconds
-remain. `--max-scenes` is optional. `--keep-stack` leaves nightsim running at
-the end. Each generated card is saved under `scenes/`, while `director.jsonl`,
-`coverage.json`, `bugs.jsonl`, and `bugs.md` are updated in the run directory.
-`bugs.md` includes the first occurrence's evidence and links to every report.
+`--hours` uses a Claude director on the subscription (Sonnet by default,
+`--director-model`) to pick synthetic scenes, keeps one nightsim stack up, and
+stops starting scenes when fewer than 600 seconds remain. The person is played
+by Sonnet (`--mind-model`). `--max-scenes` is optional. `--keep-stack` leaves
+nightsim running at the end. Each generated card is saved under `scenes/`,
+while `director.jsonl`, `coverage.json`, `bugs.jsonl`, and `bugs.md` are
+updated in the run directory. `bugs.md` includes the first occurrence's
+evidence and links to every report. Every Claude call appends its tokens to
+`usage.jsonl`; the batch writes `usage.md`, and `python -m scene_lab usage
+RUN_ID` prints the table per role and model.
 
 At the end of a batch, `triage` writes `fixes.md` in the run folder: a ranked
 fix list with evidence links, likely cause, a concrete proposal and any owner
-decision, from Opus on the subscription. Cheap proposals are checked first in
-a throwaway `git worktree` of the run's commit under the system temp
-directory. The triage agent may edit only that copy, run Python only through
-a wrapper pinned to it (pytest, `rescore`, `promote` plus `session_replay`
-with recorded interpretations) and read git. No Docker, Ollama or network,
-no commits. Its edits are saved as `fixes.patch`. It is skipped when the batch
-hit the usage limit. `--no-triage` turns it off, `--triage-no-tests` makes it
-analysis only, and `python -m scene_lab triage RUN_ID [--no-tests]` runs it on
-a finished run. The batch also unloads the Ollama model before it starts,
+decision. It runs in four steps (`scene_lab/triage.py`): Python groups
+`bugs.jsonl` into clusters with report excerpts; Opus plans (no tools, at most
+`--max-items` investigations, default 6); one Sonnet worker per investigation
+runs in series, each after the GPU gate (`scene_lab/gpu.py`) has waited up to
+5 minutes for the host GPU to drop to 20 % or less; Opus writes `fixes.md`
+from the workers' findings, checking weak ones against the code. The gate
+only reads (`ioreg`, Ollama `api/ps`) and never unloads or stops anything; a
+worker that starts on a busy GPU is told its timings are contended.
+Intermediate results are in the run's `triage/` folder. Workers check cheap
+proposals in a throwaway `git worktree` of the run's commit under the system
+temp directory, reset between workers. They may edit only that copy, run
+Python only through a wrapper pinned to it (pytest, `rescore`, `promote` plus
+`session_replay` with recorded interpretations) and read git. No Docker,
+Ollama or network, no commits. Each worker's diff is `triage/<n>.patch`, all
+joined in `fixes.patch`. Triage is skipped when the batch hit the usage limit;
+if the limit hits during triage, `fixes.md` is rendered from the workers that
+finished. `--no-triage` turns it off, `--triage-no-tests` makes it analysis
+only, and `python -m scene_lab triage RUN_ID [--no-tests]` runs it on a
+finished run. The batch also unloads the Ollama model before it starts,
 resets it before each scene and unloads it at the end (see `AGENTS.md`, "Operational gotchas"). The
 project skill `.claude/skills/scene-lab-director-run/` walks through a run
 end to end.

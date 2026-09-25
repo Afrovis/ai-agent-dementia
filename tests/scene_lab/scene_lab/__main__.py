@@ -50,9 +50,16 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="fix list from analysis only, without quick tests in a throwaway worktree",
     )
+    live.add_argument("--director-model", default="sonnet", help="Claude model for the director")
+    live.add_argument("--mind-model", default="sonnet", help="Claude model playing the person")
     fixes = sub.add_parser("triage", help="write fixes.md for a finished run")
     fixes.add_argument("run_dir", type=Path)
     fixes.add_argument("--no-tests", action="store_true")
+    fixes.add_argument(
+        "--max-items", type=int, default=6, help="most investigations the planner may start"
+    )
+    spent = sub.add_parser("usage", help="Claude calls and tokens per role for a run")
+    spent.add_argument("run_dir", type=Path)
     fixes.add_argument("--commit", help="commit to test against (default: the run's commit)")
     frombench = sub.add_parser("from-bench")
     frombench.add_argument("scenario")
@@ -84,7 +91,21 @@ def main(argv: list[str] | None = None) -> int:
 
         run_dir = args.run_dir if args.run_dir.exists() else _default_root() / args.run_dir
         commit = args.commit or _run_commit(run_dir) or "HEAD"
-        print(triage(run_dir, REPO_ROOT, commit, quick_tests=not args.no_tests))
+        print(
+            triage(
+                run_dir,
+                REPO_ROOT,
+                commit,
+                quick_tests=not args.no_tests,
+                max_items=args.max_items,
+            )
+        )
+        return 0
+    if args.command == "usage":
+        from .usage import summarize
+
+        run_dir = args.run_dir if args.run_dir.exists() else _default_root() / args.run_dir
+        print(summarize(run_dir / "usage.jsonl"), end="")
         return 0
     if args.command == "rescore":
         from .rescore import rescore
@@ -113,6 +134,8 @@ def main(argv: list[str] | None = None) -> int:
                         max_scenes=args.max_scenes,
                         triage_after=not args.no_triage,
                         triage_quick_tests=not args.triage_no_tests,
+                        director_model=args.director_model,
+                        mind_model=args.mind_model,
                     )
                 )
             )
