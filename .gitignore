@@ -18,3 +18,6 @@ config/zones.yaml
 config/phantoms.yaml
 config/person.yaml
 config/strategies.yaml
+
+# Model weights are downloaded at build or first use, never committed.
+*.pt

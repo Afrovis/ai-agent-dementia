@@ -1,7 +1,7 @@
 # Handoff: scene_lab fixes still to finish and deploy (2026-09-23, updated 2026-09-24)
 
 Branch `scene-lab-fixes`, worktree
-`/Users/mathiasserver/Documents/ai-agent-dementia/.claude/worktrees/scene-lab-fixes`,
+`.claude/worktrees/scene-lab-fixes`,
 PR #90. A Python env with everything installed is at `.venv/` in that worktree. Run tests with
 `SCENE_LAB_RUNS=$PWD/.rescore/runs .venv/bin/python -m pytest -q --import-mode=importlib services/agent/tests tests/scene_lab/tests tests/session_replay tests/decision_bench/tests`.
 `tests/dialogue_bench/tests/test_scenarios.py` already fails on main (`wants_bed` has no

@@ -157,15 +157,15 @@ checkout, so the worktree must lead `PYTHONPATH`.
 
 ```sh
 WT=$PWD
-PY=/Users/mathiasserver/Documents/ai-agent-dementia/.venv-video-eval/bin/python
+PY=.venv-video-eval/bin/python
 export PYTHONPATH=$WT/services/perceive:$WT/services/capture:$WT/tools/video_eval:$WT/shared
-DATA=/Users/mathiasserver/Documents/data-ai-agent-dementia
+DATA=../data-ai-agent-dementia
 
 $PY -m pytest -q services/perceive/tests tools/video_eval/tests
 $PY -m ruff check services/perceive tools/video_eval
 
 $PY -m video_eval --data-root $DATA predict --force --clip 2026-09-13_bedroom-sample-01 \
-  --backend yolo --variant letterbox640 --yolo-model /Users/mathiasserver/Documents/ai-agent-dementia/yolov8n-pose.pt
+  --backend yolo --variant letterbox640 --yolo-model yolov8n-pose.pt
 $PY tools/video_eval/scripts/vlm_agreement.py --data-root $DATA --clip 2026-09-13_bedroom-sample-01 --confusion
 ```
 
@@ -499,7 +499,7 @@ Run from the worktree with the section 6 environment (`PY`, `PYTHONPATH`,
 # Once per clip and variant: cache every model's raw output (about 2 min per model pair).
 $PY tools/video_eval/scripts/detection_cache.py --data-root $DATA \
   --clip 2026-09-13_bedroom-sample-01 --variant letterbox \
-  --model /Users/mathiasserver/Documents/ai-agent-dementia/yolov8n-pose.pt \
+  --model yolov8n-pose.pt \
   --model $DATA/models/yolo11s-pose.pt --model $DATA/models/yolo26n-pose.pt \
   --model mediapipe --model mediapipe_video
 
@@ -518,7 +518,7 @@ $PY tools/video_eval/scripts/rule_replay.py ... --labels-root $DATA/relabel-v2
 PERCEIVE_FLOOR_TOP_Y=0.5 PERCEIVE_BED_VANISH_HOLD=true \
   $PY -m video_eval --data-root $DATA predict --force \
   --clip 2026-09-13_bedroom-sample-01 --backend yolo --variant letterbox \
-  --yolo-model /Users/mathiasserver/Documents/ai-agent-dementia/yolov8n-pose.pt
+  --yolo-model yolov8n-pose.pt
 ```
 
 The shell in this environment rejects `export` of a computed value, so the
