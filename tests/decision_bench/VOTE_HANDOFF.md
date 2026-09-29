@@ -54,7 +54,7 @@ Branch `decision-bench-vote`, worktree `.claude/worktrees/majority-vote`, based 
 Repository: this worktree. Package: `tests/decision_bench` (`decision_bench/annotate.py`, `triage.py`,
 `review.py`, the scoring/report code, fixture schema, tests in `tests/decision_bench/tests`).
 Run tests with:
-    cd tests/decision_bench && PYTHONPATH=$PWD /Users/mathiasserver/Documents/ai-agent-dementia/.venv-dialogue/bin/python -m pytest -q
+    cd tests/decision_bench && PYTHONPATH=$PWD ../../.venv-dialogue/bin/python -m pytest -q
 Also run `ruff check` / `ruff format --check` on the package if ruff is available in that venv.
 
 Read `tests/decision_bench/PLAN.md` ("Annotation workflow") and `decision_bench/triage.py` first.
