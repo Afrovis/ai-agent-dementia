@@ -17,6 +17,9 @@ it wakes up the family caregiver instead of the person.
 > been clinically validated, and can miss a fall or misread a situation. It
 > is an assistive layer for nights when no one else is awake in the room,
 > never a replacement for a person who is.
+>
+> It is also a **prototype that is not HIPAA compliant**. Do not use it with
+> real patient data or protected health information.
 
 ## Who it's for
 
