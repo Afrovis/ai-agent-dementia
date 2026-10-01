@@ -23,9 +23,41 @@ it wakes up the family caregiver instead of the person.
 
 ## See it work
 
-Two short silent videos, a minute or so each. Every quoted line, number and
-event name in them comes from a real run of the code; where the person is
-scripted or simulated, the video says so.
+Three short silent videos. Every label, quoted line and number in them comes
+from a real run of the code; where the person is acting, scripted or
+simulated, the video says so.
+
+### What the camera sees
+
+https://github.com/user-attachments/assets/45b3e60d-6e47-42e8-8b6b-0703cb1295d9
+
+35 s, silent. Also in the repository as an
+[animated image](docs/media/perception-reel.webp) and an
+[MP4](docs/media/perception-reel.mp4).
+
+A recorded bedroom test, lamp-lit, with the project owner acting out three
+moments of a night: crossing the room, getting into bed, and sitting down on
+the floor and getting up again.
+
+- **The skeleton** is drawn by a large pose model (YOLO11x-pose) on the full
+  4K recording, only so the body is easy to follow in the video.
+- **The label at the bottom left** (*Walking*, *Standing*, *Sitting up*,
+  *In bed*, *On the floor*), with its confidence and zone, is what the real
+  perception pipeline concluded from the 2 frames per second the bedside
+  camera actually sends. It is shown as it happened, so it trails the
+  movement by a beat; it still says *On the floor* for a moment after the
+  person stands up.
+- **The bed outline** fills in when the pipeline places the person in the
+  calibrated bed zone.
+- **The two lanes at the bottom right** compare the pipeline (SEEN) with a
+  hand-labelled reference timeline (TRUTH). Agreement between them is what
+  the perception benchmark scores; see [Results so far](#results-so-far).
+- **The "On the floor" chip** counts how long the reading has held. The
+  agent's floor rule works from that state, as the next video shows.
+
+Only that structured reading, such as `on_floor, 0.93, zone room`, leaves
+perception as a `PersonState` event. In normal use the frames themselves stay
+on the device and are not stored.
 
 ### One night moment, as events
 
@@ -163,9 +195,11 @@ said) are stored. An optional cloud fallback for hard reasoning cases is
 off by default, and when enabled it only ever sees text, never images or
 audio.
 
-The repository contains no recordings. Test fixtures are event logs and
-synthetic scenarios; recorded footage used for evaluation lives outside the
-repository and is never committed.
+The repository contains no recordings of anyone other than the project
+owner. The demo videos in [`docs/media`](docs/media) show the owner acting
+out night-time scenarios, with their consent. Test fixtures are event logs
+and synthetic scenarios; recorded footage used for evaluation lives outside
+the repository and is never committed.
 
 ## Current status (v0.1, in progress)
 
