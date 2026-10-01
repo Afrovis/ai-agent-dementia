@@ -29,10 +29,11 @@ scripted or simulated, the video says so.
 
 ### One night moment, as events
 
-<!-- VIDEO 1: upload events-explainer.mp4 by dragging it into a GitHub
-     issue or PR comment, then replace the line below with the
-     https://github.com/user-attachments/assets/... link it gives you. -->
-https://github.com/user-attachments/assets/VIDEO-1-PLACEHOLDER
+[![One night moment, as events: the agent's state machine with the local
+model nested inside it, and a fall alert going out through the
+agent](docs/media/events-explainer.png)](docs/media/events-explainer.mp4)
+
+▶ [Watch the video](docs/media/events-explainer.mp4) (62 s, silent)
 
 A person gets up at night, asks for her late husband, asks to go home and
 ends up on the floor. Her words and movements are scripted; everything the
@@ -56,9 +57,11 @@ each other, which is why each part can be replayed and tested on its own.
 
 ### Simulated nights: Claude finds the bugs, a person decides
 
-<!-- VIDEO 2: upload scene-lab-loop.mp4 the same way and replace the line
-     below. -->
-https://github.com/user-attachments/assets/VIDEO-2-PLACEHOLDER
+[![Simulated nights: a loop map of the five steps beside a transcript in
+which a person on the floor is told to get back to
+bed](docs/media/scene-lab-loop.png)](docs/media/scene-lab-loop.mp4)
+
+▶ [Watch the video](docs/media/scene-lab-loop.mp4) (74 s, silent)
 
 No one can test a night companion at 3 a.m. with a real person in the
 room. [`scene_lab`](tests/scene_lab) plays simulated nights against the
