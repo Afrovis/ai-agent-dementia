@@ -21,6 +21,79 @@ it wakes up the family caregiver instead of the person.
 > It is also a **prototype that is not HIPAA compliant**. Do not use it with
 > real patient data or protected health information.
 
+## See it work
+
+Two short silent videos, a minute or so each. Every quoted line, number and
+event name in them comes from a real run of the code; where the person is
+scripted or simulated, the video says so.
+
+### One night moment, as events
+
+https://github.com/user-attachments/assets/ae1f7ab7-4799-48c4-8d9b-53c7c4f6002e
+
+62 s, silent. Also in the repository as an
+[animated image](docs/media/events-explainer.webp) and an [MP4](docs/media/events-explainer.mp4).
+
+A person gets up at night, asks for her late husband, asks to go home and
+ends up on the floor. Her words and movements are scripted; everything the
+system does is a real run of the agent code with its local model:
+
+- **"Where is Henri?"** The model reads the intent (looking for someone,
+  mild distress). The agent, not the model, picks the answer: a fixed,
+  pre-approved line, *"You're worried about them, Jean; that's a caring
+  thing to feel."*
+- **"I want to go home now."** The model drafts a reply, but the draft
+  contains "but", which the agent's check refuses because it can cancel the
+  acknowledgement before it. The caregiver's own fallback phrase is spoken
+  instead.
+- **On the floor for 10 seconds.** Rule 5 escalates without calling the
+  model at all: a critical alert on the caregiver's phone that repeats until
+  it is seen, and *"Someone is coming to help."* at the bedside.
+
+Every arrow in the video is one typed event on a Redis stream
+(`PersonState`, `Utterance`, `Say`, `Notify`, ...). Services never call
+each other, which is why each part can be replayed and tested on its own.
+
+### Simulated nights: Claude finds the bugs, a person decides
+
+https://github.com/user-attachments/assets/340c0c3c-2ca6-4e78-b4e2-a314e459c27f
+
+74 s, silent. Also in the repository as an
+[animated image](docs/media/scene-lab-loop.webp) and an [MP4](docs/media/scene-lab-loop.mp4).
+
+No one can test a night companion at 3 a.m. with a real person in the
+room. [`scene_lab`](tests/scene_lab) plays simulated nights against the
+real stack instead, and closes the loop from bug to fix:
+
+1. **Claude Opus directs.** It writes each scene (a fall, a toilet trip, a
+   person who is hard of hearing, a question asked while the agent is
+   speaking) and, when
+   a scene breaks something, writes a smaller variant to isolate the cause.
+2. **Claude Sonnet plays the person**, through real synthesised speech. The
+   real `listen`, `agent` (with its local model) and `embodiment` services
+   answer, exactly as they would at the bedside.
+3. **Fifteen checks read every trace**: did each question get a reply
+   within 5 seconds, did the agent talk over the person, did it fall silent
+   when it shouldn't. They need no hand-written answer key.
+4. **Opus triages the night.** It traces each cluster of failures to the
+   code, tries the fix in a throwaway copy of the repository, replays the
+   failing moment and writes a ranked fix list. It has no network, Docker or
+   commit access.
+5. **A person decides.** Nothing is applied until the owner asks for it,
+   and the fix list puts open policy questions to them ("What should raise a
+   second, critical alert while escalated?"). Later nights confirm the fix.
+
+The video follows one real bug. In a simulated fall, a woman lying on the
+floor said "Just want my bed" and was told *"That's right, Jean, take your
+time getting back to bed."*, twice. Triage proposed a new veto, and a replay
+of the same moment sent that sentence 0 times instead of 2. It landed in
+`862537b`. Before the fix, the prompt went out 3 times in 8 floor scenes.
+In the four director runs since, it has gone out 0 times in 18 floor
+scenes.
+
+`scene_lab` is a development tool: none of its Claude calls run at the
+bedside, where the agent's model is local.
+
 ## Who it's for
 
 - **The person with dementia** — one bedroom, one person, active only during
@@ -52,6 +125,34 @@ Safety-relevant decisions — state transitions, escalation timers, when to
 call the caregiver — live in deterministic code, never in the language
 model. The LLM composes language and interprets intent; it doesn't decide
 whether something is an emergency.
+
+## What counts as the right behaviour
+
+"Correct" is not left to the model, or to whoever wrote the code that day.
+It comes from two places.
+
+**Published dementia-care guidance.** A guideline pack,
+[`tests/decision_bench/guidelines.md`](tests/decision_bench/guidelines.md),
+holds 25 short clauses, each a paraphrase of one source passage with a
+link. The sources are NICE guideline NG97, the Alzheimer's Association's
+caregiver guidance, a Cochrane review of validation therapy, Kitwood's
+person-centred care, the DICE approach to behaviour, and a BMJ cohort study
+of falls in people over 90. A person has read the source behind 23 of the
+clauses and ticked them as fair; the other two cannot be cited until they
+are. The agent's veto rules cite the clause each one comes from, and the
+decision benchmark's labels may cite only ticked clauses.
+
+**People.** Benchmark labels are drafted by an isolated Claude annotator
+that sees only the guidelines and the scenario, never the agent's code, and
+a human reviews every one; disagreements are kept on file. The caregiver
+writes the phrases the agent speaks. Where the guidance is silent (how many
+seconds to wait, when to alert), the number is a caregiver or owner
+setting, labelled as such, never presented as evidence. And the fix lists
+from simulated nights put open policy questions to the owner rather than
+settling them in code.
+
+None of this makes Night Companion clinically validated. It makes each rule
+traceable to a source or to a named human decision.
 
 ## Privacy
 
@@ -121,6 +222,12 @@ Details are in
 [docs/PERCEIVE_ACCURACY_2026-09-13.md](docs/PERCEIVE_ACCURACY_2026-09-13.md),
 [docs/FLOOR_DETECTION_HANDOFF.md](docs/FLOOR_DETECTION_HANDOFF.md), and the
 dated log in [EXPERIMENTS.md](EXPERIMENTS.md).
+
+Behaviour has been tested in simulated nights (`scene_lab`, above): five
+director hours with automatic triage, 74 scenes, 387 flagged moments and 37
+ranked fixes, measured against the real stack and its local model. The
+method and the first measured runs are in
+[tests/scene_lab/BASELINE.md](tests/scene_lab/BASELINE.md).
 
 ## Getting started
 
