@@ -23,7 +23,7 @@ it wakes up the family caregiver instead of the person.
 
 ## See it work
 
-Two short silent videos, about a minute each. Every quoted line, number and
+Two short silent videos, a minute or so each. Every quoted line, number and
 event name in them comes from a real run of the code; where the person is
 scripted or simulated, the video says so.
 
