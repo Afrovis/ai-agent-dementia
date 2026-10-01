@@ -29,7 +29,7 @@ simulated, the video says so.
 
 ### What the camera sees
 
-PERCEPTION_VIDEO_URL
+https://github.com/user-attachments/assets/45b3e60d-6e47-42e8-8b6b-0703cb1295d9
 
 35 s, silent. Also in the repository as an
 [animated image](docs/media/perception-reel.webp) and an
