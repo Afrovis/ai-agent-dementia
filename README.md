@@ -29,12 +29,10 @@ scripted or simulated, the video says so.
 
 ### One night moment, as events
 
-[![One night moment, as events: the agent's state machine with the local
-model nested inside it, and a fall alert going out through the
-agent](docs/media/events-explainer.webp)](docs/media/events-explainer.mp4)
+https://github.com/user-attachments/assets/ae1f7ab7-4799-48c4-8d9b-53c7c4f6002e
 
-The animation above plays the whole video (62 s, silent);
-[the MP4](docs/media/events-explainer.mp4) is the full-resolution copy.
+62 s, silent. Also in the repository as an
+[animated image](docs/media/events-explainer.webp) and an [MP4](docs/media/events-explainer.mp4).
 
 A person gets up at night, asks for her late husband, asks to go home and
 ends up on the floor. Her words and movements are scripted; everything the
@@ -58,12 +56,10 @@ each other, which is why each part can be replayed and tested on its own.
 
 ### Simulated nights: Claude finds the bugs, a person decides
 
-[![Simulated nights: a loop map of the five steps beside a transcript in
-which a person on the floor is told to get back to
-bed](docs/media/scene-lab-loop.webp)](docs/media/scene-lab-loop.mp4)
+https://github.com/user-attachments/assets/340c0c3c-2ca6-4e78-b4e2-a314e459c27f
 
-The animation above plays the whole video (74 s, silent);
-[the MP4](docs/media/scene-lab-loop.mp4) is the full-resolution copy.
+74 s, silent. Also in the repository as an
+[animated image](docs/media/scene-lab-loop.webp) and an [MP4](docs/media/scene-lab-loop.mp4).
 
 No one can test a night companion at 3 a.m. with a real person in the
 room. [`scene_lab`](tests/scene_lab) plays simulated nights against the
