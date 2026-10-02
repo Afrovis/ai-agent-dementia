@@ -93,8 +93,7 @@ https://github.com/user-attachments/assets/340c0c3c-2ca6-4e78-b4e2-a314e459c27f
 74 s, silent. Also in the repository as an
 [animated image](docs/media/scene-lab-loop.webp) and an [MP4](docs/media/scene-lab-loop.mp4).
 
-No one can test a night companion at 3 a.m. with a real person in the
-room. [`scene_lab`](tests/scene_lab) plays simulated nights against the
+It's hard to simulate scenario's at 3AM in the morning with a person. So [`scene_lab`](tests/scene_lab) plays simulated nights against the
 real stack instead, and closes the loop from bug to fix:
 
 1. **Claude Opus directs.** It writes each scene (a fall, a toilet trip, a
@@ -111,7 +110,7 @@ real stack instead, and closes the loop from bug to fix:
    code, tries the fix in a throwaway copy of the repository, replays the
    failing moment and writes a ranked fix list. It has no network, Docker or
    commit access.
-5. **A person decides.** Nothing is applied until the owner asks for it,
+5. **A person makes the final decision.** Nothing is applied until the owner asks for it,
    and the fix list puts open policy questions to them ("What should raise a
    second, critical alert while escalated?"). Later nights confirm the fix.
 
@@ -223,13 +222,10 @@ the repository and is never committed.
 
 **Not built yet:**
 - Music or story playback (strategy 7).
-- A softer in-home chime escalation step (strategy 9), which needs extra
-  hardware.
+- A softer in-home chime escalation step (strategy 9)
 - Multiple rooms, multiple people, or languages other than English.
 - Bed or door pressure sensors — perception is camera-only for now.
-- The two-week dry run with a volunteer
-  ([#27](https://github.com/Afrovis/ai-agent-dementia/issues/27)); nothing
-  here has been used with a person living with dementia yet.
+- The two-week dry run with a volunteer.
 
 ## Results so far
 
@@ -269,7 +265,7 @@ method and the first measured runs are in
 
 - Docker with Compose. The target is an Apple-silicon Mac mini or MacBook
   with 16 GB of memory; other hosts that run Docker should work but are
-  less tested.
+  not tested.
 - [Ollama](https://ollama.com) on the host, with the two local models:
 
   ```sh
@@ -277,8 +273,7 @@ method and the first measured runs are in
   ollama pull moondream        # scene notes
   ```
 
-- A webcam and microphone in a browser on the bedside device. No camera is
-  needed to run the tests.
+- A webcam and microphone in a browser on the bedside device. 
 
 ### Run the stack
 
@@ -369,10 +364,6 @@ not part of the bedside stack.
 
 ## Where to read more
 
-- [PLAN.md](PLAN.md) — full design, guiding principles and the ethics of
-  putting a camera in someone's bedroom.
-- [HANDOFF.md](HANDOFF.md) — fixed decisions, event contracts, safety rules
-  and the definition of done.
 - [ARCHITECTURE.md](ARCHITECTURE.md) — generated, as-built map of
   services, streams, and events.
 - [AGENTS.md](AGENTS.md) — how to run, test and debug the stack; shared by
