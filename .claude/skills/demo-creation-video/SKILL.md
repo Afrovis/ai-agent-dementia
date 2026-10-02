@@ -116,7 +116,7 @@ the footage; the video 2 mockups were approved by them on 2026-09-18.
 | 2026-09-13_bedroom-sample-02 | walk | 29.5–37 | crossing the room; label reads Standing → Walking at 33.5 |
 | 2026-09-13_bedroom-sample-02 | bed | 63–75 | getting into bed; bed zone lights up |
 | 2026-09-13_bedroom-sample-02 | floor | 95–110 | sits on floor at ~98, up at ~107.5; floor chip |
-| 2026-09-13_bedroom-sample-02 | reel | — | walk + bed + floor, 34.5 s |
+| 2026-09-13_bedroom-sample-02 | reel | — | walk + bed + floor, 34.5 s; in the README since PR #95 (publishing: `explainer-videos` skill) |
 | 2026-09-20_living-room-sample-01 | floor_sequence | 13–27 | local VLM says on-floor while the live pipeline reports sitting/absent |
 | 2026-09-20_living-room-sample-01 | walk_return | 31–44 | return and crossing sequence with live walking/standing transitions |
 | 2026-09-20_living-room-sample-01 | sit_depart | 52–64 | standing to sitting and leaving view; expected pose fade after departure |
